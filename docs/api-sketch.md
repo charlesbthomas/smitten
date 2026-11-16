@@ -90,6 +90,10 @@ fn main() {
 | `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
 | `love.graphics.stencil(fn)` | `graphics::stencil(\|\| { ... })` | `stencil_ex(action, value, keep_values, fn)` takes the other arguments. |
 | `love.graphics.setStencilTest("greater", 0)` / `setStencilTest()` | `graphics::set_stencil_test(CompareMode::Greater, 0)` / `clear_stencil_test()` | |
+| `love.graphics.newSpriteBatch(image, size)` | `graphics::new_sprite_batch(&image, size)` | Grows as needed; the size only reserves memory. |
+| `batch:add(x, y)` / `batch:add(quad, x, y)` | `batch.add(x, y)` / `batch.add_quad(&quad, x, y)` | Return the sprite's index. `add_ex` and `add_quad_ex` take the full `draw` arguments. |
+| `batch:set(id, x, y)` / `batch:setColor(r, g, b, a)` / `batch:clear()` | `batch.set(index, x, y)` / `batch.set_color(color)` / `batch.clear()` | Indexes start at 0. |
+| `love.graphics.draw(batch, x, y)` | `graphics::draw_sprite_batch(&batch, x, y)` | |
 | `love.graphics.newParticleSystem(image, max)` | `graphics::new_particle_system(&image, max)` | Setters take the same values as LÖVE's, such as `set_emission_rate`, `set_speed`, `set_sizes`, `set_colors`. |
 | `psystem:update(dt)` / `psystem:emit(n)` | `system.update(dt)` / `system.emit(n)` | |
 | `love.graphics.draw(psystem, x, y)` | `graphics::draw_particles(&system, x, y)` | |

@@ -1,10 +1,12 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use smitten_core::backend::{ShaderId, UniformField, UniformKind};
+use smitten_core::backend::{Backend, ShaderId, UniformField, UniformKind};
 
+use super::GraphicsState;
+use crate::reload::Asset;
 use crate::{Color, context};
 
 /// A program that decides the color of every pixel drawn while it is
@@ -48,9 +50,10 @@ pub struct Shader {
     inner: Rc<Inner>,
 }
 
-struct Inner {
-    id: ShaderId,
-    fields: Vec<UniformField>,
+pub(crate) struct Inner {
+    // In cells so a changed file can be loaded into every handle at once.
+    id: Cell<ShaderId>,
+    fields: RefCell<Vec<UniformField>>,
     /// The current value of `Params`, laid out as the GPU expects.
     data: RefCell<Vec<u8>>,
 }
@@ -58,7 +61,7 @@ struct Inner {
 impl Drop for Inner {
     fn drop(&mut self) {
         // If the game has already shut down, the backend freed everything.
-        context::try_with(|ctx| ctx.backend.destroy_shader(self.id));
+        context::try_with(|ctx| ctx.backend.destroy_shader(self.id.get()));
     }
 }
 
@@ -69,8 +72,8 @@ impl Shader {
             context::with(|ctx| ctx.backend.create_shader(source)).map_err(ShaderError::Compile)?;
         Ok(Shader {
             inner: Rc::new(Inner {
-                id: info.id,
-                fields: info.fields,
+                id: Cell::new(info.id),
+                fields: RefCell::new(info.fields),
                 data: RefCell::new(vec![0; info.uniform_size as usize]),
             }),
         })
@@ -82,11 +85,21 @@ impl Shader {
     /// which normally means inside the game's `assets` folder.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Shader, ShaderError> {
         let path = path.as_ref();
-        let source = crate::filesystem::read_string(path).map_err(|source| ShaderError::Read {
+        let file = crate::filesystem::resolve(path);
+        let source = std::fs::read_to_string(&file).map_err(|source| ShaderError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        Shader::new(&source)
+        let shader = Shader::new(&source)?;
+        context::with(|ctx| {
+            ctx.reload
+                .watch(file, Asset::Shader(Rc::downgrade(&shader.inner)));
+        });
+        Ok(shader)
+    }
+
+    pub(crate) fn from_inner(inner: Rc<Inner>) -> Shader {
+        Shader { inner }
     }
 
     /// Sets the member of `Params` called `name`.
@@ -105,9 +118,8 @@ impl Shader {
     /// there is no such member or it has a different type.
     pub fn try_send(&self, name: &str, value: impl UniformValue) -> Result<(), ShaderError> {
         let (kind, components) = value.to_uniform();
-        let field = self
-            .inner
-            .fields
+        let fields = self.inner.fields.borrow();
+        let field = fields
             .iter()
             .find(|field| field.name == name)
             .ok_or_else(|| ShaderError::UnknownValue(name.to_string()))?;
@@ -125,6 +137,7 @@ impl Shader {
             // The backend reported a layout that fits inside the struct.
             data[start..start + bytes.len()].copy_from_slice(bytes);
         }
+        drop(fields);
         // If this shader is the active one, later draws must see the change.
         context::with(|ctx| ctx.gfx.refresh_shader(self));
         Ok(())
@@ -132,11 +145,15 @@ impl Shader {
 
     /// Returns whether `Params` has a member called `name`.
     pub fn has_value(&self, name: &str) -> bool {
-        self.inner.fields.iter().any(|field| field.name == name)
+        self.inner
+            .fields
+            .borrow()
+            .iter()
+            .any(|field| field.name == name)
     }
 
     pub(crate) fn id(&self) -> ShaderId {
-        self.inner.id
+        self.inner.id.get()
     }
 
     pub(crate) fn with_data<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
@@ -148,14 +165,44 @@ impl Shader {
     }
 }
 
+/// Replaces a shader with a newer version of its file. Values already
+/// sent are kept for the members that still exist with the same type.
+pub(crate) fn reload(
+    inner: &Rc<Inner>,
+    backend: &mut dyn Backend,
+    gfx: &mut GraphicsState,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let source = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    // If this fails the old shader is untouched and stays in use.
+    let info = backend.create_shader(source)?;
+
+    let mut data = vec![0; info.uniform_size as usize];
+    {
+        let old_fields = inner.fields.borrow();
+        let old_data = inner.data.borrow();
+        for field in &info.fields {
+            let old = old_fields
+                .iter()
+                .find(|old| old.name == field.name && old.kind == field.kind);
+            if let (Some(old), Some(kind)) = (old, field.kind) {
+                let (from, to) = (old.offset as usize, field.offset as usize);
+                data[to..to + kind.size()].copy_from_slice(&old_data[from..from + kind.size()]);
+            }
+        }
+    }
+    backend.destroy_shader(inner.id.replace(info.id));
+    *inner.fields.borrow_mut() = info.fields;
+    *inner.data.borrow_mut() = data;
+    // If the shader is in use, drawing must switch to the new one.
+    gfx.refresh_shader(&Shader::from_inner(inner.clone()));
+    Ok(())
+}
+
 impl fmt::Debug for Shader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names: Vec<&str> = self
-            .inner
-            .fields
-            .iter()
-            .map(|field| field.name.as_str())
-            .collect();
+        let fields = self.inner.fields.borrow();
+        let names: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
         f.debug_struct("Shader").field("values", &names).finish()
     }
 }
