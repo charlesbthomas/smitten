@@ -17,6 +17,7 @@ mod image;
 mod particles;
 mod shader;
 mod shapes;
+mod sprite_batch;
 mod text;
 mod transform;
 
@@ -34,6 +35,7 @@ pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
 pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, UniformValue};
+pub use sprite_batch::SpriteBatch;
 pub use text::{Align, Font, FontError};
 pub use transform::Transform;
 
@@ -59,6 +61,8 @@ pub(crate) struct GraphicsState {
     canvas: Option<Canvas>,
     /// The custom shader in use, if any.
     shader: Option<Shader>,
+    /// Reused between draws of large things so they do not allocate.
+    scratch: Vec<Vertex>,
 }
 
 impl Default for GraphicsState {
@@ -74,6 +78,7 @@ impl Default for GraphicsState {
             font: None,
             canvas: None,
             shader: None,
+            scratch: Vec::new(),
         }
     }
 }
@@ -191,6 +196,18 @@ impl GraphicsState {
         let image = system.image();
         self.batch
             .push(Some(image.texture()), image.filter(), &vertices);
+    }
+
+    /// Queues every sprite of `sprites`, placed by `local`.
+    fn push_sprite_batch(&mut self, sprites: &SpriteBatch, local: &Transform) {
+        let transform = self.transform.then_inner(local);
+        let mut vertices = std::mem::take(&mut self.scratch);
+        vertices.clear();
+        sprites.write_vertices(&transform, self.color, &mut vertices);
+        let image = sprites.image();
+        self.batch
+            .push(Some(image.texture()), image.filter(), &vertices);
+        self.scratch = vertices;
     }
 
     /// Queues `text` in the current font, placed by `local`.
@@ -642,6 +659,37 @@ pub fn draw_quad_ex(
 ) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
     context::with(|ctx| ctx.gfx.push_image(image, quad, &local));
+}
+
+// ---------------------------------------------------------------------------
+// Sprite batches
+
+/// Creates an empty sprite batch that draws `image`, with room reserved
+/// for `capacity` sprites. See [`SpriteBatch`].
+pub fn new_sprite_batch(image: &Image, capacity: usize) -> SpriteBatch {
+    SpriteBatch::new(image, capacity)
+}
+
+/// Draws every sprite in a batch, with the batch's origin at `(x, y)`.
+pub fn draw_sprite_batch(sprites: &SpriteBatch, x: f32, y: f32) {
+    draw_sprite_batch_ex(sprites, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a sprite batch with the full set of LÖVE's `draw` arguments,
+/// which move, turn and scale the batch as a whole. See [`draw_ex`].
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
+pub fn draw_sprite_batch_ex(
+    sprites: &SpriteBatch,
+    x: f32,
+    y: f32,
+    r: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+) {
+    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+    context::with(|ctx| ctx.gfx.push_sprite_batch(sprites, &local));
 }
 
 // ---------------------------------------------------------------------------
