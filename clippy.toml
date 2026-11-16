@@ -1,0 +1,7 @@
+# Physics handles hash by identity, never by anything that can change, so
+# they are safe as map keys even though they share their world inside.
+ignore-interior-mutability = [
+    "smitten::physics::Body",
+    "smitten::physics::Fixture",
+    "smitten::physics::Joint",
+]

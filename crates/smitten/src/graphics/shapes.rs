@@ -214,6 +214,59 @@ pub(crate) fn stroke(points: &[Point], closed: bool, stroke: &Stroke) -> Vec<Cov
     kept
 }
 
+/// Cuts a path into dashes `dash` long with gaps of `gap` between them,
+/// measured along the path. A dash that reaches a corner bends round it.
+pub(crate) fn dashes(points: &[Point], dash: f32, gap: f32) -> Vec<Vec<Point>> {
+    let mut pieces = Vec::new();
+    if !(dash > 0.0 && gap >= 0.0 && dash.is_finite() && gap.is_finite()) {
+        return pieces;
+    }
+    let mut current: Vec<Point> = Vec::new();
+    // How much of the dash or gap in progress is left.
+    let (mut drawing, mut left) = (true, dash);
+    for pair in points.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        let length = (to.0 - from.0).hypot(to.1 - from.1);
+        if length < 1e-6 {
+            continue;
+        }
+        let at = |along: f32| {
+            let t = along / length;
+            (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
+        };
+        let mut along = 0.0;
+        if drawing && current.is_empty() {
+            current.push(from);
+        }
+        while length - along > left {
+            along += left;
+            if drawing {
+                current.push(at(along));
+                pieces.push(std::mem::take(&mut current));
+                left = gap;
+            } else {
+                current.push(at(along));
+                left = dash;
+            }
+            drawing = !drawing;
+            // No gap at all means the dashes simply follow each other.
+            if !drawing && gap == 0.0 {
+                drawing = true;
+                left = dash;
+                current.push(at(along));
+            }
+        }
+        left -= length - along;
+        if drawing {
+            current.push(to);
+        }
+    }
+    if current.len() > 1 {
+        pieces.push(current);
+    }
+    pieces
+}
+
 /// The sides of every stretch of a path, `distance` from its middle.
 fn rails(
     path: &[Point],
@@ -536,6 +589,50 @@ mod tests {
                 .iter()
                 .all(|corner| corner.2 == 1.0 || corner.2 == 0.0)
         );
+    }
+
+    #[test]
+    fn a_path_is_cut_into_dashes_measured_along_it() {
+        fn same(pieces: &[Vec<Point>], expected: &[&[Point]]) -> bool {
+            pieces.len() == expected.len()
+                && pieces.iter().zip(expected).all(|(piece, wanted)| {
+                    piece.len() == wanted.len()
+                        && piece
+                            .iter()
+                            .zip(*wanted)
+                            .all(|(a, b)| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4)
+                })
+        }
+        // 25 long: three dashes of 5 with gaps of 5 between them.
+        let pieces = dashes(&[(0.0, 0.0), (25.0, 0.0)], 5.0, 5.0);
+        assert!(same(
+            &pieces,
+            &[
+                &[(0.0, 0.0), (5.0, 0.0)],
+                &[(10.0, 0.0), (15.0, 0.0)],
+                &[(20.0, 0.0), (25.0, 0.0)],
+            ]
+        ));
+        // A dash carries on round a corner.
+        let pieces = dashes(&[(0.0, 0.0), (8.0, 0.0), (8.0, 20.0)], 10.0, 4.0);
+        assert!(same(
+            &pieces,
+            &[
+                &[(0.0, 0.0), (8.0, 0.0), (8.0, 2.0)],
+                &[(8.0, 6.0), (8.0, 16.0)],
+            ]
+        ));
+        // A path that ends inside a dash keeps the part there is.
+        let pieces = dashes(&[(0.0, 0.0), (12.0, 0.0)], 5.0, 5.0);
+        assert!(same(
+            &pieces,
+            &[&[(0.0, 0.0), (5.0, 0.0)], &[(10.0, 0.0), (12.0, 0.0)]]
+        ));
+        // No gap still gives separate dashes that follow each other.
+        assert_eq!(dashes(&[(0.0, 0.0), (12.0, 0.0)], 5.0, 0.0).len(), 3);
+        // Nonsense lengths draw nothing instead of looping forever.
+        assert!(dashes(&[(0.0, 0.0), (25.0, 0.0)], 0.0, 5.0).is_empty());
+        assert!(dashes(&[(0.0, 0.0), (25.0, 0.0)], 5.0, -1.0).is_empty());
     }
 
     #[test]

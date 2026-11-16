@@ -160,6 +160,26 @@ impl Source {
         self.mixer().play(self.id);
     }
 
+    /// Plays the sound from its start without disturbing this source, and
+    /// lets it overlap any other playing of it. The way to fire off a
+    /// sound effect: a jump, a hit, a coin.
+    ///
+    /// The copy has this source's settings, cannot be stopped or changed
+    /// once started, and cleans up after itself when it ends. It never
+    /// loops, even if this source does.
+    pub fn play_once(&self) {
+        self.play_once_with(1.0, 1.0);
+    }
+
+    /// Like [`Source::play_once`], at `volume` and `pitch` times this
+    /// source's own. Varying the pitch a little each time keeps a sound
+    /// that repeats from sounding mechanical.
+    pub fn play_once_with(&self, volume: f32, pitch: f32) {
+        self.mixer()
+            .play_once(self.id, volume, pitch)
+            .expect("a sound that loaded once can be opened again");
+    }
+
     /// Stops playback, keeping the position so `play` resumes from it.
     pub fn pause(&self) {
         self.mixer().pause(self.id);

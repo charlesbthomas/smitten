@@ -138,6 +138,10 @@ fn main() {
 | `body:getPosition()` / `applyLinearImpulse(x, y)` | `body.position()` / `body.apply_linear_impulse(x, y)` | |
 | `world:update(dt)` | `world.update(dt)` | |
 | `world:setCallbacks(beginContact, endContact)` | `world.contacts()` after each update | A list to loop over instead of callbacks. |
+| `contact:getPositions()`, `contact:getNormal()` | `contact.x`, `contact.y`, `contact.normal`, `contact.speed` | Where the two met and how fast they closed, so a landing can be told from a brush. |
+| *(none)* | `body.apply_acceleration(x, y)`, `body.apply_angular_acceleration(a)` | A push in pixels (or radians) per second squared that does not depend on the body's mass or the world's meter. |
+| `body:getInertia()` | `body.inertia()` | |
+| *(tables keyed by body)* | `HashMap<Body, T>` | `Body`, `Fixture` and `Joint` are `Eq + Hash`. |
 | `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
 | `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
 | `love.graphics.ellipse("fill", x, y, rx, ry)` | `graphics::ellipse(DrawMode::Fill, x, y, rx, ry)` | |
@@ -167,6 +171,9 @@ fn main() {
 | `love.graphics.captureScreenshot(callback)` | `graphics::capture_screenshot(\|picture\| ...)` | The callback gets an `ImageData` at the end of the frame. |
 | `love.graphics.captureScreenshot("shot.png")` | `graphics::save_screenshot("shot.png")` | Written to the save directory. |
 | `love.graphics.setLineJoin("bevel")` | `graphics::set_line_join(LineJoin::Bevel)` | `Miter` (the default), `Bevel` or `None`. |
+| *(none)* | `graphics::dashed_line(x1, y1, x2, y2, dash, gap)`, `graphics::dashed_polyline(points, dash, gap)` | LÖVE has no dashed lines. |
+| *(none)* | `color.lerp(other, t)`, `color.with_alpha(a)` | Blend two colors, or fade one. |
+| `source:clone():play()` | `source.play_once()`, `source.play_once_with(volume, pitch)` | Plays a copy that cleans itself up, so one sound can overlap itself. |
 | `love.graphics.setLineStyle("rough")` | `graphics::set_line_style(LineStyle::Rough)` | Lines start out `Smooth`, as in LÖVE. |
 | `love.window.setMode(w, h)` | `window::set_size(w, h)` | Only the size. Other window flags are set in `Config`. |
 | `love.window.getPosition()` / `setPosition(x, y)` | `window::position()` / `window::set_position(x, y)` | |
