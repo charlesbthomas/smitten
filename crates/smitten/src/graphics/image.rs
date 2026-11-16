@@ -51,6 +51,24 @@ impl Image {
         })
     }
 
+    /// Wraps a texture the backend already holds. The image takes over
+    /// freeing it.
+    pub(crate) fn from_texture(
+        texture: TextureId,
+        width: u32,
+        height: u32,
+        filter: Filter,
+    ) -> Image {
+        Image {
+            inner: Rc::new(Inner {
+                texture,
+                width,
+                height,
+                filter: Cell::new(filter),
+            }),
+        }
+    }
+
     /// Width in pixels.
     pub fn width(&self) -> u32 {
         self.inner.width

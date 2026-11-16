@@ -82,6 +82,12 @@ fn main() {
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
+| `love.graphics.newCanvas(w, h)` | `graphics::new_canvas(w, h)` | A `Canvas` can be passed wherever an `&Image` is expected. |
+| `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
+| `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
+| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`. |
+| `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |
+| `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
 | `love.audio.newSource(path, "static")` | `audio::new_source(path, SourceType::Static)` | `SourceType::Stream` for music. |
 | `source:play()` / `pause()` / `stop()` | `source.play()` / `pause()` / `stop()` | |
 | `source:setLooping(true)` / `setVolume(v)` / `setPitch(p)` | `source.set_looping(true)` / `set_volume(v)` / `set_pitch(p)` | |

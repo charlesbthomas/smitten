@@ -7,12 +7,14 @@
 
 pub mod backend;
 
+mod blend;
 mod color;
 mod config;
 mod filter;
 mod input;
 mod key;
 
+pub use blend::BlendMode;
 pub use color::Color;
 pub use config::Config;
 pub use filter::Filter;

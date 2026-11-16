@@ -39,7 +39,9 @@ pub mod timer;
 pub mod window;
 
 pub use joystick::Joystick;
-pub use smitten_core::{Color, Config, Filter, GamepadAxis, GamepadButton, Key, MouseButton};
+pub use smitten_core::{
+    BlendMode, Color, Config, Filter, GamepadAxis, GamepadButton, Key, MouseButton,
+};
 
 use smitten_core::backend::BackendEvent;
 
@@ -137,7 +139,10 @@ pub fn run<G: Game>(config: Config) {
 
         context::with(|ctx| ctx.gfx.begin_frame());
         game.draw();
-        context::with(|ctx| ctx.backend.present(&ctx.gfx.frame()));
+        context::with(|ctx| {
+            ctx.backend.present(&ctx.gfx.frame());
+            ctx.gfx.end_frame();
+        });
     }
 
     drop(game);

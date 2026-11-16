@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use crate::{Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
+use crate::{BlendMode, Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
 
 /// Something that happened on the platform since the last poll.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,25 +97,54 @@ pub struct Vertex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
-/// A run of triangles that share a texture.
+/// A rectangle of pixels on a render target, measured from its top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Scissor {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A run of triangles that share a texture and drawing state.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DrawCall {
     /// The texture to sample, or `None` for plain vertex colors.
     pub texture: Option<TextureId>,
     pub filter: Filter,
+    pub blend: BlendMode,
+    /// Pixels outside this rectangle are left untouched. `None` draws
+    /// anywhere on the target.
+    pub scissor: Option<Scissor>,
     /// Index into [`Frame::vertices`] of the first vertex.
     pub first_vertex: u32,
     /// A multiple of three, since every three vertices form a triangle.
     pub vertex_count: u32,
 }
 
+/// A run of draw calls that share a render target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pass {
+    /// A texture from [`Backend::create_render_target`], or `None` for
+    /// the screen.
+    pub target: Option<TextureId>,
+    /// The color to fill the target with first. `None` keeps what the
+    /// target already holds and draws on top of it.
+    pub clear: Option<Color>,
+    /// Index into [`Frame::calls`] of the first call.
+    pub first_call: u32,
+    pub call_count: u32,
+}
+
 /// Everything needed to draw one frame.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame<'a> {
-    pub clear: Color,
+    /// In pixels of the target they are drawn to.
     pub vertices: &'a [Vertex],
-    /// Drawn in order, so later calls appear on top.
     pub calls: &'a [DrawCall],
+    /// Run in order. A later pass may sample a target drawn by an
+    /// earlier one.
+    pub passes: &'a [Pass],
 }
 
 /// The sample rate Smitten mixes audio at. Backends convert from this to
@@ -152,10 +181,15 @@ pub trait Backend {
         rgba: &[u8],
     ) -> Result<(), String>;
 
+    /// Creates a texture that can be drawn to by naming it as a
+    /// [`Pass::target`], and sampled like any other. It starts out
+    /// transparent, and keeps its contents between frames.
+    fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String>;
+
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
 
-    /// Draws `frame` and shows it.
+    /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);
 
     /// Monotonic time in nanoseconds.
