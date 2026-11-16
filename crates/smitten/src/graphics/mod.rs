@@ -439,7 +439,7 @@ pub fn new_default_font(size: f32) -> Font {
     Font::default_at(size)
 }
 
-/// Sets the font used by [`print`] and [`printf`].
+/// Sets the font used by [`print()`] and [`printf`].
 pub fn set_font(font: &Font) {
     context::with(|ctx| ctx.gfx.font = Some(font.clone()));
 }
