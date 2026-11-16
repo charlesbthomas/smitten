@@ -102,7 +102,10 @@ impl InputState {
             BackendEvent::Quit
             | BackendEvent::Resized { .. }
             | BackendEvent::TextInput(_)
-            | BackendEvent::WheelMoved { .. } => {}
+            | BackendEvent::WheelMoved { .. }
+            | BackendEvent::Focus(_)
+            | BackendEvent::MouseFocus(_)
+            | BackendEvent::Visible(_) => {}
         }
     }
 }

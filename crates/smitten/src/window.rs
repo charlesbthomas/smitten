@@ -2,12 +2,155 @@
 
 use std::path::Path;
 
+use crate::MessageBoxKind;
 use crate::context;
 use crate::graphics::ImageError;
 
 /// Sets the window title.
 pub fn set_title(title: &str) {
     context::with(|ctx| ctx.backend.set_title(title));
+}
+
+/// Returns the window title.
+pub fn title() -> String {
+    context::with(|ctx| ctx.backend.title())
+}
+
+/// Resizes the window to `width` by `height` units, the part of
+/// `love.window.setMode` that games use most. This calls
+/// [`crate::Game::resized`] like any other change of size.
+///
+/// If the platform refuses, a message is printed and nothing changes. A
+/// fullscreen or maximized window keeps its size.
+pub fn set_size(width: u32, height: u32) {
+    context::with(|ctx| {
+        if let Err(message) = ctx.backend.set_window_size(width, height) {
+            eprintln!("smitten: could not resize the window: {message}");
+        }
+        measure(ctx);
+    });
+}
+
+/// Takes the window's size afresh after changing it, so that sizes read
+/// before the next frame are already the new ones.
+fn measure(ctx: &mut context::Context) {
+    ctx.gfx
+        .screen
+        .update(ctx.backend.size_in_pixels(), ctx.backend.dpi_scale());
+}
+
+/// Where the window's top-left corner is on the desktop, as `(x, y)` in
+/// the desktop's own coordinates.
+pub fn position() -> (i32, i32) {
+    context::with(|ctx| ctx.backend.window_position())
+}
+
+/// Moves the window's top-left corner to `(x, y)` on the desktop. Some
+/// window systems, Wayland among them, do not let programs place their
+/// windows and ignore this.
+pub fn set_position(x: i32, y: i32) {
+    context::with(|ctx| ctx.backend.set_window_position(x, y));
+}
+
+/// Shrinks the window to the taskbar or Dock.
+pub fn minimize() {
+    context::with(|ctx| ctx.backend.minimize());
+}
+
+/// Enlarges the window to fill the desktop. Only a resizable window
+/// (see [`crate::Config::resizable`]) can be maximized.
+pub fn maximize() {
+    context::with(|ctx| {
+        ctx.backend.maximize();
+        measure(ctx);
+    });
+}
+
+/// Puts a minimized or maximized window back as it was.
+pub fn restore() {
+    context::with(|ctx| {
+        ctx.backend.restore();
+        measure(ctx);
+    });
+}
+
+/// Whether the window is minimized.
+pub fn is_minimized() -> bool {
+    context::with(|ctx| ctx.backend.window_state().minimized)
+}
+
+/// Whether the window is maximized.
+pub fn is_maximized() -> bool {
+    context::with(|ctx| ctx.backend.window_state().maximized)
+}
+
+/// Whether the window is receiving the keyboard. See
+/// [`crate::Game::focus`] to be told when this changes.
+pub fn has_focus() -> bool {
+    context::with(|ctx| ctx.backend.window_state().focused)
+}
+
+/// Whether the pointer is over the window.
+pub fn has_mouse_focus() -> bool {
+    context::with(|ctx| ctx.backend.window_state().mouse_focused)
+}
+
+/// Whether the window is on screen: neither hidden nor minimized.
+pub fn is_visible() -> bool {
+    context::with(|ctx| ctx.backend.window_state().visible)
+}
+
+/// Turns waiting for the display's refresh on or off. On, the game runs
+/// at the display's rate without tearing. To choose from the start, set
+/// [`crate::Config::vsync`].
+///
+/// If the display cannot do what was asked, a message is printed and
+/// nothing changes.
+pub fn set_vsync(vsync: bool) {
+    context::with(|ctx| {
+        if let Err(message) = ctx.backend.set_vsync(vsync) {
+            eprintln!("smitten: could not change vsync: {message}");
+        }
+    });
+}
+
+/// Whether the game waits for the display's refresh.
+pub fn vsync() -> bool {
+    context::with(|ctx| ctx.backend.vsync())
+}
+
+/// The size in units of the desktop the window is on, as
+/// `(width, height)`.
+pub fn desktop_dimensions() -> (u32, u32) {
+    context::with(|ctx| ctx.backend.desktop_size())
+}
+
+/// How many displays are connected.
+pub fn display_count() -> u32 {
+    context::with(|ctx| ctx.backend.display_count())
+}
+
+/// Shows a message with an OK button and waits until the player closes
+/// it. The game stands still meanwhile.
+///
+/// Returns whether the message could be shown.
+pub fn show_message_box(title: &str, message: &str, kind: MessageBoxKind) -> bool {
+    context::with(
+        |ctx| match ctx.backend.show_message_box(kind, title, message) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("smitten: could not show a message box: {error}");
+                false
+            }
+        },
+    )
+}
+
+/// Asks for the player's attention when the window is in the background,
+/// usually by flashing its taskbar button. `continuous` keeps asking
+/// until the window gets focus.
+pub fn request_attention(continuous: bool) {
+    context::with(|ctx| ctx.backend.request_attention(continuous));
 }
 
 /// Makes the game fill the whole screen, or puts it back in a window.
@@ -23,6 +166,7 @@ pub fn set_fullscreen(fullscreen: bool) {
         if let Err(message) = ctx.backend.set_fullscreen(fullscreen) {
             eprintln!("smitten: could not change fullscreen: {message}");
         }
+        measure(ctx);
     });
 }
 

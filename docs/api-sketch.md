@@ -167,6 +167,17 @@ fn main() {
 | `love.graphics.captureScreenshot("shot.png")` | `graphics::save_screenshot("shot.png")` | Written to the save directory. |
 | `love.graphics.setLineJoin("bevel")` | `graphics::set_line_join(LineJoin::Bevel)` | `Miter` (the default), `Bevel` or `None`. |
 | `love.graphics.setLineStyle("rough")` | `graphics::set_line_style(LineStyle::Rough)` | Lines start out `Smooth`, as in LÖVE. |
+| `love.window.setMode(w, h)` | `window::set_size(w, h)` | Only the size. Other window flags are set in `Config`. |
+| `love.window.getPosition()` / `setPosition(x, y)` | `window::position()` / `window::set_position(x, y)` | |
+| `love.window.getTitle()` | `window::title()` | |
+| `love.window.minimize()` / `maximize()` / `restore()` | `window::minimize()` / `maximize()` / `restore()` | |
+| `love.window.isMinimized()` / `isMaximized()` / `isVisible()` | `window::is_minimized()` / `is_maximized()` / `is_visible()` | |
+| `love.window.hasFocus()` / `hasMouseFocus()` | `window::has_focus()` / `window::has_mouse_focus()` | |
+| `love.window.setVSync(1)` / `getVSync()` | `window::set_vsync(true)` / `window::vsync()` | On or off. Adaptive vsync is not offered. |
+| `love.window.getDesktopDimensions()` / `getDisplayCount()` | `window::desktop_dimensions()` / `window::display_count()` | The desktop the window is on. |
+| `love.window.showMessageBox(title, message, "warning")` | `window::show_message_box(title, message, MessageBoxKind::Warning)` | One OK button. |
+| `love.window.requestAttention(continuous)` | `window::request_attention(continuous)` | |
+| `love.focus(f)` / `love.mousefocus(f)` / `love.visible(v)` | `Game::focus` / `Game::mouse_focus` / `Game::visible` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
