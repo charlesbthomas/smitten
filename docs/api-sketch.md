@@ -138,6 +138,9 @@ fn main() {
 | `world:setCallbacks(beginContact, endContact)` | `world.contacts()` after each update | A list to loop over instead of callbacks. |
 | `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
 | `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
+| `love.graphics.newMesh(vertices, "fan")` | `graphics::new_mesh(&vertices, MeshDrawMode::Fan)` | Vertices are `MeshVertex { x, y, u, v, color }`. `Fan`, `Strip` or `Triangles`. |
+| `mesh:setTexture(image)` / `setVertexMap` / `setDrawRange` | `mesh.set_texture(Some(&image))` / `set_vertex_map` / `set_draw_range` | |
+| `love.graphics.draw(mesh, x, y)` | `graphics::draw_mesh(&mesh, x, y)` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
