@@ -65,8 +65,14 @@ impl Font {
     /// Creates a font from the bytes of a TrueType or OpenType file.
     /// `size` is the height of the font in pixels.
     pub fn from_bytes(bytes: &[u8], size: f32) -> Result<Font, FontError> {
-        let face = Face::new(bytes, size).map_err(FontError::Parse)?;
         let filter = context::with(|ctx| ctx.gfx.default_filter);
+        Font::with_filter(bytes, size, filter)
+    }
+
+    /// As [`Font::from_bytes`], for use where the framework state is
+    /// already borrowed and the default filter is at hand.
+    pub(crate) fn with_filter(bytes: &[u8], size: f32, filter: Filter) -> Result<Font, FontError> {
+        let face = Face::new(bytes, size).map_err(FontError::Parse)?;
         Ok(Font {
             inner: Rc::new(Inner {
                 atlas: RefCell::new(Atlas::new(face.size)),
@@ -80,6 +86,13 @@ impl Font {
     /// Creates the built-in font, Bitstream Vera Sans, at `size` pixels.
     pub fn default_at(size: f32) -> Font {
         Font::from_bytes(DEFAULT_FONT, size).expect("the built-in font is valid")
+    }
+
+    /// The built-in font at its default size, used when the game draws
+    /// text without choosing a font.
+    pub(crate) fn fallback(filter: Filter) -> Font {
+        Font::with_filter(DEFAULT_FONT, DEFAULT_FONT_SIZE, filter)
+            .expect("the built-in font is valid")
     }
 
     /// The size the font was created with, in pixels.

@@ -82,6 +82,12 @@ fn main() {
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
+| `love.audio.newSource(path, "static")` | `audio::new_source(path, SourceType::Static)` | `SourceType::Stream` for music. |
+| `source:play()` / `pause()` / `stop()` | `source.play()` / `pause()` / `stop()` | |
+| `source:setLooping(true)` / `setVolume(v)` / `setPitch(p)` | `source.set_looping(true)` / `set_volume(v)` / `set_pitch(p)` | |
+| `source:seek(t)` / `tell()` / `getDuration()` | `source.seek(t)` / `tell()` / `duration()` | Seconds. `duration` is an `Option`. |
+| `source:clone()` | `source.clone()` | An independent copy, so one sound can overlap itself. |
+| `love.audio.setVolume(v)` / `pause()` / `stop()` | `audio::set_volume(v)` / `pause()` / `stop()` | |
 | `love.graphics.setColor(r, g, b, a)` | `graphics::set_color(Color)` | Components are 0.0 to 1.0. |
 | `love.graphics.newImage(path)` | `graphics::new_image(path)` | |
 | `love.keyboard.isDown(key)` | `keyboard::is_down(Key)` | Keys are an enum, not strings. |

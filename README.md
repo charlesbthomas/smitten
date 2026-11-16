@@ -29,8 +29,8 @@ fn main() {
 ## Status
 
 Early. A window, the game loop, keyboard, mouse and gamepad input, timing,
-shapes, images, text, the transform stack and save files work. Audio comes
-next. Rendering currently
+shapes, images, text, the transform stack, save files and audio (WAV, Ogg
+Vorbis, MP3 and FLAC, static or streamed) work. Rendering currently
 uses Vulkan only, so macOS is not supported yet. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
 
@@ -53,6 +53,7 @@ cargo run --example hello
 cargo run --example sprites
 cargo run --example input
 cargo run --example text
+cargo run --example audio
 cargo run --example pong
 ```
 
