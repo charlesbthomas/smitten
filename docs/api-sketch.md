@@ -123,6 +123,7 @@ fn main() {
 | `love.math.setRandomSeed(seed)` / `newRandomGenerator(seed)` | `math::set_random_seed(seed)` / `RandomGenerator::new(seed)` | A seed gives the same numbers on every platform. |
 | `love.math.noise(x, y)` | `math::noise2(x, y)` | `noise`, `noise2`, `noise3` by number of inputs. |
 | `love.math.triangulate(points)` / `isConvex(points)` | `math::triangulate(&points)` / `math::is_convex(&points)` | |
+| `love.math.newBezierCurve(points)` | `math::BezierCurve::new(&points)` | `evaluate`, `render`, `derivative`, `segment` and the rest keep their names. |
 | `love.window.setFullscreen(true)` / `getFullscreen()` | `window::set_fullscreen(true)` / `window::fullscreen()` | Desktop fullscreen. `Config::fullscreen` starts that way. |
 | `love.window.setIcon(imagedata)` | `window::set_icon("icon.png")` | Or `Config::icon`. `set_icon_rgba` takes raw pixels. |
 | `love.window.getDPIScale()` | `window::dpi_scale()` | Applied for you, as in LÖVE: coordinates are in units. `Config::dpi_scaling` is `usedpiscale`. |
