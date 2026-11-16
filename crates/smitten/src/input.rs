@@ -30,6 +30,8 @@ pub(crate) struct InputState {
     pub mouse_relative: bool,
     pub mouse_grabbed: bool,
     pub cursor: smitten_core::Cursor,
+    /// The image cursor being shown, kept alive while it is.
+    pub image_cursor: Option<crate::mouse::ImageCursor>,
     /// In the order they were connected.
     pub joysticks: Vec<JoystickState>,
     /// In the order they touched the screen.
@@ -46,6 +48,7 @@ impl Default for InputState {
             mouse_relative: false,
             mouse_grabbed: false,
             cursor: smitten_core::Cursor::Arrow,
+            image_cursor: None,
             joysticks: Vec::new(),
             touches: Vec::new(),
         }

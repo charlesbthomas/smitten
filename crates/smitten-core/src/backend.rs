@@ -134,6 +134,10 @@ pub struct Vertex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
+/// A handle to a cursor made from an image, owned by a backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CursorId(pub u32);
+
 /// A handle to a custom shader owned by a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ShaderId(pub u32);
@@ -347,6 +351,26 @@ pub trait Backend {
 
     /// Chooses the cursor shown while the pointer is over the window.
     fn set_cursor(&mut self, cursor: Cursor) -> Result<(), String>;
+
+    /// Makes a cursor from an image. `rgba` is laid out as in
+    /// `create_texture`, and `(hot_x, hot_y)` is the pixel that points,
+    /// which must lie inside the image.
+    fn create_cursor(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        hot_x: u32,
+        hot_y: u32,
+    ) -> Result<CursorId, String>;
+
+    /// Shows a cursor from `create_cursor` while the pointer is over the
+    /// window. A later `set_cursor` replaces it.
+    fn set_image_cursor(&mut self, cursor: CursorId) -> Result<(), String>;
+
+    /// Frees a cursor from `create_cursor`. It is not in use: the caller
+    /// has switched to another cursor first.
+    fn destroy_cursor(&mut self, cursor: CursorId);
 
     /// Hides the cursor and reports motion without limit, for a
     /// first-person camera or similar. The pointer stays in the window.
