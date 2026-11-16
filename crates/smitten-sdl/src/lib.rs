@@ -409,6 +409,33 @@ impl Backend for SdlBackend {
         (width.max(0) as u32, height.max(0) as u32)
     }
 
+    fn gamepad_can_rumble(&self, id: JoystickId) -> bool {
+        let Some(&gamepad) = self.gamepads.get(&id.0) else {
+            return false;
+        };
+        // SAFETY: the gamepad is open, and the property name is a
+        // constant C string.
+        unsafe {
+            SDL_GetBooleanProperty(
+                SDL_GetGamepadProperties(gamepad),
+                SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN,
+                false,
+            )
+        }
+    }
+
+    fn rumble_gamepad(&mut self, id: JoystickId, low: f32, high: f32, seconds: f32) -> bool {
+        let Some(&gamepad) = self.gamepads.get(&id.0) else {
+            return false;
+        };
+        let strength = |value: f32| (value.clamp(0.0, 1.0) * f32::from(u16::MAX)).round() as u16;
+        // Float to integer conversion saturates, so a very long or
+        // infinite time becomes the longest SDL can express.
+        let milliseconds = (seconds.max(0.0) * 1000.0) as u32;
+        // SAFETY: the gamepad is open.
+        unsafe { SDL_RumbleGamepad(gamepad, strength(low), strength(high), milliseconds) }
+    }
+
     fn set_title(&mut self, title: &str) {
         let title = c_string(title);
         // SAFETY: the window is alive and SDL copies the string.
