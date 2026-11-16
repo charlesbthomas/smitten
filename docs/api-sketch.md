@@ -114,6 +114,9 @@ fn main() {
 | `joystick:isGamepadDown("a")` | `joystick.is_gamepad_down(GamepadButton::A)` | |
 | `joystick:getGamepadAxis("leftx")` | `joystick.gamepad_axis(GamepadAxis::LeftX)` | |
 | `love.gamepadpressed(joystick, button)` | `Game::gamepad_pressed(joystick, button)` | |
+| `love.window.setFullscreen(true)` / `getFullscreen()` | `window::set_fullscreen(true)` / `window::fullscreen()` | Desktop fullscreen. `Config::fullscreen` starts that way. |
+| `love.window.setIcon(imagedata)` | `window::set_icon("icon.png")` | Or `Config::icon`. `set_icon_rgba` takes raw pixels. |
+| `love.window.getDPIScale()` | `window::dpi_scale()` | Smitten measures everything in pixels, so multiply sizes by this yourself. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 
