@@ -202,6 +202,36 @@ fn impulses_change_velocity_by_impulse_over_mass() {
 }
 
 #[test]
+fn a_force_lasts_for_one_update_only() {
+    let world = World::new(0.0, 0.0);
+    let pushed = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    pushed.add_rectangle(30.0, 30.0);
+    // Out of the way of the first, which will move along x.
+    let twisted = world.new_body(0.0, 500.0, BodyType::Dynamic);
+    twisted.add_rectangle(30.0, 30.0);
+
+    // Hard enough that neither is slow enough to be put to sleep.
+    pushed.apply_force(20_000.0, 0.0);
+    twisted.apply_torque(200_000.0);
+    world.update(STEP);
+    let speed = pushed.linear_velocity().0;
+    let spin = twisted.angular_velocity();
+    assert!(speed > 0.0 && spin > 0.0);
+
+    // With nothing pushing any more, both carry on as they were.
+    run(&world, 0.5);
+    assert!((pushed.linear_velocity().0 - speed).abs() < speed * 1e-3);
+    assert!((twisted.angular_velocity() - spin).abs() < spin * 1e-3);
+
+    // A force applied every update is a steady push.
+    for _ in 0..10 {
+        pushed.apply_force(20_000.0, 0.0);
+        world.update(STEP);
+    }
+    assert!((pushed.linear_velocity().0 - speed * 11.0).abs() < speed * 0.01);
+}
+
+#[test]
 fn a_kinematic_body_moves_at_its_velocity_and_carries_things() {
     let world = World::new(0.0, 600.0);
     let platform = world.new_body(0.0, 300.0, BodyType::Kinematic);
