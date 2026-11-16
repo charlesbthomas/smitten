@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 /// Startup settings, the equivalent of LÖVE's `conf.lua`.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -9,11 +11,21 @@ pub struct Config {
     pub height: u32,
     /// Whether the user can resize the window.
     pub resizable: bool,
+    /// Whether the game starts filling the whole screen. It can be changed
+    /// while the game runs.
+    pub fullscreen: bool,
+    /// An image file to use as the window's icon, looked up like any other
+    /// asset. When `None`, the platform's default icon is used.
+    pub icon: Option<PathBuf>,
     /// Names the game's save directory, like `t.identity` in LÖVE's
     /// `conf.lua`. When `None`, the executable's name is used.
     pub identity: Option<String>,
     /// Whether presentation waits for the display's vertical sync.
     pub vsync: bool,
+    /// Whether images and shader files are loaded again when they change
+    /// on disk while the game runs. On by default in debug builds, so
+    /// `cargo run` picks up edits, and off in release builds.
+    pub hot_reload: bool,
 }
 
 impl Default for Config {
@@ -23,8 +35,11 @@ impl Default for Config {
             width: 800,
             height: 600,
             resizable: false,
+            fullscreen: false,
+            icon: None,
             identity: None,
             vsync: true,
+            hot_reload: cfg!(debug_assertions),
         }
     }
 }

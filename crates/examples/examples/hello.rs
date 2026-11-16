@@ -1,5 +1,6 @@
 //! Opens a window whose color drifts over time.
-//! Hold the arrow keys to shift the color, press Escape to quit.
+//! Hold the arrow keys to shift the color, press F11 to switch between a
+//! window and fullscreen, and press Escape to quit.
 
 use smitten::{Color, Config, Game, Key, event, graphics, keyboard, timer, window};
 
@@ -19,7 +20,12 @@ impl Game for Hello {
         if keyboard::is_down(Key::Left) {
             self.hue_shift -= dt;
         }
-        window::set_title(&format!("Hello, Smitten ({} FPS)", timer::fps()));
+        let (width, height) = graphics::dimensions();
+        window::set_title(&format!(
+            "Hello, Smitten ({width} x {height} pixels, display scale {}, {} FPS)",
+            window::dpi_scale(),
+            timer::fps()
+        ));
     }
 
     fn draw(&mut self) {
@@ -32,8 +38,10 @@ impl Game for Hello {
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {
-        if key == Key::Escape {
-            event::quit();
+        match key {
+            Key::F11 => window::set_fullscreen(!window::fullscreen()),
+            Key::Escape => event::quit(),
+            _ => {}
         }
     }
 }
@@ -42,6 +50,7 @@ fn main() {
     smitten::run::<Hello>(Config {
         title: "Hello, Smitten".to_string(),
         resizable: true,
+        icon: Some("heart.png".into()),
         ..Config::default()
     });
 }

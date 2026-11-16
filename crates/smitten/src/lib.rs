@@ -2,7 +2,7 @@
 //!
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
 //! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`],
-//! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`]) can be called from anywhere on the main thread,
+//! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`]) can be called from anywhere on the main thread,
 //! the same way `love.graphics` and friends work in LÖVE.
 //!
 //! ```no_run
@@ -27,6 +27,7 @@
 
 mod context;
 mod input;
+mod reload;
 
 pub mod audio;
 pub mod event;
@@ -34,6 +35,7 @@ pub mod filesystem;
 pub mod graphics;
 pub mod joystick;
 pub mod keyboard;
+pub mod math;
 pub mod mouse;
 pub mod timer;
 pub mod window;
@@ -119,6 +121,9 @@ pub fn run<G: Game>(config: Config) {
         Err(message) => panic!("smitten: could not start: {message}"),
     };
     context::install(Box::new(backend), &config);
+    if let Some(icon) = &config.icon {
+        window::set_icon(icon);
+    }
 
     let mut game = G::load();
     context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
@@ -136,6 +141,7 @@ pub fn run<G: Game>(config: Config) {
             let now = ctx.backend.ticks_ns();
             ctx.timer.step(now)
         });
+        reload::check();
         game.update(dt);
 
         context::with(|ctx| ctx.gfx.begin_frame());

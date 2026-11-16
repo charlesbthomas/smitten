@@ -109,7 +109,7 @@ fn save_directory_in(ctx: &mut Context) -> io::Result<PathBuf> {
 }
 
 /// The file a read of `path` refers to.
-fn resolve(path: &Path) -> PathBuf {
+pub(crate) fn resolve(path: &Path) -> PathBuf {
     context::with(|ctx| {
         // A relative path that could escape the save directory is only
         // looked up among the assets.
