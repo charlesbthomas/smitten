@@ -353,6 +353,13 @@ name = "smitten-core"
 version = "0.0.1"
 
 [[package]]
+name = "smitten-examples"
+version = "0.0.1"
+dependencies = [
+ "smitten",
+]
+
+[[package]]
 name = "smitten-sdl"
 version = "0.0.1"
 dependencies = [
