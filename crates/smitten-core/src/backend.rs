@@ -12,7 +12,8 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, StencilMode,
+    BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton,
+    PowerInfo, StencilMode,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -296,6 +297,33 @@ pub trait Backend {
 
     /// Shows or hides the mouse cursor while it is over the window.
     fn set_mouse_visible(&mut self, visible: bool);
+
+    /// Chooses the cursor shown while the pointer is over the window.
+    fn set_cursor(&mut self, cursor: Cursor) -> Result<(), String>;
+
+    /// Hides the cursor and reports motion without limit, for a
+    /// first-person camera or similar. The pointer stays in the window.
+    fn set_relative_mouse(&mut self, relative: bool) -> Result<(), String>;
+
+    /// Keeps the pointer inside the window while the window has focus.
+    fn set_mouse_grabbed(&mut self, grabbed: bool) -> Result<(), String>;
+
+    /// Moves the pointer to `(x, y)` in pixels from the window's top-left
+    /// corner.
+    fn warp_mouse(&mut self, x: f32, y: f32);
+
+    /// Puts `text` on the system clipboard.
+    fn set_clipboard_text(&mut self, text: &str) -> Result<(), String>;
+
+    /// The text on the system clipboard, or an empty string.
+    fn clipboard_text(&mut self) -> String;
+
+    /// Opens a web address or file with the program the system uses for
+    /// it, usually the web browser.
+    fn open_url(&mut self, url: &str) -> Result<(), String>;
+
+    /// The state of the battery, if there is one.
+    fn power_info(&mut self) -> PowerInfo;
 
     /// Sets the window title.
     fn set_title(&mut self, title: &str);
