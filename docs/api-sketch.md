@@ -138,6 +138,13 @@ fn main() {
 | `world:setCallbacks(beginContact, endContact)` | `world.contacts()` after each update | A list to loop over instead of callbacks. |
 | `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
 | `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
+| `love.system.getOS()` / `getProcessorCount()` | `system::os()` / `system::processor_count()` | |
+| `love.system.setClipboardText(text)` / `getClipboardText()` | `system::set_clipboard_text(text)` / `system::clipboard_text()` | |
+| `love.system.openURL(url)` | `system::open_url(url)` | Returns whether it opened. |
+| `love.system.getPowerInfo()` | `system::power_info()` | A struct with the state, percent and seconds left. |
+| `love.mouse.setCursor(love.mouse.getSystemCursor("hand"))` | `mouse::set_cursor(Cursor::Hand)` | Image cursors are not supported yet. |
+| `love.mouse.setRelativeMode(true)` / `setGrabbed(true)` | `mouse::set_relative_mode(true)` / `mouse::set_grabbed(true)` | |
+| `love.mouse.setPosition(x, y)` | `mouse::set_position(x, y)` | In units, like `mouse::position()`. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
