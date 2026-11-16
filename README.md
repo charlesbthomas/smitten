@@ -74,6 +74,9 @@ SDL3 is built from source on the first build, which needs CMake and a C
 compiler.
 
 - **Windows:** Visual Studio Build Tools with the C++ workload, plus CMake.
+  The Build Tools include a copy of CMake that is only on the path inside
+  "Developer PowerShell for VS 2022", so run cargo from there or install
+  CMake separately.
 - **macOS:** Xcode command line tools, plus CMake.
 - **Linux:** CMake, a C compiler, and SDL's
   [build dependencies](https://wiki.libsdl.org/SDL3/README-linux#build-dependencies).

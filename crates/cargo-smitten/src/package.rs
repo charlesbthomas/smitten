@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use zip::write::SimpleFileOptions;
 
@@ -165,6 +165,27 @@ fn find_project(
     })
 }
 
+/// Explains the most likely cause of a failed build when CMake cannot be
+/// found: packaging builds SDL from source, which needs it.
+fn cmake_hint() -> &'static str {
+    let found = Command::new("cmake")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if found {
+        ""
+    } else if cfg!(windows) {
+        "\nCMake was not found, and packaging needs it to build SDL into the game. \
+         Install CMake, or run this from \"Developer PowerShell for VS 2022\", which \
+         has the copy that comes with Visual Studio."
+    } else {
+        "\nCMake was not found, and packaging needs it to build SDL into the game. \
+         Install CMake and try again."
+    }
+}
+
 pub fn run(options: Options) -> Result<String, String> {
     let current = std::env::current_dir().map_err(|error| error.to_string())?;
     let project = find_project(&read_metadata()?, &options, &current)?;
@@ -183,7 +204,7 @@ pub fn run(options: Options) -> Result<String, String> {
         .status()
         .map_err(|error| format!("could not run cargo: {error}"))?;
     if !status.success() {
-        return Err("the release build failed".to_string());
+        return Err(format!("the release build failed{}", cmake_hint()));
     }
 
     let file_name = format!("{}{}", project.executable, std::env::consts::EXE_SUFFIX);
@@ -272,13 +293,13 @@ fn zip_folder(folder: &Path, name: &str, zip_path: &Path) -> io::Result<()> {
     let mut zip = zip::ZipWriter::new(File::create(zip_path)?);
     for file in files_in(folder)? {
         let source = folder.join(&file);
-        let mut options = SimpleFileOptions::default();
+        let options = SimpleFileOptions::default();
         // Keep the executable runnable after unzipping on Linux and macOS.
         #[cfg(unix)]
-        {
+        let options = {
             use std::os::unix::fs::PermissionsExt;
-            options = options.unix_permissions(fs::metadata(&source)?.permissions().mode());
-        }
+            options.unix_permissions(fs::metadata(&source)?.permissions().mode())
+        };
         // Zip paths always use forward slashes.
         let inner: Vec<String> = std::iter::once(name.to_string())
             .chain(
