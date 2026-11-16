@@ -15,6 +15,7 @@ mod batch;
 mod canvas;
 pub(crate) mod image;
 mod particles;
+mod screen;
 mod shader;
 mod shapes;
 mod sprite_batch;
@@ -30,6 +31,7 @@ use smitten_core::StencilMode;
 
 use crate::{BlendMode, Color, CompareMode, Filter, StencilAction};
 use batch::Batch;
+pub(crate) use screen::Screen;
 
 /// What [`crate::reload`] needs from the asset types.
 pub(crate) mod reloading {
@@ -69,6 +71,13 @@ pub(crate) struct GraphicsState {
     shader: Option<Shader>,
     /// Reused between draws of large things so they do not allocate.
     scratch: Vec<Vertex>,
+    /// How units map onto the window.
+    pub(crate) screen: Screen,
+    /// Where the game's picture is drawn before it is enlarged to the
+    /// window, when the design size asks for pixel-perfect scaling.
+    surface: Option<Canvas>,
+    /// The scissor the game asked for, in units of the current target.
+    scissor: Option<(i32, i32, u32, u32)>,
 }
 
 impl Default for GraphicsState {
@@ -85,6 +94,9 @@ impl Default for GraphicsState {
             canvas: None,
             shader: None,
             scratch: Vec::new(),
+            screen: Screen::default(),
+            surface: None,
+            scissor: None,
         }
     }
 }
@@ -96,17 +108,140 @@ impl GraphicsState {
     ///
     /// Anything queued for a canvas before now, in `load` or `update`, is
     /// kept and drawn with this frame.
-    pub(crate) fn begin_frame(&mut self) {
+    pub(crate) fn begin_frame(&mut self, backend: &mut dyn Backend) {
+        self.screen
+            .update(backend.size_in_pixels(), backend.dpi_scale());
+        if let Some((width, height)) = self.screen.pixel_perfect()
+            && self.surface.is_none()
+        {
+            // If the GPU refuses, the game draws straight to the window.
+            self.surface = Canvas::create(backend, width, height, 1.0, Filter::Nearest).ok();
+        }
+        if self.surface.is_some() {
+            // The window itself only shows the surface, between black bars.
+            self.batch.set_target(None);
+            self.batch.clear_target(Color::BLACK);
+        }
         self.set_canvas(None);
         self.batch.clear_target(self.background);
         self.transform = Transform::IDENTITY;
         self.stack.clear();
     }
 
+    /// Called after `draw`: puts the game's picture in the window when a
+    /// design size is in use.
+    pub(crate) fn finish_frame(&mut self) {
+        if self.screen.design.is_none() {
+            return;
+        }
+        self.batch.set_target(None);
+        let quad = |[left, top, right, bottom]: [f32; 4], color: [f32; 4]| {
+            let corner = |x: f32, y: f32, u: f32, v: f32| Vertex {
+                position: [x, y],
+                uv: [u, v],
+                color,
+            };
+            [
+                corner(left, top, 0.0, 0.0),
+                corner(right, top, 1.0, 0.0),
+                corner(right, bottom, 1.0, 1.0),
+                corner(left, top, 0.0, 0.0),
+                corner(right, bottom, 1.0, 1.0),
+                corner(left, bottom, 0.0, 1.0),
+            ]
+        };
+        if let Some(surface) = &self.surface {
+            let view = self.screen.view();
+            let (width, height) = surface.dimensions();
+            let area = [
+                view.x,
+                view.y,
+                view.x + width as f32 * view.scale,
+                view.y + height as f32 * view.scale,
+            ];
+            self.batch.push_plain(
+                Some(surface.texture()),
+                Filter::Nearest,
+                BlendMode::Replace,
+                &quad(area, [1.0; 4]),
+            );
+        } else {
+            // The game drew at full resolution and may have spilled past
+            // its area, so cover the rest of the window.
+            for bar in self.screen.bars() {
+                self.batch.push_plain(
+                    None,
+                    Filter::default(),
+                    BlendMode::Replace,
+                    &quad(bar, [0.0, 0.0, 0.0, 1.0]),
+                );
+            }
+        }
+    }
+
     /// Called once the frame has been handed to the backend.
     pub(crate) fn end_frame(&mut self) {
         self.batch.clear();
         self.set_canvas(None);
+    }
+
+    /// How units of the current target become its pixels.
+    fn base(&self) -> Transform {
+        match &self.canvas {
+            Some(canvas) => {
+                let mut transform = Transform::IDENTITY;
+                transform.scale(canvas.dpi_scale(), canvas.dpi_scale());
+                transform
+            }
+            None if self.surface.is_some() => Transform::IDENTITY,
+            None => self.screen.view().transform(),
+        }
+    }
+
+    /// Pixels per unit on the current target.
+    fn target_scale(&self) -> f32 {
+        match &self.canvas {
+            Some(canvas) => canvas.dpi_scale(),
+            None if self.surface.is_some() => 1.0,
+            None => self.screen.view().scale,
+        }
+    }
+
+    /// The game's transform followed by the step from units to pixels.
+    fn device(&self) -> Transform {
+        self.base().then_inner(&self.transform)
+    }
+
+    /// Hands the game's scissor to the batch in pixels of the target.
+    fn apply_scissor(&mut self) {
+        let base = self.base();
+        self.batch.scissor = self.scissor.map(|(x, y, width, height)| {
+            let (left, top) = base.apply(x as f32, y as f32);
+            let (right, bottom) = base.apply(x as f32 + width as f32, y as f32 + height as f32);
+            let (left, top) = (left.round(), top.round());
+            Scissor {
+                x: left as i32,
+                y: top as i32,
+                width: (right.round() - left).max(0.0) as u32,
+                height: (bottom.round() - top).max(0.0) as u32,
+            }
+        });
+    }
+
+    /// The size in units of what is being drawn to.
+    fn target_size(&self) -> (u32, u32) {
+        match &self.canvas {
+            Some(canvas) => canvas.dimensions(),
+            None => self.screen.size(),
+        }
+    }
+
+    /// The size in pixels of what is being drawn to.
+    fn target_pixel_size(&self) -> (u32, u32) {
+        match &self.canvas {
+            Some(canvas) => canvas.pixel_dimensions(),
+            None => self.screen.pixel_size(),
+        }
     }
 
     pub(crate) fn frame(&self) -> Frame<'_> {
@@ -136,18 +271,20 @@ impl GraphicsState {
     }
 
     fn set_canvas(&mut self, canvas: Option<Canvas>) {
-        self.batch
-            .set_target(canvas.as_ref().map(|canvas| canvas.texture()));
+        let target = canvas.as_ref().or(self.surface.as_ref());
+        self.batch.set_target(target.map(|canvas| canvas.texture()));
         self.canvas = canvas;
+        self.apply_scissor();
     }
 
     /// Queues untextured triangles given in local coordinates.
     fn push_shape(&mut self, triangles: &[(f32, f32)]) {
         let color = color_array(self.color);
+        let device = self.device();
         let vertices: Vec<Vertex> = triangles
             .iter()
             .map(|&(x, y)| {
-                let (x, y) = self.transform.apply(x, y);
+                let (x, y) = device.apply(x, y);
                 Vertex {
                     position: [x, y],
                     uv: [0.0, 0.0],
@@ -160,7 +297,7 @@ impl GraphicsState {
 
     /// Queues the part of `image` covered by `quad`, placed by `local`.
     fn push_image(&mut self, image: &Image, quad: &Quad, local: &Transform) {
-        let transform = self.transform.then_inner(local);
+        let transform = self.device().then_inner(local);
         let color = color_array(self.color);
         let (u0, v0) = (quad.x / quad.sheet_width, quad.y / quad.sheet_height);
         let (u1, v1) = (
@@ -197,7 +334,7 @@ impl GraphicsState {
 impl GraphicsState {
     /// Queues every particle of `system`, placed by `local`.
     fn push_particles(&mut self, system: &ParticleSystem, local: &Transform) {
-        let transform = self.transform.then_inner(local);
+        let transform = self.device().then_inner(local);
         let vertices = system.vertices(&transform, self.color);
         let image = system.image();
         self.batch
@@ -206,7 +343,7 @@ impl GraphicsState {
 
     /// Queues every sprite of `sprites`, placed by `local`.
     fn push_sprite_batch(&mut self, sprites: &SpriteBatch, local: &Transform) {
-        let transform = self.transform.then_inner(local);
+        let transform = self.device().then_inner(local);
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
         sprites.write_vertices(&transform, self.color, &mut vertices);
@@ -224,12 +361,12 @@ impl GraphicsState {
         wrap: Option<(f32, Align)>,
         local: &Transform,
     ) {
-        let default_filter = self.default_filter;
+        let (default_filter, scale) = (self.default_filter, self.screen.draw_scale());
         let font = self
             .font
-            .get_or_insert_with(|| Font::fallback(default_filter))
+            .get_or_insert_with(|| Font::fallback(default_filter, scale))
             .clone();
-        let transform = self.transform.then_inner(local);
+        let transform = self.device().then_inner(local);
         let color = color_array(self.color);
         let filter = font.filter();
 
@@ -297,29 +434,49 @@ pub fn background_color() -> Color {
     context::with(|ctx| ctx.gfx.background)
 }
 
-/// Width in pixels of the screen, or of the active canvas.
+/// Width of the screen, or of the active canvas.
 pub fn width() -> u32 {
     dimensions().0
 }
 
-/// Height in pixels of the screen, or of the active canvas.
+/// Height of the screen, or of the active canvas.
 pub fn height() -> u32 {
     dimensions().1
 }
 
-/// Size in pixels of the screen, or of the active canvas, as
-/// `(width, height)`.
+/// Size of the screen, or of the active canvas, as `(width, height)`.
+///
+/// This is the space the game draws in. It is measured in units, which
+/// are pixels on an ordinary display and larger on a high-DPI one (see
+/// [`Config::dpi_scaling`](crate::Config::dpi_scaling)). With a
+/// [`Config::design_size`](crate::Config::design_size) it is always that
+/// size. [`pixel_dimensions`] gives the real pixels.
 pub fn dimensions() -> (u32, u32) {
-    context::with(|ctx| match &ctx.gfx.canvas {
-        Some(canvas) => canvas.dimensions(),
-        None => ctx.backend.size_in_pixels(),
-    })
+    context::with(|ctx| ctx.gfx.target_size())
+}
+
+/// Width in real pixels of the screen, or of the active canvas.
+pub fn pixel_width() -> u32 {
+    pixel_dimensions().0
+}
+
+/// Height in real pixels of the screen, or of the active canvas.
+pub fn pixel_height() -> u32 {
+    pixel_dimensions().1
+}
+
+/// Size in real pixels of the screen, or of the active canvas, the
+/// equivalent of `love.graphics.getPixelDimensions`. Shaders see
+/// positions in these pixels.
+pub fn pixel_dimensions() -> (u32, u32) {
+    context::with(|ctx| ctx.gfx.target_pixel_size())
 }
 
 // ---------------------------------------------------------------------------
 // Canvases
 
-/// Creates a transparent canvas of `width` by `height` pixels.
+/// Creates a transparent canvas of `width` by `height` units, as sharp as
+/// the screen. See [`Canvas::with_dpi_scale`] to choose its sharpness.
 ///
 /// Panics if the GPU cannot provide it, for instance because it is larger
 /// than the GPU supports. Use [`Canvas::new`] to handle the failure instead.
@@ -331,7 +488,7 @@ pub fn new_canvas(width: u32, height: u32) -> Canvas {
 /// Sends everything drawn from now on to `canvas`, or back to the screen
 /// for `None`.
 ///
-/// Positions are then in pixels from the canvas's top-left corner. The
+/// Positions are then in units from the canvas's top-left corner. The
 /// screen becomes the target again at the start of every `draw`.
 pub fn set_canvas(canvas: Option<&Canvas>) {
     context::with(|ctx| ctx.gfx.set_canvas(canvas.cloned()));
@@ -482,32 +639,26 @@ pub fn blend_mode() -> BlendMode {
 
 /// Limits drawing to a rectangle of the screen or the active canvas.
 ///
-/// The rectangle is in pixels and is not affected by the transform. It
+/// The rectangle is in units and is not affected by the transform. It
 /// stays set until changed or removed with [`clear_scissor`].
 pub fn set_scissor(x: i32, y: i32, width: u32, height: u32) {
     context::with(|ctx| {
-        ctx.gfx.batch.scissor = Some(Scissor {
-            x,
-            y,
-            width,
-            height,
-        });
+        ctx.gfx.scissor = Some((x, y, width, height));
+        ctx.gfx.apply_scissor();
     });
 }
 
 /// Removes the scissor so drawing can reach everywhere again.
 pub fn clear_scissor() {
-    context::with(|ctx| ctx.gfx.batch.scissor = None);
+    context::with(|ctx| {
+        ctx.gfx.scissor = None;
+        ctx.gfx.apply_scissor();
+    });
 }
 
 /// Returns the scissor rectangle as `(x, y, width, height)`, if one is set.
 pub fn scissor() -> Option<(i32, i32, u32, u32)> {
-    context::with(|ctx| {
-        ctx.gfx
-            .batch
-            .scissor
-            .map(|scissor| (scissor.x, scissor.y, scissor.width, scissor.height))
-    })
+    context::with(|ctx| ctx.gfx.scissor)
 }
 
 /// Sets the filter that newly created images start with.
@@ -586,7 +737,9 @@ pub fn rectangle(mode: DrawMode, x: f32, y: f32, width: f32, height: f32) {
 
 /// Draws a circle centered on `(x, y)`.
 pub fn circle(mode: DrawMode, x: f32, y: f32, radius: f32) {
-    polygon(mode, &shapes::circle_points(x, y, radius));
+    // More pixels per unit need more corners to look round.
+    let scale = context::with(|ctx| ctx.gfx.target_scale());
+    polygon(mode, &shapes::circle_points(x, y, radius, scale));
 }
 
 /// Draws a polygon through `points`. Filling only works for convex polygons.
@@ -764,10 +917,10 @@ pub fn set_font(font: &Font) {
 /// at 12 pixels, as in LÖVE.
 pub fn font() -> Font {
     context::with(|ctx| {
-        let default_filter = ctx.gfx.default_filter;
+        let (default_filter, scale) = (ctx.gfx.default_filter, ctx.gfx.screen.draw_scale());
         ctx.gfx
             .font
-            .get_or_insert_with(|| Font::fallback(default_filter))
+            .get_or_insert_with(|| Font::fallback(default_filter, scale))
             .clone()
     })
 }

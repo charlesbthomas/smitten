@@ -70,11 +70,21 @@ impl SdlBackend {
             if config.fullscreen {
                 flags |= SDL_WINDOW_FULLSCREEN;
             }
+            // Where window sizes are in pixels (Windows, X11), a display
+            // set to 150% needs a window 1.5 times as large to show the
+            // same number of units. Where they are in points (macOS,
+            // Wayland) this scale is 1 and the pixels come for free.
+            let content_scale = if config.dpi_scaling {
+                let scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+                if scale > 0.0 { scale } else { 1.0 }
+            } else {
+                1.0
+            };
             let title = c_string(&config.title);
             let window = SDL_CreateWindow(
                 title.as_ptr(),
-                config.width as i32,
-                config.height as i32,
+                (config.width as f32 * content_scale).round() as i32,
+                (config.height as f32 * content_scale).round() as i32,
                 flags,
             );
             if window.is_null() {
