@@ -10,6 +10,9 @@ publish.workspace = true
 default = ["from-source"]
 # Build SDL3 from source with CMake instead of linking a system install.
 from-source = ["sdl3-sys/build-from-source"]
+# Build SDL3 from source and link it into the executable, so a released
+# game has no separate SDL library to ship.
+static = ["sdl3-sys/build-from-source-static"]
 
 [dependencies]
 smitten-core.workspace = true

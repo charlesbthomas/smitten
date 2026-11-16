@@ -11,6 +11,9 @@ default = ["sdl-from-source"]
 # Build SDL3 from source with CMake so `cargo run` needs no system SDL install.
 # Turn this off to link against an SDL3 that is already installed.
 sdl-from-source = ["smitten-sdl/from-source"]
+# Build SDL3 from source and link it into the executable. Use this for
+# release builds so the game is a single file plus its assets.
+sdl-static = ["smitten-sdl/static"]
 
 [dependencies]
 smitten-core.workspace = true

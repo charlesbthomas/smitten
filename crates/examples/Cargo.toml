@@ -11,6 +11,7 @@ default = ["sdl-from-source"]
 # Passed through to `smitten`, so `--no-default-features` links against an
 # SDL3 that is already installed.
 sdl-from-source = ["smitten/sdl-from-source"]
+sdl-static = ["smitten/sdl-static"]
 
 [dependencies]
 smitten = { path = "../smitten", default-features = false }
