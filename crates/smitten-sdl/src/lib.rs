@@ -225,6 +225,10 @@ impl Backend for SdlBackend {
             .update_texture(texture, x, y, width, height, rgba)
     }
 
+    fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
+        self.renderer.create_render_target(width, height)
+    }
+
     fn destroy_texture(&mut self, texture: TextureId) {
         self.renderer.destroy_texture(texture);
     }

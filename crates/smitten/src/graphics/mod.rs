@@ -4,9 +4,14 @@
 //! pointing down. Everything drawn is tinted by the current color and moved
 //! by the current transform, both of which are set with functions here.
 //!
-//! Canvases and shaders are not implemented yet.
+//! Drawing normally goes to the screen. A [`Canvas`] is an off-screen
+//! image to draw to instead, for effects, lighting, or rendering a
+//! low-resolution game and scaling it up.
+//!
+//! Custom shaders are not implemented yet.
 
 mod batch;
+mod canvas;
 mod image;
 mod shapes;
 mod text;
@@ -14,12 +19,13 @@ mod transform;
 
 use std::path::Path;
 
-use smitten_core::backend::{Backend, Frame, TextureId, Vertex};
+use smitten_core::backend::{Backend, Frame, Scissor, TextureId, Vertex};
 
 use crate::context;
-use crate::{Color, Filter};
+use crate::{BlendMode, Color, Filter};
 use batch::Batch;
 
+pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
 pub use text::{Align, Font, FontError};
 pub use transform::Transform;
@@ -33,7 +39,6 @@ pub enum DrawMode {
 
 pub(crate) struct GraphicsState {
     background: Color,
-    clear: Color,
     color: Color,
     line_width: f32,
     pub(crate) default_filter: Filter,
@@ -43,13 +48,14 @@ pub(crate) struct GraphicsState {
     /// The font `print` uses. Created on first use so games that never
     /// print text pay nothing for it.
     font: Option<Font>,
+    /// Where drawing goes, or `None` for the screen.
+    canvas: Option<Canvas>,
 }
 
 impl Default for GraphicsState {
     fn default() -> Self {
         Self {
             background: Color::BLACK,
-            clear: Color::BLACK,
             color: Color::WHITE,
             line_width: 1.0,
             default_filter: Filter::default(),
@@ -57,26 +63,43 @@ impl Default for GraphicsState {
             stack: Vec::new(),
             batch: Batch::default(),
             font: None,
+            canvas: None,
         }
     }
 }
 
 impl GraphicsState {
     /// Resets what LÖVE resets before each `draw`: the screen and the
-    /// transform. The color and line width carry over between frames.
+    /// transform. The color, line width, blend mode and scissor carry over
+    /// between frames.
+    ///
+    /// Anything queued for a canvas before now, in `load` or `update`, is
+    /// kept and drawn with this frame.
     pub(crate) fn begin_frame(&mut self) {
-        self.clear = self.background;
-        self.batch.clear();
+        self.set_canvas(None);
+        self.batch.clear_target(self.background);
         self.transform = Transform::IDENTITY;
         self.stack.clear();
     }
 
+    /// Called once the frame has been handed to the backend.
+    pub(crate) fn end_frame(&mut self) {
+        self.batch.clear();
+        self.set_canvas(None);
+    }
+
     pub(crate) fn frame(&self) -> Frame<'_> {
         Frame {
-            clear: self.clear,
             vertices: &self.batch.vertices,
             calls: &self.batch.calls,
+            passes: &self.batch.passes,
         }
+    }
+
+    fn set_canvas(&mut self, canvas: Option<Canvas>) {
+        self.batch
+            .set_target(canvas.as_ref().map(|canvas| canvas.texture()));
+        self.canvas = canvas;
     }
 
     /// Queues untextured triangles given in local coordinates.
@@ -198,12 +221,10 @@ fn whole_image(image: &Image) -> Quad {
 // ---------------------------------------------------------------------------
 // Screen
 
-/// Clears the screen to `color`, discarding anything drawn so far this frame.
+/// Fills the screen, or the active canvas, with `color`, replacing
+/// whatever was there. The scissor does not limit it.
 pub fn clear(color: Color) {
-    context::with(|ctx| {
-        ctx.gfx.clear = color;
-        ctx.gfx.batch.clear();
-    });
+    context::with(|ctx| ctx.gfx.batch.clear_target(color));
 }
 
 /// Sets the color every frame is cleared to before `draw` runs.
@@ -216,19 +237,49 @@ pub fn background_color() -> Color {
     context::with(|ctx| ctx.gfx.background)
 }
 
-/// Drawable width in pixels.
+/// Width in pixels of the screen, or of the active canvas.
 pub fn width() -> u32 {
     dimensions().0
 }
 
-/// Drawable height in pixels.
+/// Height in pixels of the screen, or of the active canvas.
 pub fn height() -> u32 {
     dimensions().1
 }
 
-/// Drawable size in pixels as `(width, height)`.
+/// Size in pixels of the screen, or of the active canvas, as
+/// `(width, height)`.
 pub fn dimensions() -> (u32, u32) {
-    context::with(|ctx| ctx.backend.size_in_pixels())
+    context::with(|ctx| match &ctx.gfx.canvas {
+        Some(canvas) => canvas.dimensions(),
+        None => ctx.backend.size_in_pixels(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Canvases
+
+/// Creates a transparent canvas of `width` by `height` pixels.
+///
+/// Panics if the GPU cannot provide it, for instance because it is larger
+/// than the GPU supports. Use [`Canvas::new`] to handle the failure instead.
+pub fn new_canvas(width: u32, height: u32) -> Canvas {
+    Canvas::new(width, height)
+        .unwrap_or_else(|message| panic!("could not create a {width}x{height} canvas: {message}"))
+}
+
+/// Sends everything drawn from now on to `canvas`, or back to the screen
+/// for `None`.
+///
+/// Positions are then in pixels from the canvas's top-left corner. The
+/// screen becomes the target again at the start of every `draw`.
+pub fn set_canvas(canvas: Option<&Canvas>) {
+    context::with(|ctx| ctx.gfx.set_canvas(canvas.cloned()));
+}
+
+/// Returns the canvas being drawn to, or `None` for the screen.
+pub fn canvas() -> Option<Canvas> {
+    context::with(|ctx| ctx.gfx.canvas.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +306,48 @@ pub fn set_line_width(width: f32) {
 /// Returns the current line width.
 pub fn line_width() -> f32 {
     context::with(|ctx| ctx.gfx.line_width)
+}
+
+/// Sets how what is drawn combines with what is already there.
+///
+/// The blend mode stays set until changed, even across frames.
+pub fn set_blend_mode(mode: BlendMode) {
+    context::with(|ctx| ctx.gfx.batch.blend = mode);
+}
+
+/// Returns the current blend mode.
+pub fn blend_mode() -> BlendMode {
+    context::with(|ctx| ctx.gfx.batch.blend)
+}
+
+/// Limits drawing to a rectangle of the screen or the active canvas.
+///
+/// The rectangle is in pixels and is not affected by the transform. It
+/// stays set until changed or removed with [`clear_scissor`].
+pub fn set_scissor(x: i32, y: i32, width: u32, height: u32) {
+    context::with(|ctx| {
+        ctx.gfx.batch.scissor = Some(Scissor {
+            x,
+            y,
+            width,
+            height,
+        });
+    });
+}
+
+/// Removes the scissor so drawing can reach everywhere again.
+pub fn clear_scissor() {
+    context::with(|ctx| ctx.gfx.batch.scissor = None);
+}
+
+/// Returns the scissor rectangle as `(x, y, width, height)`, if one is set.
+pub fn scissor() -> Option<(i32, i32, u32, u32)> {
+    context::with(|ctx| {
+        ctx.gfx
+            .batch
+            .scissor
+            .map(|scissor| (scissor.x, scissor.y, scissor.width, scissor.height))
+    })
 }
 
 /// Sets the filter that newly created images start with.

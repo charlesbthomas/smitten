@@ -1,16 +1,17 @@
 //! Drawing through SDL's GPU API.
 //!
-//! The renderer has one pipeline: textured, vertex-colored triangles with
-//! alpha blending. Shapes sample a 1x1 white texture so they can share it.
-//! Each frame's vertices are uploaded once and drawn as a few runs.
+//! The renderer draws one kind of thing: textured, vertex-colored
+//! triangles. Shapes sample a 1x1 white texture so they can share the
+//! shader. There is one pipeline per blend mode and target format. Each
+//! frame's vertices are uploaded once and drawn as a few runs, pass by pass.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
 
 use sdl3_sys::everything::*;
-use smitten_core::Filter;
-use smitten_core::backend::{Frame, TextureId, Vertex};
+use smitten_core::backend::{DrawCall, Frame, Scissor, TextureId, Vertex};
+use smitten_core::{BlendMode, Filter};
 
 use crate::sdl_error;
 
@@ -20,17 +21,34 @@ static FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite.frag.spv");
 
 const VERTEX_SIZE: u32 = size_of::<Vertex>() as u32;
 const INITIAL_VERTEX_CAPACITY: u32 = 4096;
+/// The format of images and render targets. The screen may differ.
+const TEXTURE_FORMAT: SDL_GPUTextureFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+/// One pipeline per blend mode, indexed by [`blend_index`].
+type Pipelines = [*mut SDL_GPUGraphicsPipeline; BlendMode::ALL.len()];
+
+fn blend_index(mode: BlendMode) -> usize {
+    BlendMode::ALL
+        .iter()
+        .position(|&candidate| candidate == mode)
+        .unwrap_or(0)
+}
 
 #[derive(Clone, Copy)]
 struct Texture {
     handle: *mut SDL_GPUTexture,
     width: u32,
     height: u32,
+    /// Whether it can be drawn to as well as sampled.
+    is_target: bool,
 }
 
 pub(crate) struct Renderer {
     device: *mut SDL_GPUDevice,
-    pipeline: *mut SDL_GPUGraphicsPipeline,
+    /// For drawing to the screen.
+    screen_pipelines: Pipelines,
+    /// For drawing to render targets.
+    target_pipelines: Pipelines,
     linear: *mut SDL_GPUSampler,
     nearest: *mut SDL_GPUSampler,
     white: *mut SDL_GPUTexture,
@@ -47,7 +65,8 @@ impl Renderer {
     pub fn new(device: *mut SDL_GPUDevice, window: *mut SDL_Window) -> Result<Self, String> {
         let mut renderer = Self {
             device,
-            pipeline: ptr::null_mut(),
+            screen_pipelines: [ptr::null_mut(); BlendMode::ALL.len()],
+            target_pipelines: [ptr::null_mut(); BlendMode::ALL.len()],
             linear: ptr::null_mut(),
             nearest: ptr::null_mut(),
             white: ptr::null_mut(),
@@ -61,7 +80,13 @@ impl Renderer {
         // created so far. SDL ignores null handles on release.
         // SAFETY: `device` and `window` are alive and belong together.
         unsafe {
-            renderer.pipeline = create_pipeline(device, window)?;
+            let screen_format = SDL_GetGPUSwapchainTextureFormat(device, window);
+            for mode in BlendMode::ALL {
+                renderer.screen_pipelines[blend_index(mode)] =
+                    create_pipeline(device, screen_format, mode)?;
+                renderer.target_pipelines[blend_index(mode)] =
+                    create_pipeline(device, TEXTURE_FORMAT, mode)?;
+            }
             renderer.linear = create_sampler(device, SDL_GPU_FILTER_LINEAR)?;
             renderer.nearest = create_sampler(device, SDL_GPU_FILTER_NEAREST)?;
             renderer.white = new_texture(device, 1, 1, &[255, 255, 255, 255])?;
@@ -91,6 +116,62 @@ impl Renderer {
                 handle,
                 width,
                 height,
+                is_target: false,
+            },
+        );
+        Ok(TextureId(id))
+    }
+
+    pub fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
+        if width == 0 || height == 0 {
+            return Err("a canvas must be at least 1x1 pixels".to_string());
+        }
+        // SAFETY: the device is alive, and the passes are begun, ended and
+        // submitted in the order SDL requires.
+        let handle = unsafe {
+            let handle = SDL_CreateGPUTexture(
+                self.device,
+                &SDL_GPUTextureCreateInfo {
+                    r#type: SDL_GPU_TEXTURETYPE_2D,
+                    format: TEXTURE_FORMAT,
+                    usage: SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+                    width,
+                    height,
+                    layer_count_or_depth: 1,
+                    num_levels: 1,
+                    sample_count: SDL_GPU_SAMPLECOUNT_1,
+                    ..Default::default()
+                },
+            );
+            if handle.is_null() {
+                return Err(format!("could not create a canvas: {}", sdl_error()));
+            }
+            // New GPU memory holds garbage, so start it out transparent.
+            let commands = SDL_AcquireGPUCommandBuffer(self.device);
+            if !commands.is_null() {
+                let target = SDL_GPUColorTargetInfo {
+                    texture: handle,
+                    load_op: SDL_GPU_LOADOP_CLEAR,
+                    store_op: SDL_GPU_STOREOP_STORE,
+                    ..Default::default()
+                };
+                let pass = SDL_BeginGPURenderPass(commands, &target, 1, ptr::null());
+                if !pass.is_null() {
+                    SDL_EndGPURenderPass(pass);
+                }
+                SDL_SubmitGPUCommandBuffer(commands);
+            }
+            handle
+        };
+        let id = self.next_texture_id;
+        self.next_texture_id += 1;
+        self.textures.insert(
+            id,
+            Texture {
+                handle,
+                width,
+                height,
+                is_target: true,
             },
         );
         Ok(TextureId(id))
@@ -237,36 +318,78 @@ impl Renderer {
                 && self.upload_vertices(commands, frame.vertices);
 
             let mut swapchain: *mut SDL_GPUTexture = ptr::null_mut();
-            let (mut width, mut height) = (0u32, 0u32);
+            let (mut screen_width, mut screen_height) = (0u32, 0u32);
             let acquired = SDL_WaitAndAcquireGPUSwapchainTexture(
                 commands,
                 window,
                 &mut swapchain,
-                &mut width,
-                &mut height,
+                &mut screen_width,
+                &mut screen_height,
             );
-
             // The texture is null while the window is minimized.
-            if acquired && !swapchain.is_null() {
-                let target = SDL_GPUColorTargetInfo {
-                    texture: swapchain,
-                    clear_color: SDL_FColor {
-                        r: frame.clear.r,
-                        g: frame.clear.g,
-                        b: frame.clear.b,
-                        a: frame.clear.a,
+            if !acquired {
+                swapchain = ptr::null_mut();
+            }
+
+            for pass in frame.passes {
+                // A pass whose target is gone, or is not there to draw on
+                // this frame, is skipped.
+                let (texture, width, height, pipelines) = match pass.target {
+                    None => (
+                        swapchain,
+                        screen_width,
+                        screen_height,
+                        &self.screen_pipelines,
+                    ),
+                    Some(id) => match self.textures.get(&id.0) {
+                        Some(target) if target.is_target => (
+                            target.handle,
+                            target.width,
+                            target.height,
+                            &self.target_pipelines,
+                        ),
+                        _ => continue,
                     },
-                    load_op: SDL_GPU_LOADOP_CLEAR,
+                };
+                if texture.is_null() || width == 0 || height == 0 {
+                    continue;
+                }
+
+                let mut info = SDL_GPUColorTargetInfo {
+                    texture,
+                    load_op: SDL_GPU_LOADOP_LOAD,
                     store_op: SDL_GPU_STOREOP_STORE,
                     ..Default::default()
                 };
-                let pass = SDL_BeginGPURenderPass(commands, &target, 1, ptr::null());
-                if !pass.is_null() {
-                    if have_geometry && width > 0 && height > 0 {
-                        self.draw_calls(commands, pass, frame, width, height);
-                    }
-                    SDL_EndGPURenderPass(pass);
+                if let Some(color) = pass.clear {
+                    info.load_op = SDL_GPU_LOADOP_CLEAR;
+                    info.clear_color = SDL_FColor {
+                        r: color.r,
+                        g: color.g,
+                        b: color.b,
+                        a: color.a,
+                    };
                 }
+                let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, ptr::null());
+                if render_pass.is_null() {
+                    continue;
+                }
+                let calls = (pass.first_call as usize)
+                    .checked_add(pass.call_count as usize)
+                    .and_then(|end| frame.calls.get(pass.first_call as usize..end));
+                if let (true, Some(calls)) = (have_geometry, calls) {
+                    self.draw_calls(
+                        commands,
+                        render_pass,
+                        calls,
+                        pass.target,
+                        pipelines,
+                        frame.vertices.len() as u32,
+                        width,
+                        height,
+                    );
+                }
+                SDL_EndGPURenderPass(render_pass);
             }
 
             SDL_SubmitGPUCommandBuffer(commands);
@@ -274,24 +397,29 @@ impl Renderer {
     }
 
     /// # Safety
-    /// `pass` must be an open render pass on `commands`, and the vertex
-    /// buffer must already hold `frame.vertices`.
+    /// `pass` must be an open render pass on `commands` whose target is
+    /// `width` by `height` pixels and matches `pipelines`, and the vertex
+    /// buffer must already hold `vertex_count` vertices.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn draw_calls(
         &self,
         commands: *mut SDL_GPUCommandBuffer,
         pass: *mut SDL_GPURenderPass,
-        frame: &Frame,
+        calls: &[DrawCall],
+        target: Option<TextureId>,
+        pipelines: &Pipelines,
+        vertex_count: u32,
         width: u32,
         height: u32,
     ) {
         // Padded to 16 bytes, the size of the shader's uniform block.
         let pixel_to_clip = [2.0 / width as f32, 2.0 / height as f32, 0.0, 0.0];
-        let vertex_count = frame.vertices.len() as u32;
+        let mut bound_blend = None;
+        let mut bound_scissor = None;
 
         // SAFETY: every handle bound here is alive, and each draw is checked
         // to stay inside the uploaded vertices.
         unsafe {
-            SDL_BindGPUGraphicsPipeline(pass, self.pipeline);
             SDL_BindGPUVertexBuffers(
                 pass,
                 0,
@@ -308,12 +436,16 @@ impl Renderer {
                 size_of_val(&pixel_to_clip) as u32,
             );
 
-            for call in frame.calls {
+            for call in calls {
                 let in_range = call
                     .first_vertex
                     .checked_add(call.vertex_count)
                     .is_some_and(|end| end <= vertex_count);
                 if call.vertex_count == 0 || !in_range {
+                    continue;
+                }
+                // A target cannot be sampled while it is being drawn to.
+                if call.texture.is_some() && call.texture == target {
                     continue;
                 }
                 // A texture that was freed while still queued draws nothing.
@@ -324,6 +456,25 @@ impl Renderer {
                         None => continue,
                     },
                 };
+                let Some(scissor) = clip_scissor(call.scissor, width, height) else {
+                    continue;
+                };
+                if bound_blend != Some(call.blend) {
+                    SDL_BindGPUGraphicsPipeline(pass, pipelines[blend_index(call.blend)]);
+                    bound_blend = Some(call.blend);
+                }
+                if bound_scissor != Some(scissor) {
+                    SDL_SetGPUScissor(
+                        pass,
+                        &SDL_Rect {
+                            x: scissor.0,
+                            y: scissor.1,
+                            w: scissor.2,
+                            h: scissor.3,
+                        },
+                    );
+                    bound_scissor = Some(scissor);
+                }
                 let sampler = match call.filter {
                     Filter::Linear => self.linear,
                     Filter::Nearest => self.nearest,
@@ -340,6 +491,93 @@ impl Renderer {
     }
 }
 
+/// Returns the part of `scissor` inside a `width` by `height` target as
+/// `(x, y, w, h)`, or `None` if nothing is left to draw in.
+fn clip_scissor(scissor: Option<Scissor>, width: u32, height: u32) -> Option<(i32, i32, i32, i32)> {
+    let (width, height) = (i64::from(width), i64::from(height));
+    let (left, top, right, bottom) = match scissor {
+        None => (0, 0, width, height),
+        Some(scissor) => {
+            let left = i64::from(scissor.x);
+            let top = i64::from(scissor.y);
+            (
+                left.max(0),
+                top.max(0),
+                (left + i64::from(scissor.width)).min(width),
+                (top + i64::from(scissor.height)).min(height),
+            )
+        }
+    };
+    if right <= left || bottom <= top {
+        return None;
+    }
+    let convert = |value: i64| i32::try_from(value).ok();
+    Some((
+        convert(left)?,
+        convert(top)?,
+        convert(right - left)?,
+        convert(bottom - top)?,
+    ))
+}
+
+/// The GPU blend settings for a blend mode, matching LÖVE's.
+fn blend_state(mode: BlendMode) -> SDL_GPUColorTargetBlendState {
+    let (src_color, dst_color, color_op, src_alpha, dst_alpha) = match mode {
+        BlendMode::Alpha => (
+            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_GPU_BLENDOP_ADD,
+            SDL_GPU_BLENDFACTOR_ONE,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        ),
+        BlendMode::Premultiplied => (
+            SDL_GPU_BLENDFACTOR_ONE,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            SDL_GPU_BLENDOP_ADD,
+            SDL_GPU_BLENDFACTOR_ONE,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        ),
+        BlendMode::Add => (
+            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            SDL_GPU_BLENDFACTOR_ONE,
+            SDL_GPU_BLENDOP_ADD,
+            SDL_GPU_BLENDFACTOR_ZERO,
+            SDL_GPU_BLENDFACTOR_ONE,
+        ),
+        BlendMode::Subtract => (
+            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            SDL_GPU_BLENDFACTOR_ONE,
+            SDL_GPU_BLENDOP_REVERSE_SUBTRACT,
+            SDL_GPU_BLENDFACTOR_ZERO,
+            SDL_GPU_BLENDFACTOR_ONE,
+        ),
+        BlendMode::Multiply => (
+            SDL_GPU_BLENDFACTOR_DST_COLOR,
+            SDL_GPU_BLENDFACTOR_ZERO,
+            SDL_GPU_BLENDOP_ADD,
+            SDL_GPU_BLENDFACTOR_DST_ALPHA,
+            SDL_GPU_BLENDFACTOR_ZERO,
+        ),
+        BlendMode::Replace => (
+            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            SDL_GPU_BLENDFACTOR_ZERO,
+            SDL_GPU_BLENDOP_ADD,
+            SDL_GPU_BLENDFACTOR_ONE,
+            SDL_GPU_BLENDFACTOR_ZERO,
+        ),
+    };
+    SDL_GPUColorTargetBlendState {
+        enable_blend: true,
+        src_color_blendfactor: src_color,
+        dst_color_blendfactor: dst_color,
+        color_blend_op: color_op,
+        src_alpha_blendfactor: src_alpha,
+        dst_alpha_blendfactor: dst_alpha,
+        alpha_blend_op: SDL_GPU_BLENDOP_ADD,
+        ..Default::default()
+    }
+}
+
 impl Drop for Renderer {
     fn drop(&mut self) {
         // SAFETY: every handle came from this device and is released once.
@@ -353,16 +591,19 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
-            SDL_ReleaseGPUGraphicsPipeline(self.device, self.pipeline);
+            for &pipeline in self.screen_pipelines.iter().chain(&self.target_pipelines) {
+                SDL_ReleaseGPUGraphicsPipeline(self.device, pipeline);
+            }
         }
     }
 }
 
 /// # Safety
-/// `device` must be alive and own `window`.
+/// `device` must be alive.
 unsafe fn create_pipeline(
     device: *mut SDL_GPUDevice,
-    window: *mut SDL_Window,
+    format: SDL_GPUTextureFormat,
+    blend: BlendMode,
 ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
     // SAFETY: all pointers in the create-info structs outlive the calls
     // that read them, and the shaders are released on every path.
@@ -407,19 +648,9 @@ unsafe fn create_pipeline(
             ),
         ];
 
-        // LÖVE's default "alpha" blend mode with straight alpha.
         let targets = [SDL_GPUColorTargetDescription {
-            format: SDL_GetGPUSwapchainTextureFormat(device, window),
-            blend_state: SDL_GPUColorTargetBlendState {
-                enable_blend: true,
-                src_color_blendfactor: SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-                dst_color_blendfactor: SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-                color_blend_op: SDL_GPU_BLENDOP_ADD,
-                src_alpha_blendfactor: SDL_GPU_BLENDFACTOR_ONE,
-                dst_alpha_blendfactor: SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-                alpha_blend_op: SDL_GPU_BLENDOP_ADD,
-                ..Default::default()
-            },
+            format,
+            blend_state: blend_state(blend),
         }];
 
         let info = SDL_GPUGraphicsPipelineCreateInfo {
@@ -538,7 +769,7 @@ unsafe fn new_texture(
             device,
             &SDL_GPUTextureCreateInfo {
                 r#type: SDL_GPU_TEXTURETYPE_2D,
-                format: SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                format: TEXTURE_FORMAT,
                 usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
                 width,
                 height,
