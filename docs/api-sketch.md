@@ -88,6 +88,9 @@ fn main() {
 | `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`. |
 | `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |
 | `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
+| `love.graphics.newShader(code)` | `graphics::new_shader(code)` | WGSL, not GLSL. Defines `fn effect(color, uv, pixel) -> vec4<f32>`. `Shader::from_file(path)` loads a file. |
+| `love.graphics.setShader(shader)` / `setShader()` | `graphics::set_shader(Some(&shader))` / `set_shader(None)` | |
+| `shader:send(name, value)` | `shader.send(name, value)` | Sets a member of the shader's `Params` struct. |
 | `love.audio.newSource(path, "static")` | `audio::new_source(path, SourceType::Static)` | `SourceType::Stream` for music. |
 | `source:play()` / `pause()` / `stop()` | `source.play()` / `pause()` / `stop()` | |
 | `source:setLooping(true)` / `setVolume(v)` / `setPitch(p)` | `source.set_looping(true)` / `set_volume(v)` / `set_pitch(p)` | |

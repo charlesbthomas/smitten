@@ -31,7 +31,7 @@ fn main() {
 Early. A window, the game loop, keyboard, mouse and gamepad input, timing,
 shapes, images, text, the transform stack, canvases, blend modes, the
 scissor, save files and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
-streamed) work. Custom shaders are not implemented yet. Rendering currently
+streamed) work, as do custom shaders written in WGSL. Rendering currently
 uses Vulkan only, so macOS is not supported yet. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
 
@@ -56,6 +56,7 @@ cargo run --example input
 cargo run --example text
 cargo run --example audio
 cargo run --example canvas
+cargo run --example shader
 cargo run --example pong
 ```
 
