@@ -8,17 +8,17 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 
+use smitten_core::Key;
 use smitten_core::backend::Backend;
-use smitten_core::{Color, Key};
 
+use crate::graphics::GraphicsState;
 use crate::timer::TimerState;
 
 pub(crate) struct Context {
     pub backend: Box<dyn Backend>,
     pub timer: TimerState,
     pub keys_down: HashSet<Key>,
-    pub background: Color,
-    pub frame_clear: Color,
+    pub gfx: GraphicsState,
     pub quit_requested: bool,
 }
 
@@ -37,8 +37,7 @@ pub(crate) fn install(backend: Box<dyn Backend>) {
             backend,
             timer: TimerState::default(),
             keys_down: HashSet::new(),
-            background: Color::BLACK,
-            frame_clear: Color::BLACK,
+            gfx: GraphicsState::default(),
             quit_requested: false,
         });
     });
@@ -61,4 +60,18 @@ pub(crate) fn with<R>(f: impl FnOnce(&mut Context) -> R) -> R {
         );
         f(ctx)
     })
+}
+
+/// Runs `f` with the framework state if it is available.
+///
+/// Used by destructors, which may run after the game has shut down or on
+/// another thread, where there is nothing left to clean up.
+pub(crate) fn try_with(f: impl FnOnce(&mut Context)) {
+    let _ = CONTEXT.try_with(|slot| {
+        if let Ok(mut slot) = slot.try_borrow_mut()
+            && let Some(ctx) = slot.as_mut()
+        {
+            f(ctx);
+        }
+    });
 }

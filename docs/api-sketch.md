@@ -22,7 +22,7 @@ impl Game for Catch {
     fn load() -> Self {                                   // works today
         graphics::set_background_color(Color::rgb(0.1, 0.1, 0.2)); // works today
         Catch {
-            player: graphics::new_image("player.png"),
+            player: graphics::new_image("player.png"),      // works today
             font: graphics::new_font("font.ttf", 24.0),
             blip: audio::new_source("blip.ogg", audio::SourceType::Static),
             x: 400.0,
@@ -40,9 +40,9 @@ impl Game for Catch {
     }
 
     fn draw(&mut self) {                                  // works today
-        graphics::draw(&self.player, self.x, 500.0);
-        graphics::set_color(Color::WHITE);
-        graphics::rectangle(DrawMode::Fill, 0.0, 580.0, 800.0, 20.0);
+        graphics::draw(&self.player, self.x, 500.0);      // works today
+        graphics::set_color(Color::WHITE);                // works today
+        graphics::rectangle(DrawMode::Fill, 0.0, 580.0, 800.0, 20.0); // works today
         graphics::set_font(&self.font);
         graphics::print(&format!("Score: {}", self.score), 10.0, 10.0);
     }
@@ -71,6 +71,9 @@ fn main() {
 | `love.quit()` | `Game::quit() -> bool` | Return `true` to keep running, as in LÖVE. |
 | `conf.lua` | `Config` passed to `run` | |
 | `love.graphics.draw(img, x, y)` | `graphics::draw(&img, x, y)` | |
+| `love.graphics.draw(img, x, y, r, sx, sy, ox, oy)` | `graphics::draw_ex(&img, x, y, r, sx, sy, ox, oy)` | Same arguments in the same order. |
+| `love.graphics.draw(img, quad, x, y)` | `graphics::draw_quad(&img, &quad, x, y)` | |
+| `love.graphics.push()` / `pop()` | `graphics::push()` / `graphics::pop()` | |
 | `love.graphics.setColor(r, g, b, a)` | `graphics::set_color(Color)` | Components are 0.0 to 1.0. |
 | `love.graphics.newImage(path)` | `graphics::new_image(path)` | |
 | `love.keyboard.isDown(key)` | `keyboard::is_down(Key)` | Keys are an enum, not strings. |
@@ -85,9 +88,9 @@ fn main() {
   `smitten::run` is active. Calling them at any other time panics with a
   clear message.
 - **Optional arguments.** LÖVE's `draw(img, x, y, r, sx, sy, ox, oy)` has
-  many optional parameters, which Rust lacks. The plan is a short form
-  (`draw(&img, x, y)`) plus an extended form taking a transform
-  (`draw_ex(&img, &Transform)`). This is the main open API question.
+  optional parameters, which Rust lacks. Smitten has a short form
+  (`draw(&img, x, y)`) and an `_ex` form that takes LÖVE's full argument
+  list in the same order.
 - **Loading errors.** `new_image` and friends panic with the file name on
   failure, matching LÖVE's error screen behavior. `try_new_image` variants
   return a `Result` for games that want to recover.

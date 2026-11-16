@@ -5,21 +5,28 @@
 //! This is the only Smitten crate that contains `unsafe` code or links a
 //! native library.
 
+mod renderer;
+
 use std::ffi::{CStr, CString};
+use std::mem::ManuallyDrop;
 use std::ptr;
 
 use sdl3_sys::everything::*;
 
-use smitten_core::backend::{Backend, BackendEvent};
-use smitten_core::{Color, Config, Key};
+use smitten_core::backend::{Backend, BackendEvent, Frame, TextureId};
+use smitten_core::{Config, Key};
+
+use renderer::Renderer;
 
 /// A window and GPU device owned through SDL3.
 pub struct SdlBackend {
     window: *mut SDL_Window,
     device: *mut SDL_GPUDevice,
+    /// Dropped by hand in `Drop`, before the device it draws with.
+    renderer: ManuallyDrop<Renderer>,
 }
 
-fn sdl_error() -> String {
+pub(crate) fn sdl_error() -> String {
     // SAFETY: SDL_GetError always returns a valid NUL-terminated string.
     unsafe { CStr::from_ptr(SDL_GetError()) }
         .to_string_lossy()
@@ -62,10 +69,10 @@ impl SdlBackend {
                 return Err(message);
             }
 
-            // Declare every shader format Smitten can supply so SDL is free
-            // to pick the best driver for the platform.
-            let formats =
-                SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL;
+            // The built-in shaders are SPIR-V only for now, which selects the
+            // Vulkan driver. Direct3D 12 and Metal need their own shader
+            // formats before they can be offered here.
+            let formats = SDL_GPU_SHADERFORMAT_SPIRV;
             let device = SDL_CreateGPUDevice(formats, cfg!(debug_assertions), ptr::null());
             if device.is_null() {
                 let message = format!("could not create a GPU device: {}", sdl_error());
@@ -93,15 +100,32 @@ impl SdlBackend {
                 );
             }
 
-            Ok(Self { window, device })
+            let renderer = match Renderer::new(device, window) {
+                Ok(renderer) => renderer,
+                Err(message) => {
+                    SDL_ReleaseWindowFromGPUDevice(device, window);
+                    SDL_DestroyGPUDevice(device);
+                    SDL_DestroyWindow(window);
+                    SDL_Quit();
+                    return Err(message);
+                }
+            };
+
+            Ok(Self {
+                window,
+                device,
+                renderer: ManuallyDrop::new(renderer),
+            })
         }
     }
 }
 
 impl Drop for SdlBackend {
     fn drop(&mut self) {
-        // SAFETY: both pointers were created in `new` and are released once.
+        // SAFETY: everything was created in `new` and is released once, the
+        // renderer first because its resources belong to the device.
         unsafe {
+            ManuallyDrop::drop(&mut self.renderer);
             SDL_ReleaseWindowFromGPUDevice(self.device, self.window);
             SDL_DestroyGPUDevice(self.device);
             SDL_DestroyWindow(self.window);
@@ -143,46 +167,21 @@ impl Backend for SdlBackend {
         }
     }
 
-    fn present(&mut self, clear: Color) {
-        // SAFETY: the command buffer and render pass are used in the order
-        // SDL requires, and the command buffer is always submitted.
-        unsafe {
-            let commands = SDL_AcquireGPUCommandBuffer(self.device);
-            if commands.is_null() {
-                return;
-            }
+    fn create_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<TextureId, String> {
+        self.renderer.create_texture(width, height, rgba)
+    }
 
-            let mut swapchain: *mut SDL_GPUTexture = ptr::null_mut();
-            let acquired = SDL_WaitAndAcquireGPUSwapchainTexture(
-                commands,
-                self.window,
-                &mut swapchain,
-                ptr::null_mut(),
-                ptr::null_mut(),
-            );
+    fn destroy_texture(&mut self, texture: TextureId) {
+        self.renderer.destroy_texture(texture);
+    }
 
-            // The texture is null while the window is minimized.
-            if acquired && !swapchain.is_null() {
-                let target = SDL_GPUColorTargetInfo {
-                    texture: swapchain,
-                    clear_color: SDL_FColor {
-                        r: clear.r,
-                        g: clear.g,
-                        b: clear.b,
-                        a: clear.a,
-                    },
-                    load_op: SDL_GPU_LOADOP_CLEAR,
-                    store_op: SDL_GPU_STOREOP_STORE,
-                    ..Default::default()
-                };
-                let pass = SDL_BeginGPURenderPass(commands, &target, 1, ptr::null());
-                if !pass.is_null() {
-                    SDL_EndGPURenderPass(pass);
-                }
-            }
-
-            SDL_SubmitGPUCommandBuffer(commands);
-        }
+    fn present(&mut self, frame: &Frame) {
+        self.renderer.present(self.window, frame);
     }
 
     fn ticks_ns(&self) -> u64 {
