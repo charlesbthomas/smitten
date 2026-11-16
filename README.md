@@ -45,7 +45,7 @@ Smitten is a Cargo workspace. Games depend only on `smitten`.
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
 | `crates/examples` | Example games, including Pong, and the assets they load. |
-| `crates/examples` | Example games, including Pong, and the assets they load. |
+| `crates/cargo-smitten` | The `cargo smitten package` command, which builds a game for release. |
 
 ## Running the examples
 
@@ -73,3 +73,27 @@ compiler.
 
 To link against an SDL3 that is already installed, build with
 `--no-default-features`.
+
+## Releasing a game
+
+`cargo smitten package` builds a game in release mode and gathers what a
+player needs: the executable, with SDL linked into it, and the game's
+`assets` folder. It writes a folder and a zip of that folder to
+`target/package`.
+
+```
+cargo install --path crates/cargo-smitten
+cd my-game
+cargo smitten package
+```
+
+To try it on an example from this workspace without installing:
+
+```
+cargo run -p cargo-smitten -- package -p smitten-examples --example pong
+```
+
+The package is for the platform it was built on, so build on Windows for
+Windows players and on Linux for Linux players. On Windows, add
+`#![windows_subsystem = "windows"]` to the top of the game's `main.rs` so
+it does not open a console window alongside the game.
