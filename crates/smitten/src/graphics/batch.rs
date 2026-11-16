@@ -36,6 +36,25 @@ impl Batch {
         self.shader_offset = None;
     }
 
+    /// Forgets the passes queued for canvases, once they have been drawn
+    /// ahead of the rest of the frame. What is queued for the screen
+    /// stays, in order.
+    pub fn forget_canvas_passes(&mut self) {
+        let mut calls = Vec::with_capacity(self.calls.len());
+        self.passes.retain_mut(|pass| {
+            if pass.target.is_some() {
+                return false;
+            }
+            let first = pass.first_call as usize;
+            pass.first_call = calls.len() as u32;
+            calls.extend_from_slice(&self.calls[first..first + pass.call_count as usize]);
+            true
+        });
+        // The vertices and uniform data stay where they are, since the
+        // calls that remain point into them.
+        self.calls = calls;
+    }
+
     /// Draws what is queued from now on with `shader` and this uniform
     /// data, or with the built-in shader for `None`.
     pub fn set_shader(&mut self, shader: Option<(ShaderId, &[u8])>) {
@@ -302,6 +321,44 @@ mod tests {
             .collect();
         assert_eq!(ranges, [(0, 1), (1, 1), (2, 1)]);
         assert_eq!(batch.calls[1].vertex_count, 6);
+    }
+
+    #[test]
+    fn forgetting_canvas_passes_keeps_the_screen_draws_in_order() {
+        let mut batch = Batch::default();
+        let canvas = Some(TextureId(7));
+        batch.push(Some(TextureId(1)), Filter::Linear, &TRIANGLE);
+        batch.set_target(canvas);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push(Some(TextureId(2)), Filter::Linear, &TRIANGLE);
+        batch.set_target(None);
+        batch.push(canvas, Filter::Linear, &TRIANGLE);
+        batch.forget_canvas_passes();
+
+        let passes: Vec<_> = batch
+            .passes
+            .iter()
+            .map(|pass| (pass.target, pass.first_call, pass.call_count))
+            .collect();
+        assert_eq!(passes, [(None, 0, 1), (None, 1, 1)]);
+        let calls: Vec<_> = batch
+            .calls
+            .iter()
+            .map(|call| (call.texture, call.first_vertex))
+            .collect();
+        assert_eq!(calls, [(Some(TextureId(1)), 0), (canvas, 9)]);
+
+        // Drawing carries on in the last screen pass.
+        batch.push(canvas, Filter::Linear, &TRIANGLE);
+        assert_eq!(batch.passes.len(), 2);
+        assert_eq!(batch.calls.len(), 2);
+        assert_eq!(batch.calls[1].vertex_count, 6);
+
+        // A canvas drawn to again starts a pass of its own.
+        batch.set_target(canvas);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        assert_eq!(batch.passes.len(), 3);
+        assert_eq!(batch.passes[2].first_call, 2);
     }
 
     #[test]

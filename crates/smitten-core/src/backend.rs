@@ -281,6 +281,15 @@ pub trait Backend {
     /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);
 
+    /// Draws the passes of `frame` that go to render targets, without
+    /// showing anything. Passes that go to the screen are left out.
+    fn render_offscreen(&mut self, frame: &Frame);
+
+    /// Copies a texture's pixels back from the GPU as
+    /// `(width, height, rgba)`: four bytes a pixel, in rows from the top.
+    /// This waits for the GPU, so it is slow.
+    fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String>;
+
     /// Monotonic time in nanoseconds.
     fn ticks_ns(&self) -> u64;
 

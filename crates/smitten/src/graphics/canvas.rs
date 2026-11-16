@@ -4,7 +4,7 @@ use std::ops::Deref;
 use smitten_core::Filter;
 use smitten_core::backend::Backend;
 
-use super::Image;
+use super::{Image, ImageData};
 use crate::context;
 
 /// An off-screen image that can be drawn to, the equivalent of LÖVE's
@@ -89,6 +89,22 @@ impl Canvas {
     /// [`Image::dimensions`] gives its size in units.
     pub fn pixel_dimensions(&self) -> (u32, u32) {
         self.pixels
+    }
+
+    /// Copies the canvas's pixels back from the GPU, as LÖVE's
+    /// `Canvas:newImageData` does. The result is
+    /// [`pixel_dimensions`](Canvas::pixel_dimensions) in size.
+    ///
+    /// Everything drawn to the canvas so far is included. Colors come back
+    /// as the canvas stores them, multiplied by their alpha, so they only
+    /// differ from what was drawn where the canvas is see-through.
+    ///
+    /// This waits for the GPU, so it is too slow to do every frame. It
+    /// also draws what is queued for every canvas straight away: avoid it
+    /// between drawing a canvas to the screen and changing that canvas
+    /// later in the same frame, or the screen shows the later contents.
+    pub fn new_image_data(&self) -> Result<ImageData, String> {
+        context::with(|ctx| ctx.gfx.read_canvas(&mut *ctx.backend, self))
     }
 
     /// Runs `draw` with this canvas as the target, then goes back to
