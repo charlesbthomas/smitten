@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+repository = "https://github.com/charlesbthomas/smitten"
+publish = false
+
+[workspace.dependencies]
+smitten-core = { path = "crates/smitten-core" }
+smitten-sdl = { path = "crates/smitten-sdl", default-features = false }
+sdl3-sys = "0.7.3"
