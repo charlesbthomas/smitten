@@ -14,8 +14,10 @@
 //! one. Writing always goes to the save directory. Image and font loading
 //! use the same lookup.
 
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::Config;
 use crate::context::{self, Context};
@@ -170,6 +172,109 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
     resolve(path.as_ref()).exists()
 }
 
+/// What kind of thing a path names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FileType {
+    File,
+    Directory,
+    /// Something else, such as a device.
+    Other,
+}
+
+/// What is known about a file or directory, as `love.filesystem.getInfo`
+/// reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileInfo {
+    pub kind: FileType,
+    /// The size in bytes. Zero for a directory.
+    pub size: u64,
+    /// When it was last changed, where the system records that.
+    pub modified: Option<SystemTime>,
+}
+
+fn info_of(file: &Path) -> Option<FileInfo> {
+    let metadata = std::fs::metadata(file).ok()?;
+    let kind = if metadata.is_file() {
+        FileType::File
+    } else if metadata.is_dir() {
+        FileType::Directory
+    } else {
+        FileType::Other
+    };
+    Some(FileInfo {
+        kind,
+        size: if kind == FileType::File {
+            metadata.len()
+        } else {
+            0
+        },
+        modified: metadata.modified().ok(),
+    })
+}
+
+/// Returns what is at `path`, or `None` if nothing is.
+pub fn info(path: impl AsRef<Path>) -> Option<FileInfo> {
+    info_of(&resolve(path.as_ref()))
+}
+
+/// Returns whether `path` names a file.
+pub fn is_file(path: impl AsRef<Path>) -> bool {
+    info(path).is_some_and(|info| info.kind == FileType::File)
+}
+
+/// Returns whether `path` names a directory.
+pub fn is_directory(path: impl AsRef<Path>) -> bool {
+    info(path).is_some_and(|info| info.kind == FileType::Directory)
+}
+
+/// The names in `path` under each of `roots`, merged and sorted. A root
+/// without that directory adds nothing.
+fn list_in<'a>(roots: impl IntoIterator<Item = &'a Path>, path: &Path) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root.join(path)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            names.insert(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// Lists the files and directories inside `path`, by name and sorted.
+///
+/// As in LÖVE, the save directory and the asset directory are looked at
+/// together, so the list has what the game shipped with and what it has
+/// saved. An empty path lists the top level. A directory that does not
+/// exist gives an empty list.
+pub fn directory_items(path: impl AsRef<Path>) -> Vec<String> {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        return list_in([Path::new("")], path);
+    }
+    // The top level is spelled as an empty path or a dot.
+    let top_level = path
+        .components()
+        .all(|part| matches!(part, Component::CurDir));
+    if !top_level && confined(path).is_err() {
+        return Vec::new();
+    }
+    context::with(|ctx| {
+        let save_directory = save_directory_in(ctx).ok();
+        let roots = save_directory
+            .as_deref()
+            .into_iter()
+            .chain([ctx.fs.asset_directory.as_path()]);
+        list_in(roots, path)
+    })
+}
+
+/// Reads a text file as a list of its lines, without the line endings.
+pub fn lines(path: impl AsRef<Path>) -> io::Result<Vec<String>> {
+    Ok(read_string(path)?.lines().map(str::to_string).collect())
+}
+
 /// Writes a file in the save directory, replacing it if it exists.
 /// Missing parent directories are created.
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
@@ -274,6 +379,41 @@ mod tests {
         let assets = TempDir::new("missing");
         let found = locate(&assets.0, None, Path::new("nope.png"));
         assert_eq!(found, assets.0.join("nope.png"));
+    }
+
+    #[test]
+    fn a_listing_merges_saved_and_shipped_names_in_order() {
+        let assets = TempDir::new("list-assets");
+        let saves = TempDir::new("list-saves");
+        std::fs::create_dir_all(assets.0.join("levels")).unwrap();
+        std::fs::create_dir_all(saves.0.join("levels")).unwrap();
+        std::fs::write(assets.0.join("levels/b.txt"), "").unwrap();
+        std::fs::write(assets.0.join("levels/a.txt"), "").unwrap();
+        std::fs::write(saves.0.join("levels/a.txt"), "").unwrap();
+        std::fs::write(saves.0.join("levels/custom.txt"), "").unwrap();
+
+        let roots = [saves.0.as_path(), assets.0.as_path()];
+        assert_eq!(
+            list_in(roots, Path::new("levels")),
+            ["a.txt", "b.txt", "custom.txt"]
+        );
+        assert_eq!(list_in(roots, Path::new("")), ["levels"]);
+        assert!(list_in(roots, Path::new("nowhere")).is_empty());
+    }
+
+    #[test]
+    fn info_tells_files_from_directories() {
+        let directory = TempDir::new("info");
+        std::fs::write(directory.0.join("save.txt"), "12345").unwrap();
+
+        let file = info_of(&directory.0.join("save.txt")).unwrap();
+        assert_eq!((file.kind, file.size), (FileType::File, 5));
+        assert!(file.modified.is_some());
+
+        let folder = info_of(&directory.0).unwrap();
+        assert_eq!((folder.kind, folder.size), (FileType::Directory, 0));
+
+        assert!(info_of(&directory.0.join("missing.txt")).is_none());
     }
 
     #[test]

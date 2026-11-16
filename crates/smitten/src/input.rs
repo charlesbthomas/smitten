@@ -19,6 +19,9 @@ pub(crate) struct InputState {
     pub mouse_position: (f32, f32),
     pub mouse_buttons: HashSet<MouseButton>,
     pub mouse_visible: bool,
+    pub mouse_relative: bool,
+    pub mouse_grabbed: bool,
+    pub cursor: smitten_core::Cursor,
     /// In the order they were connected.
     pub joysticks: Vec<JoystickState>,
 }
@@ -30,6 +33,9 @@ impl Default for InputState {
             mouse_position: (0.0, 0.0),
             mouse_buttons: HashSet::new(),
             mouse_visible: true,
+            mouse_relative: false,
+            mouse_grabbed: false,
+            cursor: smitten_core::Cursor::Arrow,
             joysticks: Vec::new(),
         }
     }
