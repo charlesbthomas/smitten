@@ -55,10 +55,23 @@ pub enum DrawMode {
     Line,
 }
 
+/// How the ends of an arc are joined, as LÖVE's `ArcType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ArcType {
+    /// Both ends are joined to the center, like a slice of pie.
+    #[default]
+    Pie,
+    /// The ends are left apart. Filled, it looks the same as `Closed`.
+    Open,
+    /// The ends are joined to each other by a straight line.
+    Closed,
+}
+
 pub(crate) struct GraphicsState {
     background: Color,
     color: Color,
     line_width: f32,
+    point_size: f32,
     pub(crate) default_filter: Filter,
     transform: Transform,
     stack: Vec<Transform>,
@@ -87,6 +100,7 @@ impl Default for GraphicsState {
             background: Color::BLACK,
             color: Color::WHITE,
             line_width: 1.0,
+            point_size: 1.0,
             default_filter: Filter::default(),
             transform: Transform::IDENTITY,
             stack: Vec::new(),
@@ -671,6 +685,16 @@ pub fn line_width() -> f32 {
     context::with(|ctx| ctx.gfx.line_width)
 }
 
+/// Sets how wide and tall each point drawn by [`points`] is, in units.
+pub fn set_point_size(size: f32) {
+    context::with(|ctx| ctx.gfx.point_size = size);
+}
+
+/// Returns the current point size.
+pub fn point_size() -> f32 {
+    context::with(|ctx| ctx.gfx.point_size)
+}
+
 /// Sets how what is drawn combines with what is already there.
 ///
 /// The blend mode stays set until changed, even across frames.
@@ -795,6 +819,86 @@ pub fn polygon(mode: DrawMode, points: &[(f32, f32)]) {
             DrawMode::Fill => shapes::fill_convex(points),
             DrawMode::Line => shapes::outline_closed(points, ctx.gfx.line_width),
         };
+        ctx.gfx.push_shape(&triangles);
+    });
+}
+
+/// Draws a rectangle with rounded corners. `rx` and `ry` are the corner
+/// radii along each axis, as in the long form of `love.graphics.rectangle`.
+pub fn rounded_rectangle(
+    mode: DrawMode,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    rx: f32,
+    ry: f32,
+) {
+    let scale = context::with(|ctx| ctx.gfx.target_scale());
+    polygon(
+        mode,
+        &shapes::rounded_rectangle_points(x, y, width, height, rx, ry, scale),
+    );
+}
+
+/// Draws an ellipse centered on `(x, y)` with radii `rx` and `ry`.
+pub fn ellipse(mode: DrawMode, x: f32, y: f32, rx: f32, ry: f32) {
+    let scale = context::with(|ctx| ctx.gfx.target_scale());
+    polygon(mode, &shapes::ellipse_points(x, y, rx, ry, scale));
+}
+
+/// Draws part of a circle centered on `(x, y)`, from `angle1` to `angle2`
+/// in radians. Angles grow clockwise from the right, as in LÖVE.
+pub fn arc(
+    mode: DrawMode,
+    arc_type: ArcType,
+    x: f32,
+    y: f32,
+    radius: f32,
+    angle1: f32,
+    angle2: f32,
+) {
+    context::with(|ctx| {
+        let scale = ctx.gfx.target_scale();
+        let mut path = shapes::arc_points(x, y, radius, radius, angle1, angle2, scale);
+        if arc_type == ArcType::Pie {
+            // The center comes first so that filling fans out from it.
+            path.insert(0, (x, y));
+        }
+        let triangles = match (mode, arc_type) {
+            (DrawMode::Fill, _) => shapes::fill_convex(&path),
+            (DrawMode::Line, ArcType::Open) => shapes::outline_open(&path, ctx.gfx.line_width),
+            (DrawMode::Line, _) => shapes::outline_closed(&path, ctx.gfx.line_width),
+        };
+        ctx.gfx.push_shape(&triangles);
+    });
+}
+
+/// Draws a square of the current point size centered on each point.
+pub fn points(points: &[(f32, f32)]) {
+    context::with(|ctx| {
+        let half = ctx.gfx.point_size / 2.0;
+        let mut triangles = Vec::with_capacity(points.len() * 6);
+        for &(x, y) in points {
+            let (left, top, right, bottom) = (x - half, y - half, x + half, y + half);
+            triangles.extend_from_slice(&[
+                (left, top),
+                (right, top),
+                (right, bottom),
+                (left, top),
+                (right, bottom),
+                (left, bottom),
+            ]);
+        }
+        ctx.gfx.push_shape(&triangles);
+    });
+}
+
+/// Draws connected lines through `points` in order, with joined corners.
+/// The equivalent of `love.graphics.line` with more than two points.
+pub fn polyline(points: &[(f32, f32)]) {
+    context::with(|ctx| {
+        let triangles = shapes::outline_open(points, ctx.gfx.line_width);
         ctx.gfx.push_shape(&triangles);
     });
 }
