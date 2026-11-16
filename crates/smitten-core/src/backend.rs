@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use crate::{
     BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
-    MouseButton, PowerInfo, StencilMode, WindowState, Wrap,
+    MouseButton, PowerInfo, StencilMode, TouchId, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -60,6 +60,34 @@ pub enum BackendEvent {
         dx: f32,
         dy: f32,
     },
+    /// A finger touched the screen at `(x, y)` in pixels. `pressure` runs
+    /// from 0.0 to 1.0, and is 1.0 on screens that cannot measure it.
+    TouchPressed {
+        id: TouchId,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        pressure: f32,
+    },
+    /// A finger on the screen moved to `(x, y)` in pixels, by `(dx, dy)`.
+    TouchMoved {
+        id: TouchId,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        pressure: f32,
+    },
+    /// A finger left the screen, or the system took the touch away.
+    TouchReleased {
+        id: TouchId,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        pressure: f32,
+    },
     JoystickAdded {
         id: JoystickId,
         name: String,
@@ -105,6 +133,10 @@ pub struct Vertex {
 /// A handle to a texture owned by a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
+
+/// A handle to a cursor made from an image, owned by a backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CursorId(pub u32);
 
 /// A handle to a custom shader owned by a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -320,6 +352,26 @@ pub trait Backend {
     /// Chooses the cursor shown while the pointer is over the window.
     fn set_cursor(&mut self, cursor: Cursor) -> Result<(), String>;
 
+    /// Makes a cursor from an image. `rgba` is laid out as in
+    /// `create_texture`, and `(hot_x, hot_y)` is the pixel that points,
+    /// which must lie inside the image.
+    fn create_cursor(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        hot_x: u32,
+        hot_y: u32,
+    ) -> Result<CursorId, String>;
+
+    /// Shows a cursor from `create_cursor` while the pointer is over the
+    /// window. A later `set_cursor` replaces it.
+    fn set_image_cursor(&mut self, cursor: CursorId) -> Result<(), String>;
+
+    /// Frees a cursor from `create_cursor`. It is not in use: the caller
+    /// has switched to another cursor first.
+    fn destroy_cursor(&mut self, cursor: CursorId);
+
     /// Hides the cursor and reports motion without limit, for a
     /// first-person camera or similar. The pointer stays in the window.
     fn set_relative_mouse(&mut self, relative: bool) -> Result<(), String>;
@@ -393,6 +445,20 @@ pub trait Backend {
         title: &str,
         message: &str,
     ) -> Result<(), String>;
+
+    /// Shows a message with a button for each of `buttons`, in order
+    /// from left to right, and waits for one to be chosen. Enter chooses
+    /// the first button and Escape the last.
+    ///
+    /// Returns the index of the chosen button, or `None` if the box was
+    /// closed without choosing one. `buttons` is never empty.
+    fn show_message_box_with_buttons(
+        &mut self,
+        kind: MessageBoxKind,
+        title: &str,
+        message: &str,
+        buttons: &[&str],
+    ) -> Result<Option<usize>, String>;
 
     /// Asks for the user's attention, for instance by flashing the
     /// taskbar. `continuous` keeps asking until the window gets focus.

@@ -217,8 +217,7 @@ pub(crate) fn load_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), ImageError> 
 }
 
 pub(crate) fn load(path: &Path) -> Result<Image, ImageError> {
-    let file = crate::filesystem::resolve(path);
-    let bytes = std::fs::read(&file).map_err(|source| ImageError::Read {
+    let bytes = crate::filesystem::read(path).map_err(|source| ImageError::Read {
         path: path.to_path_buf(),
         source,
     })?;
@@ -227,6 +226,7 @@ pub(crate) fn load(path: &Path) -> Result<Image, ImageError> {
         message,
     })?;
     let image = Image::from_rgba(decoded.width(), decoded.height(), decoded.as_raw())?;
+    let file = crate::filesystem::resolve(path);
     context::with(|ctx| {
         ctx.reload
             .watch(file, Asset::Image(Rc::downgrade(&image.inner)));

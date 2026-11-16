@@ -20,7 +20,7 @@ pub use blend::BlendMode;
 pub use color::Color;
 pub use config::{Config, Scaling};
 pub use filter::{Filter, Wrap};
-pub use input::{GamepadAxis, GamepadButton, JoystickId, MouseButton};
+pub use input::{GamepadAxis, GamepadButton, JoystickId, MouseButton, TouchId};
 pub use key::Key;
 pub use stencil::{CompareMode, StencilAction, StencilMode};
 pub use system::{Cursor, MessageBoxKind, PowerInfo, PowerState, WindowState};
