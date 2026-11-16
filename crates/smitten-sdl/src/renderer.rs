@@ -2,7 +2,8 @@
 //!
 //! The renderer draws one kind of thing: textured, vertex-colored
 //! triangles. Shapes sample a 1x1 white texture so they can share the
-//! shader. There is one pipeline per blend mode and target format. Each
+//! shader. Pipelines are built the first time each combination of shader,
+//! blend mode, stencil mode and target is drawn with. Each
 //! frame's vertices are uploaded once and drawn as a few runs, pass by pass.
 
 use std::collections::HashMap;
@@ -11,7 +12,7 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId, Vertex};
-use smitten_core::{BlendMode, Filter};
+use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode};
 
 use crate::{sdl_error, shader};
 
@@ -24,14 +25,15 @@ const INITIAL_VERTEX_CAPACITY: u32 = 4096;
 /// The format of images and render targets. The screen may differ.
 const TEXTURE_FORMAT: SDL_GPUTextureFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 
-/// One pipeline per blend mode, indexed by [`blend_index`].
-type Pipelines = [*mut SDL_GPUGraphicsPipeline; BlendMode::ALL.len()];
-
-fn blend_index(mode: BlendMode) -> usize {
-    BlendMode::ALL
-        .iter()
-        .position(|&candidate| candidate == mode)
-        .unwrap_or(0)
+/// Everything that needs its own pipeline.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    /// A custom shader, or `None` for the built-in one.
+    shader: Option<u32>,
+    /// Whether it draws to a render target rather than the screen.
+    to_target: bool,
+    blend: BlendMode,
+    stencil: StencilMode,
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +43,11 @@ struct Texture {
     height: u32,
     /// Whether it can be drawn to as well as sampled.
     is_target: bool,
+    /// The stencil values that go with a render target. Created the first
+    /// time the target is drawn to.
+    stencil: *mut SDL_GPUTexture,
+    /// Whether `stencil` is new and still holds garbage.
+    stencil_fresh: bool,
 }
 
 /// A fragment shader supplied by the game.
@@ -50,10 +57,6 @@ struct CustomShader {
     uniform_size: u32,
 }
 
-/// Identifies a pipeline built for a custom shader: the shader, whether it
-/// draws to a render target rather than the screen, and the blend mode.
-type CustomPipelineKey = (u32, bool, usize);
-
 pub(crate) struct Renderer {
     device: *mut SDL_GPUDevice,
     screen_format: SDL_GPUTextureFormat,
@@ -61,12 +64,15 @@ pub(crate) struct Renderer {
     vertex_shader: *mut SDL_GPUShader,
     shaders: HashMap<u32, CustomShader>,
     next_shader_id: u32,
+    /// The built-in fragment shader.
+    fragment_shader: *mut SDL_GPUShader,
     /// Built the first time each combination is drawn with.
-    custom_pipelines: HashMap<CustomPipelineKey, *mut SDL_GPUGraphicsPipeline>,
-    /// For drawing to the screen.
-    screen_pipelines: Pipelines,
-    /// For drawing to render targets.
-    target_pipelines: Pipelines,
+    pipelines: HashMap<PipelineKey, *mut SDL_GPUGraphicsPipeline>,
+    stencil_format: SDL_GPUTextureFormat,
+    /// The screen's stencil values, and the size they were made for.
+    screen_stencil: *mut SDL_GPUTexture,
+    screen_stencil_size: (u32, u32),
+    screen_stencil_fresh: bool,
     linear: *mut SDL_GPUSampler,
     nearest: *mut SDL_GPUSampler,
     white: *mut SDL_GPUTexture,
@@ -87,9 +93,12 @@ impl Renderer {
             vertex_shader: ptr::null_mut(),
             shaders: HashMap::new(),
             next_shader_id: 1,
-            custom_pipelines: HashMap::new(),
-            screen_pipelines: [ptr::null_mut(); BlendMode::ALL.len()],
-            target_pipelines: [ptr::null_mut(); BlendMode::ALL.len()],
+            fragment_shader: ptr::null_mut(),
+            pipelines: HashMap::new(),
+            stencil_format: SDL_GPU_TEXTUREFORMAT_INVALID,
+            screen_stencil: ptr::null_mut(),
+            screen_stencil_size: (0, 0),
+            screen_stencil_fresh: false,
             linear: ptr::null_mut(),
             nearest: ptr::null_mut(),
             white: ptr::null_mut(),
@@ -113,7 +122,7 @@ impl Renderer {
                 0,
                 1,
             )?;
-            let fragment = create_shader(
+            renderer.fragment_shader = create_shader(
                 device,
                 FRAGMENT_SPIRV,
                 c"main",
@@ -121,28 +130,30 @@ impl Renderer {
                 1,
                 0,
             )?;
-            let mut built = Ok(());
-            for mode in BlendMode::ALL {
-                let vertex = renderer.vertex_shader;
-                let mut build =
-                    |format, slot: &mut *mut SDL_GPUGraphicsPipeline| match create_pipeline(
-                        device, vertex, fragment, format, mode,
-                    ) {
-                        Ok(pipeline) => *slot = pipeline,
-                        Err(message) => built = Err(message),
-                    };
-                build(
-                    screen_format,
-                    &mut renderer.screen_pipelines[blend_index(mode)],
-                );
-                build(
-                    TEXTURE_FORMAT,
-                    &mut renderer.target_pipelines[blend_index(mode)],
-                );
-            }
-            // The pipelines keep what they need from the fragment shader.
-            SDL_ReleaseGPUShader(device, fragment);
-            built?;
+            renderer.stencil_format = [
+                SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+                SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
+            ]
+            .into_iter()
+            .find(|&format| {
+                SDL_GPUTextureSupportsFormat(
+                    device,
+                    format,
+                    SDL_GPU_TEXTURETYPE_2D,
+                    SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+                )
+            })
+            .ok_or("the GPU has no stencil format")?;
+            // Build the pipeline nearly every frame uses now, so a broken
+            // setup fails at startup rather than drawing nothing.
+            let common = PipelineKey {
+                shader: None,
+                to_target: false,
+                blend: BlendMode::Alpha,
+                stencil: StencilMode::Off,
+            };
+            let pipeline = renderer.create_pipeline(common)?;
+            renderer.pipelines.insert(common, pipeline);
             renderer.linear = create_sampler(device, SDL_GPU_FILTER_LINEAR)?;
             renderer.nearest = create_sampler(device, SDL_GPU_FILTER_NEAREST)?;
             renderer.white = new_texture(device, 1, 1, &[255, 255, 255, 255])?;
@@ -173,6 +184,8 @@ impl Renderer {
                 width,
                 height,
                 is_target: false,
+                stencil: ptr::null_mut(),
+                stencil_fresh: false,
             },
         );
         Ok(TextureId(id))
@@ -228,6 +241,8 @@ impl Renderer {
                 width,
                 height,
                 is_target: true,
+                stencil: ptr::null_mut(),
+                stencil_fresh: false,
             },
         );
         Ok(TextureId(id))
@@ -269,7 +284,11 @@ impl Renderer {
         if let Some(texture) = self.textures.remove(&texture.0) {
             // SAFETY: the texture came from this device. SDL defers the
             // actual free until no in-flight frame uses it.
-            unsafe { SDL_ReleaseGPUTexture(self.device, texture.handle) };
+            // SDL ignores a null stencil texture.
+            unsafe {
+                SDL_ReleaseGPUTexture(self.device, texture.handle);
+                SDL_ReleaseGPUTexture(self.device, texture.stencil);
+            }
         }
     }
 
@@ -304,60 +323,109 @@ impl Renderer {
 
     pub fn destroy_shader(&mut self, shader: ShaderId) {
         let device = self.device;
-        self.custom_pipelines
-            .retain(|&(owner, _, _), &mut pipeline| {
-                if owner == shader.0 {
-                    // SAFETY: the pipeline came from this device. SDL defers
-                    // the free until no in-flight frame uses it.
-                    unsafe { SDL_ReleaseGPUGraphicsPipeline(device, pipeline) };
-                }
-                owner != shader.0
-            });
+        self.pipelines.retain(|key, &mut pipeline| {
+            let owned = key.shader == Some(shader.0);
+            if owned {
+                // SAFETY: the pipeline came from this device. SDL defers
+                // the free until no in-flight frame uses it.
+                unsafe { SDL_ReleaseGPUGraphicsPipeline(device, pipeline) };
+            }
+            !owned
+        });
         if let Some(shader) = self.shaders.remove(&shader.0) {
             // SAFETY: as above.
             unsafe { SDL_ReleaseGPUShader(device, shader.fragment) };
         }
     }
 
-    /// Builds any pipeline `frame` needs for a custom shader that has not
-    /// been drawn with this way before. A pipeline that cannot be built is
-    /// left out, and draws that need it are skipped.
-    fn prepare_custom_pipelines(&mut self, frame: &Frame) {
+    fn create_pipeline(&self, key: PipelineKey) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
+        let fragment = match key.shader {
+            None => self.fragment_shader,
+            Some(id) => {
+                self.shaders
+                    .get(&id)
+                    .ok_or("the shader no longer exists")?
+                    .fragment
+            }
+        };
+        let format = if key.to_target {
+            TEXTURE_FORMAT
+        } else {
+            self.screen_format
+        };
+        // SAFETY: the device and both shaders are alive.
+        unsafe {
+            create_pipeline(
+                self.device,
+                self.vertex_shader,
+                fragment,
+                format,
+                self.stencil_format,
+                key.blend,
+                key.stencil,
+            )
+        }
+    }
+
+    /// Builds what `frame` needs that does not exist yet: pipelines for
+    /// combinations not drawn with before, and stencil textures for render
+    /// targets not drawn to before. Anything that cannot be built is left
+    /// out, and the draws that need it are skipped.
+    fn prepare(&mut self, frame: &Frame) {
         for pass in frame.passes {
-            let to_target = pass.target.is_some();
+            if let Some(id) = pass.target
+                && let Some(target) = self.textures.get_mut(&id.0)
+                && target.is_target
+                && target.stencil.is_null()
+            {
+                // SAFETY: the device is alive.
+                target.stencil = unsafe {
+                    new_stencil_texture(
+                        self.device,
+                        self.stencil_format,
+                        target.width,
+                        target.height,
+                    )
+                };
+                target.stencil_fresh = true;
+            }
             let calls = (pass.first_call as usize)
                 .checked_add(pass.call_count as usize)
                 .and_then(|end| frame.calls.get(pass.first_call as usize..end))
                 .unwrap_or(&[]);
             for call in calls {
-                let Some(id) = call.shader else { continue };
-                let key = (id.0, to_target, blend_index(call.blend));
-                let Some(shader) = self.shaders.get(&id.0) else {
-                    continue;
+                let key = PipelineKey {
+                    shader: call.shader.map(|id| id.0),
+                    to_target: pass.target.is_some(),
+                    blend: call.blend,
+                    stencil: call.stencil,
                 };
-                if self.custom_pipelines.contains_key(&key) {
-                    continue;
-                }
-                let format = if to_target {
-                    TEXTURE_FORMAT
-                } else {
-                    self.screen_format
-                };
-                // SAFETY: the device and both shaders are alive.
-                let pipeline = unsafe {
-                    create_pipeline(
-                        self.device,
-                        self.vertex_shader,
-                        shader.fragment,
-                        format,
-                        call.blend,
-                    )
-                };
-                if let Ok(pipeline) = pipeline {
-                    self.custom_pipelines.insert(key, pipeline);
+                if !self.pipelines.contains_key(&key)
+                    && let Ok(pipeline) = self.create_pipeline(key)
+                {
+                    self.pipelines.insert(key, pipeline);
                 }
             }
         }
+    }
+
+    /// Makes the screen's stencil texture match the screen's size.
+    ///
+    /// # Safety
+    /// The device must be alive.
+    unsafe fn resize_screen_stencil(&mut self, width: u32, height: u32) {
+        if self.screen_stencil_size == (width, height) && !self.screen_stencil.is_null() {
+            return;
+        }
+        // SAFETY: the old texture came from this device, and SDL ignores
+        // null.
+        unsafe {
+            SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
+            self.screen_stencil =
+                new_stencil_texture(self.device, self.stencil_format, width, height);
+        }
+        self.screen_stencil_size = (width, height);
+        self.screen_stencil_fresh = true;
     }
 
     /// Makes room for at least `count` vertices.
@@ -451,7 +519,7 @@ impl Renderer {
         // SAFETY: passes are begun and ended in the order SDL requires, and
         // the command buffer is always submitted.
         unsafe {
-            self.prepare_custom_pipelines(frame);
+            self.prepare(frame);
 
             let commands = SDL_AcquireGPUCommandBuffer(self.device);
             if commands.is_null() {
@@ -475,27 +543,38 @@ impl Renderer {
             if !acquired {
                 swapchain = ptr::null_mut();
             }
+            if !swapchain.is_null() && screen_width > 0 && screen_height > 0 {
+                self.resize_screen_stencil(screen_width, screen_height);
+            }
 
             for pass in frame.passes {
                 // A pass whose target is gone, or is not there to draw on
                 // this frame, is skipped.
-                let (texture, width, height, pipelines) = match pass.target {
+                // New stencil memory holds garbage, so its first pass
+                // clears it whatever the pass asked for.
+                let (texture, stencil, fresh, width, height) = match pass.target {
                     None => (
                         swapchain,
+                        self.screen_stencil,
+                        std::mem::take(&mut self.screen_stencil_fresh),
                         screen_width,
                         screen_height,
-                        &self.screen_pipelines,
                     ),
-                    Some(id) => match self.textures.get(&id.0) {
+                    Some(id) => match self.textures.get_mut(&id.0) {
                         Some(target) if target.is_target => (
                             target.handle,
+                            target.stencil,
+                            std::mem::take(&mut target.stencil_fresh),
                             target.width,
                             target.height,
-                            &self.target_pipelines,
                         ),
                         _ => continue,
                     },
                 };
+                // Every pipeline expects a stencil texture to be attached.
+                if stencil.is_null() {
+                    continue;
+                }
                 if texture.is_null() || width == 0 || height == 0 {
                     continue;
                 }
@@ -515,7 +594,21 @@ impl Renderer {
                         a: color.a,
                     };
                 }
-                let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, ptr::null());
+                let stencil_info = SDL_GPUDepthStencilTargetInfo {
+                    texture: stencil,
+                    // The depth half of the texture is never used.
+                    load_op: SDL_GPU_LOADOP_DONT_CARE,
+                    store_op: SDL_GPU_STOREOP_DONT_CARE,
+                    stencil_load_op: if pass.clear_stencil || fresh {
+                        SDL_GPU_LOADOP_CLEAR
+                    } else {
+                        SDL_GPU_LOADOP_LOAD
+                    },
+                    stencil_store_op: SDL_GPU_STOREOP_STORE,
+                    clear_stencil: 0,
+                    ..Default::default()
+                };
+                let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, &stencil_info);
                 if render_pass.is_null() {
                     continue;
                 }
@@ -529,7 +622,6 @@ impl Renderer {
                         calls,
                         frame.uniforms,
                         pass.target,
-                        pipelines,
                         frame.vertices.len() as u32,
                         width,
                         height,
@@ -544,7 +636,7 @@ impl Renderer {
 
     /// # Safety
     /// `pass` must be an open render pass on `commands` whose target is
-    /// `width` by `height` pixels and matches `pipelines`, and the vertex
+    /// `width` by `height` pixels, and the vertex
     /// buffer must already hold `vertex_count` vertices.
     #[allow(clippy::too_many_arguments)]
     unsafe fn draw_calls(
@@ -554,7 +646,6 @@ impl Renderer {
         calls: &[DrawCall],
         uniforms: &[u8],
         target: Option<TextureId>,
-        pipelines: &Pipelines,
         vertex_count: u32,
         width: u32,
         height: u32,
@@ -562,6 +653,7 @@ impl Renderer {
         // Padded to 16 bytes, the size of the shader's uniform block.
         let pixel_to_clip = [2.0 / width as f32, 2.0 / height as f32, 0.0, 0.0];
         let mut bound_pipeline = ptr::null_mut();
+        let mut bound_reference = None;
         let mut bound_scissor = None;
 
         // SAFETY: every handle bound here is alive, and each draw is checked
@@ -606,35 +698,42 @@ impl Renderer {
                 let Some(scissor) = clip_scissor(call.scissor, width, height) else {
                     continue;
                 };
-                let pipeline = match call.shader {
-                    None => pipelines[blend_index(call.blend)],
-                    Some(id) => {
-                        let key = (id.0, target.is_some(), blend_index(call.blend));
-                        // A shader that was freed while still queued, or
-                        // whose data is missing, draws nothing.
-                        let (Some(shader), Some(&pipeline)) =
-                            (self.shaders.get(&id.0), self.custom_pipelines.get(&key))
+                let key = PipelineKey {
+                    shader: call.shader.map(|id| id.0),
+                    to_target: target.is_some(),
+                    blend: call.blend,
+                    stencil: call.stencil,
+                };
+                // A pipeline that could not be built draws nothing.
+                let Some(&pipeline) = self.pipelines.get(&key) else {
+                    continue;
+                };
+                if let Some(id) = call.shader {
+                    // A shader that was freed while still queued, or whose
+                    // data is missing, draws nothing.
+                    let Some(shader) = self.shaders.get(&id.0) else {
+                        continue;
+                    };
+                    if shader.uniform_size > 0 {
+                        let start = call.uniform_offset as usize;
+                        let Some(data) = start
+                            .checked_add(shader.uniform_size as usize)
+                            .and_then(|end| uniforms.get(start..end))
                         else {
                             continue;
                         };
-                        if shader.uniform_size > 0 {
-                            let start = call.uniform_offset as usize;
-                            let Some(data) = start
-                                .checked_add(shader.uniform_size as usize)
-                                .and_then(|end| uniforms.get(start..end))
-                            else {
-                                continue;
-                            };
-                            SDL_PushGPUFragmentUniformData(
-                                commands,
-                                0,
-                                data.as_ptr().cast::<c_void>(),
-                                shader.uniform_size,
-                            );
-                        }
-                        pipeline
+                        SDL_PushGPUFragmentUniformData(
+                            commands,
+                            0,
+                            data.as_ptr().cast::<c_void>(),
+                            shader.uniform_size,
+                        );
                     }
-                };
+                }
+                if call.stencil != StencilMode::Off && bound_reference != Some(call.stencil_value) {
+                    SDL_SetGPUStencilReference(pass, call.stencil_value);
+                    bound_reference = Some(call.stencil_value);
+                }
                 if bound_pipeline != pipeline {
                     SDL_BindGPUGraphicsPipeline(pass, pipeline);
                     bound_pipeline = pipeline;
@@ -761,24 +860,22 @@ impl Drop for Renderer {
         unsafe {
             for (_, texture) in self.textures.drain() {
                 SDL_ReleaseGPUTexture(self.device, texture.handle);
+                SDL_ReleaseGPUTexture(self.device, texture.stencil);
             }
+            SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
             SDL_ReleaseGPUTexture(self.device, self.white);
             SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
-            for &pipeline in self
-                .screen_pipelines
-                .iter()
-                .chain(&self.target_pipelines)
-                .chain(self.custom_pipelines.values())
-            {
+            for &pipeline in self.pipelines.values() {
                 SDL_ReleaseGPUGraphicsPipeline(self.device, pipeline);
             }
             for shader in self.shaders.values() {
                 SDL_ReleaseGPUShader(self.device, shader.fragment);
             }
             SDL_ReleaseGPUShader(self.device, self.vertex_shader);
+            SDL_ReleaseGPUShader(self.device, self.fragment_shader);
         }
     }
 }
@@ -790,7 +887,9 @@ unsafe fn create_pipeline(
     vertex_shader: *mut SDL_GPUShader,
     fragment_shader: *mut SDL_GPUShader,
     format: SDL_GPUTextureFormat,
+    stencil_format: SDL_GPUTextureFormat,
     blend: BlendMode,
+    stencil: StencilMode,
 ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
     // SAFETY: all pointers in the create-info structs outlive the calls
     // that read them.
@@ -825,9 +924,15 @@ unsafe fn create_pipeline(
             ),
         ];
 
+        let mut blend_state = blend_state(blend);
+        // Writing to the stencil leaves the picture itself untouched.
+        if matches!(stencil, StencilMode::Write(_)) {
+            blend_state.enable_color_write_mask = true;
+            blend_state.color_write_mask = SDL_GPUColorComponentFlags(0);
+        }
         let targets = [SDL_GPUColorTargetDescription {
             format,
-            blend_state: blend_state(blend),
+            blend_state,
         }];
 
         let info = SDL_GPUGraphicsPipelineCreateInfo {
@@ -848,8 +953,11 @@ unsafe fn create_pipeline(
             target_info: SDL_GPUGraphicsPipelineTargetInfo {
                 color_target_descriptions: targets.as_ptr(),
                 num_color_targets: targets.len() as u32,
+                depth_stencil_format: stencil_format,
+                has_depth_stencil_target: true,
                 ..Default::default()
             },
+            depth_stencil_state: stencil_state(stencil),
             ..Default::default()
         };
         let pipeline = SDL_CreateGPUGraphicsPipeline(device, &info);
@@ -861,6 +969,81 @@ unsafe fn create_pipeline(
             ));
         }
         Ok(pipeline)
+    }
+}
+
+/// The GPU stencil settings for a stencil mode.
+fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
+    let (pass_op, compare_op, write_mask) = match mode {
+        StencilMode::Off => return SDL_GPUDepthStencilState::default(),
+        StencilMode::Write(action) => (
+            match action {
+                StencilAction::Replace => SDL_GPU_STENCILOP_REPLACE,
+                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
+                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
+                StencilAction::Invert => SDL_GPU_STENCILOP_INVERT,
+            },
+            SDL_GPU_COMPAREOP_ALWAYS,
+            0xFF,
+        ),
+        // The GPU compares the test value with the stencil value, the
+        // other way round from how `CompareMode` reads, so each is flipped.
+        StencilMode::Test(compare) => (
+            SDL_GPU_STENCILOP_KEEP,
+            match compare {
+                CompareMode::Equal => SDL_GPU_COMPAREOP_EQUAL,
+                CompareMode::NotEqual => SDL_GPU_COMPAREOP_NOT_EQUAL,
+                CompareMode::Less => SDL_GPU_COMPAREOP_GREATER,
+                CompareMode::LessEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
+                CompareMode::Greater => SDL_GPU_COMPAREOP_LESS,
+                CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+            },
+            0,
+        ),
+    };
+    let face = SDL_GPUStencilOpState {
+        fail_op: SDL_GPU_STENCILOP_KEEP,
+        pass_op,
+        depth_fail_op: SDL_GPU_STENCILOP_KEEP,
+        compare_op,
+    };
+    SDL_GPUDepthStencilState {
+        front_stencil_state: face,
+        back_stencil_state: face,
+        compare_mask: 0xFF,
+        write_mask,
+        enable_stencil_test: true,
+        ..Default::default()
+    }
+}
+
+/// Creates a texture to hold stencil values, or null if the GPU refuses.
+/// Its contents start out undefined; the first pass that uses it clears it.
+///
+/// # Safety
+/// `device` must be alive.
+unsafe fn new_stencil_texture(
+    device: *mut SDL_GPUDevice,
+    format: SDL_GPUTextureFormat,
+    width: u32,
+    height: u32,
+) -> *mut SDL_GPUTexture {
+    // SAFETY: the create-info is valid for the call.
+    unsafe {
+        SDL_CreateGPUTexture(
+            device,
+            &SDL_GPUTextureCreateInfo {
+                r#type: SDL_GPU_TEXTURETYPE_2D,
+                format,
+                usage: SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+                width,
+                height,
+                layer_count_or_depth: 1,
+                num_levels: 1,
+                sample_count: SDL_GPU_SAMPLECOUNT_1,
+                ..Default::default()
+            },
+        )
     }
 }
 

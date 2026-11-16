@@ -40,7 +40,8 @@ pub mod window;
 
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, Config, Filter, GamepadAxis, GamepadButton, Key, MouseButton,
+    BlendMode, Color, CompareMode, Config, Filter, GamepadAxis, GamepadButton, Key, MouseButton,
+    StencilAction,
 };
 
 use smitten_core::backend::BackendEvent;

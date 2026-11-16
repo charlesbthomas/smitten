@@ -14,6 +14,7 @@
 mod batch;
 mod canvas;
 mod image;
+mod particles;
 mod shader;
 mod shapes;
 mod text;
@@ -24,11 +25,14 @@ use std::path::Path;
 use smitten_core::backend::{Backend, Frame, Scissor, TextureId, Vertex};
 
 use crate::context;
-use crate::{BlendMode, Color, Filter};
+use smitten_core::StencilMode;
+
+use crate::{BlendMode, Color, CompareMode, Filter, StencilAction};
 use batch::Batch;
 
 pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
+pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, UniformValue};
 pub use text::{Align, Font, FontError};
 pub use transform::Transform;
@@ -180,6 +184,15 @@ impl GraphicsState {
 }
 
 impl GraphicsState {
+    /// Queues every particle of `system`, placed by `local`.
+    fn push_particles(&mut self, system: &ParticleSystem, local: &Transform) {
+        let transform = self.transform.then_inner(local);
+        let vertices = system.vertices(&transform, self.color);
+        let image = system.image();
+        self.batch
+            .push(Some(image.texture()), image.filter(), &vertices);
+    }
+
     /// Queues `text` in the current font, placed by `local`.
     fn push_text(
         &mut self,
@@ -304,6 +317,81 @@ pub fn set_canvas(canvas: Option<&Canvas>) {
 /// Returns the canvas being drawn to, or `None` for the screen.
 pub fn canvas() -> Option<Canvas> {
     context::with(|ctx| ctx.gfx.canvas.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Stencil
+
+/// Marks the pixels covered by what `draw` draws, so that
+/// [`set_stencil_test`] can limit later drawing to them, or keep it away
+/// from them. Nothing `draw` draws is visible itself.
+///
+/// Every pixel has a stencil value from 0 to 255. This first resets them
+/// all to 0, then sets the covered pixels to 1. Use [`stencil_ex`] for
+/// other values or to build on earlier marks.
+///
+/// ```no_run
+/// use smitten::graphics::{self, DrawMode};
+/// use smitten::CompareMode;
+///
+/// // Draw a picture only inside a circle.
+/// graphics::stencil(|| graphics::circle(DrawMode::Fill, 200.0, 200.0, 80.0));
+/// graphics::set_stencil_test(CompareMode::Greater, 0);
+/// // ... draw the picture ...
+/// graphics::clear_stencil_test();
+/// ```
+///
+/// The screen and each canvas have their own stencil values. The screen's
+/// are also reset at the start of every frame.
+pub fn stencil(draw: impl FnOnce()) {
+    stencil_ex(StencilAction::Replace, 1, false, draw);
+}
+
+/// Changes the stencil values of the pixels covered by what `draw` draws.
+///
+/// `action` says how: [`StencilAction::Replace`] sets them to `value`,
+/// while the other actions count up, count down or flip them and ignore
+/// `value`. With `keep_values` the existing values are built on;
+/// otherwise they are all reset to 0 first.
+pub fn stencil_ex(action: StencilAction, value: u8, keep_values: bool, draw: impl FnOnce()) {
+    let previous = context::with(|ctx| {
+        let batch = &mut ctx.gfx.batch;
+        if !keep_values {
+            batch.clear_stencil();
+        }
+        let previous = (batch.stencil, batch.stencil_value);
+        batch.stencil = StencilMode::Write(action);
+        batch.stencil_value = value;
+        previous
+    });
+    draw();
+    context::with(|ctx| (ctx.gfx.batch.stencil, ctx.gfx.batch.stencil_value) = previous);
+}
+
+/// Draws only the pixels whose stencil value compares to `value` as
+/// `compare` says, until [`clear_stencil_test`] is called.
+///
+/// `set_stencil_test(CompareMode::Greater, 0)` draws only where
+/// [`stencil`] marked, and `set_stencil_test(CompareMode::Equal, 0)` only
+/// where it did not.
+pub fn set_stencil_test(compare: CompareMode, value: u8) {
+    context::with(|ctx| {
+        ctx.gfx.batch.stencil = StencilMode::Test(compare);
+        ctx.gfx.batch.stencil_value = value;
+    });
+}
+
+/// Goes back to drawing everywhere.
+pub fn clear_stencil_test() {
+    context::with(|ctx| ctx.gfx.batch.stencil = StencilMode::Off);
+}
+
+/// Returns the stencil test as `(compare, value)`, if one is set.
+pub fn stencil_test() -> Option<(CompareMode, u8)> {
+    context::with(|ctx| match ctx.gfx.batch.stencil {
+        StencilMode::Test(compare) => Some((compare, ctx.gfx.batch.stencil_value)),
+        _ => None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +642,37 @@ pub fn draw_quad_ex(
 ) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
     context::with(|ctx| ctx.gfx.push_image(image, quad, &local));
+}
+
+// ---------------------------------------------------------------------------
+// Particles
+
+/// Creates a particle system that draws each particle as `image` and
+/// holds at most `max_particles` at once.
+pub fn new_particle_system(image: &Image, max_particles: usize) -> ParticleSystem {
+    ParticleSystem::new(image, max_particles)
+}
+
+/// Draws a particle system with its origin at `(x, y)`.
+pub fn draw_particles(system: &ParticleSystem, x: f32, y: f32) {
+    draw_particles_ex(system, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a particle system with the full set of LÖVE's `draw` arguments.
+/// See [`draw_ex`] for what they mean.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
+pub fn draw_particles_ex(
+    system: &ParticleSystem,
+    x: f32,
+    y: f32,
+    r: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+) {
+    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+    context::with(|ctx| ctx.gfx.push_particles(system, &local));
 }
 
 // ---------------------------------------------------------------------------
