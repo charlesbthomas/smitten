@@ -52,6 +52,7 @@ Smitten is a Cargo workspace. Games depend only on `smitten`.
 ```
 cargo run --example hello
 cargo run --example sprites
+cargo run --example shapes
 cargo run --example input
 cargo run --example text
 cargo run --example audio

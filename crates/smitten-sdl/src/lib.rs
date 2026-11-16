@@ -20,7 +20,10 @@ use sdl3_sys::everything::*;
 use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, Frame, ShaderId, ShaderInfo, TextureId,
 };
-use smitten_core::{Config, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, Wrap};
+use smitten_core::{
+    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, PowerInfo,
+    PowerState, Wrap,
+};
 
 use renderer::Renderer;
 
@@ -35,6 +38,8 @@ pub struct SdlBackend {
     gamepads: HashMap<u32, *mut SDL_Gamepad>,
     /// Present once `start_audio` has succeeded. Dropping it stops playback.
     audio: Option<audio::AudioOutput>,
+    /// System cursors made so far. SDL frees them when it shuts down.
+    cursors: HashMap<Cursor, *mut SDL_Cursor>,
 }
 
 pub(crate) fn sdl_error() -> String {
@@ -144,6 +149,7 @@ impl SdlBackend {
                 renderer: ManuallyDrop::new(renderer),
                 gamepads: HashMap::new(),
                 audio: None,
+                cursors: HashMap::new(),
             })
         }
     }
@@ -216,6 +222,123 @@ impl Backend for SdlBackend {
             } else {
                 SDL_HideCursor();
             }
+        }
+    }
+
+    fn set_cursor(&mut self, cursor: Cursor) -> Result<(), String> {
+        let id = match cursor {
+            Cursor::Arrow => SDL_SYSTEM_CURSOR_DEFAULT,
+            Cursor::IBeam => SDL_SYSTEM_CURSOR_TEXT,
+            Cursor::Wait => SDL_SYSTEM_CURSOR_WAIT,
+            Cursor::WaitArrow => SDL_SYSTEM_CURSOR_PROGRESS,
+            Cursor::Crosshair => SDL_SYSTEM_CURSOR_CROSSHAIR,
+            Cursor::Hand => SDL_SYSTEM_CURSOR_POINTER,
+            Cursor::No => SDL_SYSTEM_CURSOR_NOT_ALLOWED,
+            Cursor::SizeAll => SDL_SYSTEM_CURSOR_MOVE,
+            Cursor::SizeNs => SDL_SYSTEM_CURSOR_NS_RESIZE,
+            Cursor::SizeWe => SDL_SYSTEM_CURSOR_EW_RESIZE,
+            Cursor::SizeNwse => SDL_SYSTEM_CURSOR_NWSE_RESIZE,
+            Cursor::SizeNesw => SDL_SYSTEM_CURSOR_NESW_RESIZE,
+        };
+        // SAFETY: plain SDL calls on the main thread. A cursor stays valid
+        // until SDL shuts down, which is after its last use here.
+        unsafe {
+            let handle = match self.cursors.get(&cursor) {
+                Some(&handle) => handle,
+                None => {
+                    let handle = SDL_CreateSystemCursor(id);
+                    if handle.is_null() {
+                        return Err(sdl_error());
+                    }
+                    self.cursors.insert(cursor, handle);
+                    handle
+                }
+            };
+            if SDL_SetCursor(handle) {
+                Ok(())
+            } else {
+                Err(sdl_error())
+            }
+        }
+    }
+
+    fn set_relative_mouse(&mut self, relative: bool) -> Result<(), String> {
+        // SAFETY: the window is alive.
+        if unsafe { SDL_SetWindowRelativeMouseMode(self.window, relative) } {
+            Ok(())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
+    fn set_mouse_grabbed(&mut self, grabbed: bool) -> Result<(), String> {
+        // SAFETY: the window is alive.
+        if unsafe { SDL_SetWindowMouseGrab(self.window, grabbed) } {
+            Ok(())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
+    fn warp_mouse(&mut self, x: f32, y: f32) {
+        // SDL takes window coordinates; Smitten works in pixels.
+        let scale = self.pixel_density();
+        // SAFETY: the window is alive.
+        unsafe { SDL_WarpMouseInWindow(self.window, x / scale, y / scale) };
+    }
+
+    fn set_clipboard_text(&mut self, text: &str) -> Result<(), String> {
+        let text = c_string(text);
+        // SAFETY: SDL copies the string.
+        if unsafe { SDL_SetClipboardText(text.as_ptr()) } {
+            Ok(())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
+    fn clipboard_text(&mut self) -> String {
+        // SAFETY: SDL returns a NUL-terminated string that the caller
+        // frees, or null if it could not allocate one.
+        unsafe {
+            let text = SDL_GetClipboardText();
+            if text.is_null() {
+                return String::new();
+            }
+            let owned = CStr::from_ptr(text).to_string_lossy().into_owned();
+            SDL_free(text.cast());
+            owned
+        }
+    }
+
+    fn open_url(&mut self, url: &str) -> Result<(), String> {
+        let url = c_string(url);
+        // SAFETY: the string is valid for the call.
+        if unsafe { SDL_OpenURL(url.as_ptr()) } {
+            Ok(())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
+    fn power_info(&mut self) -> PowerInfo {
+        let (mut seconds, mut percent) = (-1, -1);
+        // SAFETY: SDL fills both numbers, with -1 for what it cannot tell.
+        let state = unsafe { SDL_GetPowerInfo(&mut seconds, &mut percent) };
+        PowerInfo {
+            state: if state == SDL_POWERSTATE_ON_BATTERY {
+                PowerState::Battery
+            } else if state == SDL_POWERSTATE_NO_BATTERY {
+                PowerState::NoBattery
+            } else if state == SDL_POWERSTATE_CHARGING {
+                PowerState::Charging
+            } else if state == SDL_POWERSTATE_CHARGED {
+                PowerState::Charged
+            } else {
+                PowerState::Unknown
+            },
+            percent: u8::try_from(percent).ok(),
+            seconds: u32::try_from(seconds).ok(),
         }
     }
 

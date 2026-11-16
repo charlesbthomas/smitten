@@ -14,6 +14,7 @@ mod filter;
 mod input;
 mod key;
 mod stencil;
+mod system;
 
 pub use blend::BlendMode;
 pub use color::Color;
@@ -22,3 +23,4 @@ pub use filter::{Filter, Wrap};
 pub use input::{GamepadAxis, GamepadButton, JoystickId, MouseButton};
 pub use key::Key;
 pub use stencil::{CompareMode, StencilAction, StencilMode};
+pub use system::{Cursor, PowerInfo, PowerState};
