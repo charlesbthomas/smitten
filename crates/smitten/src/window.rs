@@ -31,15 +31,25 @@ pub fn fullscreen() -> bool {
     context::with(|ctx| ctx.backend.is_fullscreen())
 }
 
-/// How much larger than normal the player's display settings ask things
-/// to be drawn, the equivalent of `love.window.getDPIScale`.
+/// How many pixels make up one unit, the equivalent of
+/// `love.window.getDPIScale`.
 ///
 /// It is 1.0 on an ordinary display and 2.0 on one with twice the pixels
 /// in each direction, such as a Retina display, or a Windows display set
-/// to 200%. Everything in Smitten is measured in pixels, so multiply
-/// sizes by this to keep them the same physical size on every display.
+/// to 200%. Smitten applies it for you: sizes and positions are in units,
+/// and drawing is simply sharper where this is higher. It is always 1.0
+/// when [`crate::Config::dpi_scaling`] is off.
 pub fn dpi_scale() -> f32 {
-    context::with(|ctx| ctx.backend.dpi_scale())
+    context::with(|ctx| ctx.gfx.screen.dpi)
+}
+
+/// The window's size in units as `(width, height)`.
+///
+/// This is the same as [`crate::graphics::dimensions`] for the screen,
+/// except in a game with a design size, where that is always the design
+/// size and this is the real window.
+pub fn dimensions() -> (u32, u32) {
+    context::with(|ctx| ctx.gfx.screen.window_size())
 }
 
 /// Sets the window's icon from an image file (PNG or JPEG), looked up like

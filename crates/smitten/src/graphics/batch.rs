@@ -87,6 +87,26 @@ impl Batch {
         });
     }
 
+    /// Queues triangles that ignore the scissor, stencil and shader in
+    /// force and use `blend`. For the framework's own drawing, such as
+    /// showing the game's picture in the window.
+    pub fn push_plain(
+        &mut self,
+        texture: Option<TextureId>,
+        filter: Filter,
+        blend: BlendMode,
+        triangles: &[Vertex],
+    ) {
+        let saved = (
+            std::mem::replace(&mut self.blend, blend),
+            self.scissor.take(),
+            std::mem::replace(&mut self.stencil, StencilMode::Off),
+            self.shader.take(),
+        );
+        self.push(texture, filter, triangles);
+        (self.blend, self.scissor, self.stencil, self.shader) = saved;
+    }
+
     /// Queues triangles, three vertices each, to draw on top of everything
     /// queued so far.
     pub fn push(&mut self, texture: Option<TextureId>, filter: Filter, triangles: &[Vertex]) {
@@ -408,6 +428,30 @@ mod tests {
         assert_eq!(passes, [(true, true, 1), (false, true, 3)]);
         let counts: Vec<_> = batch.calls.iter().map(|call| call.vertex_count).collect();
         assert_eq!(counts, [3, 3, 6, 3]);
+    }
+
+    #[test]
+    fn plain_draws_ignore_the_state_and_leave_it_as_it_was() {
+        let mut batch = Batch {
+            blend: BlendMode::Add,
+            scissor: Some(Scissor {
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10,
+            }),
+            ..Batch::default()
+        };
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
+        batch.push_plain(None, Filter::Linear, BlendMode::Replace, &TRIANGLE);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+
+        assert_eq!(batch.calls[0].blend, BlendMode::Replace);
+        assert_eq!(batch.calls[0].scissor, None);
+        assert_eq!(batch.calls[0].shader, None);
+        assert_eq!(batch.calls[1].blend, BlendMode::Add);
+        assert!(batch.calls[1].scissor.is_some());
+        assert_eq!(batch.calls[1].shader, Some(ShaderId(3)));
     }
 
     #[test]

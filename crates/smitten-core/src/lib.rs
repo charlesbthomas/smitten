@@ -17,7 +17,7 @@ mod stencil;
 
 pub use blend::BlendMode;
 pub use color::Color;
-pub use config::Config;
+pub use config::{Config, Scaling};
 pub use filter::Filter;
 pub use input::{GamepadAxis, GamepadButton, JoystickId, MouseButton};
 pub use key::Key;

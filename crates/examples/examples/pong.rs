@@ -532,6 +532,10 @@ fn main() {
         title: "Pong".to_string(),
         width: WIDTH as u32,
         height: HEIGHT as u32,
+        // The court is laid out for exactly this size, so let Smitten
+        // scale it to whatever size the window is given.
+        resizable: true,
+        design_size: Some((WIDTH as u32, HEIGHT as u32)),
         ..Config::default()
     });
 }

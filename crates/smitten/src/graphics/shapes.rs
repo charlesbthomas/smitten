@@ -80,12 +80,13 @@ pub(crate) fn segment(from: Point, to: Point, width: f32) -> Vec<Point> {
     vec![a, b, c, a, c, d]
 }
 
-/// Points around a circle, enough of them to look round at `radius`.
-pub(crate) fn circle_points(cx: f32, cy: f32, radius: f32) -> Vec<Point> {
+/// Points around a circle, enough of them to look round at `radius` when
+/// each unit is `scale` pixels.
+pub(crate) fn circle_points(cx: f32, cy: f32, radius: f32, scale: f32) -> Vec<Point> {
     let radius = radius.abs();
     // Keeps each straight edge within about a third of a pixel of the true
     // curve, bounded so tiny and huge circles stay reasonable.
-    let segments = ((radius.sqrt() * 6.0).ceil() as usize).clamp(12, 256);
+    let segments = (((radius * scale).sqrt() * 6.0).ceil() as usize).clamp(12, 256);
     (0..segments)
         .map(|i| {
             let angle = i as f32 / segments as f32 * std::f32::consts::TAU;
@@ -171,7 +172,7 @@ mod tests {
 
     #[test]
     fn circle_points_lie_on_the_circle() {
-        let points = circle_points(50.0, 20.0, 30.0);
+        let points = circle_points(50.0, 20.0, 30.0, 1.0);
         assert!(points.len() >= 12);
         for (x, y) in points {
             let distance = ((x - 50.0).powi(2) + (y - 20.0).powi(2)).sqrt();
@@ -181,6 +182,11 @@ mod tests {
 
     #[test]
     fn bigger_circles_get_more_points() {
-        assert!(circle_points(0.0, 0.0, 200.0).len() > circle_points(0.0, 0.0, 5.0).len());
+        assert!(
+            circle_points(0.0, 0.0, 200.0, 1.0).len() > circle_points(0.0, 0.0, 5.0, 1.0).len()
+        );
+        assert!(
+            circle_points(0.0, 0.0, 50.0, 2.0).len() > circle_points(0.0, 0.0, 50.0, 1.0).len()
+        );
     }
 }

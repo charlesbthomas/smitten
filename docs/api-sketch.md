@@ -124,7 +124,10 @@ fn main() {
 | `love.math.triangulate(points)` / `isConvex(points)` | `math::triangulate(&points)` / `math::is_convex(&points)` | |
 | `love.window.setFullscreen(true)` / `getFullscreen()` | `window::set_fullscreen(true)` / `window::fullscreen()` | Desktop fullscreen. `Config::fullscreen` starts that way. |
 | `love.window.setIcon(imagedata)` | `window::set_icon("icon.png")` | Or `Config::icon`. `set_icon_rgba` takes raw pixels. |
-| `love.window.getDPIScale()` | `window::dpi_scale()` | Smitten measures everything in pixels, so multiply sizes by this yourself. |
+| `love.window.getDPIScale()` | `window::dpi_scale()` | Applied for you, as in LÖVE: coordinates are in units. `Config::dpi_scaling` is `usedpiscale`. |
+| `love.graphics.getPixelDimensions()` | `graphics::pixel_dimensions()` | `graphics::dimensions()` is in units. |
+| `love.graphics.newCanvas(w, h, {dpiscale = 1})` | `Canvas::with_dpi_scale(w, h, 1.0)` | `new_canvas` matches the screen's scale. |
+| The push library, or a canvas scaled by hand | `Config::design_size` with `Scaling::Fit` or `Scaling::PixelPerfect` | Built in: a fixed design size scaled to the window, mouse included. |
 | `love.physics.newWorld(0, 9.81 * 64)` | `physics::World::new(0.0, 9.81 * 64.0)` | `world.set_meter(64.0)` replaces the global `setMeter`. |
 | `love.physics.newBody(world, x, y, "dynamic")` | `world.new_body(x, y, BodyType::Dynamic)` | `Static`, `Dynamic`, `Kinematic`. |
 | `newFixture(body, newRectangleShape(w, h))` | `body.add_rectangle(w, h)` | Shape and fixture in one step: `add_circle`, `add_polygon`, `add_edge`, `add_chain`. |

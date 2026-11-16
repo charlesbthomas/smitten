@@ -57,7 +57,10 @@ impl Canvases {
 impl Game for Canvases {
     fn load() -> Self {
         graphics::set_background_color(Color::rgb(0.11, 0.12, 0.15));
-        let scene = graphics::new_canvas(SCENE_WIDTH, SCENE_HEIGHT);
+        // Exactly one pixel per unit, so it looks just as chunky on a
+        // high-DPI display. The paint canvas below is as sharp as the screen.
+        let scene = Canvas::with_dpi_scale(SCENE_WIDTH, SCENE_HEIGHT, 1.0)
+            .expect("the GPU can make a small canvas");
         scene.set_filter(Filter::Nearest);
         Canvases {
             scene,

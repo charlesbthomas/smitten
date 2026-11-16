@@ -45,7 +45,7 @@ pub mod window;
 pub use joystick::Joystick;
 pub use smitten_core::{
     BlendMode, Color, CompareMode, Config, Filter, GamepadAxis, GamepadButton, Key, MouseButton,
-    StencilAction,
+    Scaling, StencilAction,
 };
 
 use smitten_core::backend::BackendEvent;
@@ -104,7 +104,8 @@ pub trait Game: Sized + 'static {
     /// Called when a gamepad stick or trigger moves.
     fn gamepad_axis(&mut self, _joystick: Joystick, _axis: GamepadAxis, _value: f32) {}
 
-    /// Called when the window's drawable size changes, in pixels.
+    /// Called when the window's size changes, with its new size in units
+    /// (see [`window::dimensions`]).
     fn resized(&mut self, _width: u32, _height: u32) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
@@ -123,6 +124,14 @@ pub fn run<G: Game>(config: Config) {
         Err(message) => panic!("smitten: could not start: {message}"),
     };
     context::install(Box::new(backend), &config);
+    context::with(|ctx| {
+        // Fonts and canvases made in `load` need to know how sharp the
+        // screen is.
+        ctx.gfx.screen = graphics::Screen::new(&config);
+        ctx.gfx
+            .screen
+            .update(ctx.backend.size_in_pixels(), ctx.backend.dpi_scale());
+    });
     if let Some(icon) = &config.icon {
         window::set_icon(icon);
     }
@@ -146,9 +155,10 @@ pub fn run<G: Game>(config: Config) {
         reload::check();
         game.update(dt);
 
-        context::with(|ctx| ctx.gfx.begin_frame());
+        context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
         game.draw();
         context::with(|ctx| {
+            ctx.gfx.finish_frame();
             ctx.backend.present(&ctx.gfx.frame());
             ctx.gfx.end_frame();
         });
@@ -158,9 +168,64 @@ pub fn run<G: Game>(config: Config) {
     context::uninstall();
 }
 
+/// Turns the pixels in a backend event into the units the game works in.
+fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
+    if let BackendEvent::Resized { width, height } = event {
+        let scale = ctx.backend.dpi_scale();
+        ctx.gfx.screen.update((width, height), scale);
+        let (width, height) = ctx.gfx.screen.window_size();
+        return BackendEvent::Resized { width, height };
+    }
+    let view = ctx.gfx.screen.view();
+    match event {
+        BackendEvent::MouseMoved { x, y, dx, dy } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::MouseMoved {
+                x,
+                y,
+                dx: dx / view.scale,
+                dy: dy / view.scale,
+            }
+        }
+        BackendEvent::MousePressed {
+            x,
+            y,
+            button,
+            presses,
+        } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::MousePressed {
+                x,
+                y,
+                button,
+                presses,
+            }
+        }
+        BackendEvent::MouseReleased {
+            x,
+            y,
+            button,
+            presses,
+        } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::MouseReleased {
+                x,
+                y,
+                button,
+                presses,
+            }
+        }
+        other => other,
+    }
+}
+
 /// Records an event in the input state, then tells the game about it.
 fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
-    context::with(|ctx| ctx.input.apply(&event));
+    let event = context::with(|ctx| {
+        let event = localize(ctx, event);
+        ctx.input.apply(&event);
+        event
+    });
 
     match event {
         BackendEvent::Quit => event::quit(),
