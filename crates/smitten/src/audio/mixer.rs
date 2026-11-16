@@ -128,6 +128,10 @@ pub(crate) struct Voice {
     /// Set when the game dropped its handle while the sound was playing.
     /// The voice is removed as soon as it stops.
     orphaned: bool,
+    /// Shared by a loaded sound and every copy made of it, so that all of
+    /// them can be given a newer version of the file. Zero until the voice
+    /// joins the mixer.
+    group: u64,
 }
 
 impl Voice {
@@ -140,6 +144,7 @@ impl Voice {
             volume: 1.0,
             pitch: 1.0,
             orphaned: false,
+            group: 0,
         }
     }
 
@@ -210,9 +215,12 @@ impl Mixer {
         }
     }
 
-    pub fn add(&mut self, voice: Voice) -> u64 {
+    pub fn add(&mut self, mut voice: Voice) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
+        if voice.group == 0 {
+            voice.group = id;
+        }
         self.voices.insert(id, voice);
         id
     }
@@ -240,9 +248,29 @@ impl Mixer {
             looping: original.looping,
             volume: original.volume,
             pitch: original.pitch,
+            group: original.group,
             ..Voice::new(data)
         };
         Ok(self.add(copy))
+    }
+
+    /// The voices the game still holds that came from the sound loaded as
+    /// `group`, and whether each is streamed.
+    pub fn group(&self, group: u64) -> Vec<(u64, bool)> {
+        self.voices
+            .iter()
+            .filter(|(_, voice)| voice.group == group && !voice.orphaned)
+            .map(|(&id, voice)| (id, matches!(voice.data, Data::Stream(_))))
+            .collect()
+    }
+
+    /// Gives a voice a different sound to play. It keeps its settings and
+    /// whether it is playing, and starts the new sound from the beginning.
+    pub fn replace_data(&mut self, id: u64, data: Data) {
+        if let Some(voice) = self.voices.get_mut(&id) {
+            voice.data = data;
+            voice.position = 0.0;
+        }
     }
 
     pub fn play(&mut self, id: u64) {
@@ -369,6 +397,37 @@ mod tests {
         let mut out = vec![0.0; frames * 2];
         mixer.mix(&mut out);
         out.chunks_exact(2).map(|frame| frame[0]).collect()
+    }
+
+    #[test]
+    fn copies_of_a_sound_belong_to_its_group() {
+        let mut mixer = Mixer::default();
+        let original = mixer.add(Voice::new(constant(4, 0.5)));
+        let copy = mixer.duplicate(original).unwrap();
+        let other = mixer.add(Voice::new(constant(4, 0.25)));
+
+        let mut group: Vec<u64> = mixer.group(original).iter().map(|&(id, _)| id).collect();
+        group.sort_unstable();
+        assert_eq!(group, [original, copy]);
+        assert_eq!(mixer.group(other), [(other, false)]);
+
+        // Voices the game has let go of are no longer part of it.
+        mixer.release(original);
+        mixer.release(copy);
+        assert!(mixer.group(original).is_empty());
+    }
+
+    #[test]
+    fn a_replaced_sound_keeps_playing_from_its_start_with_its_settings() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(constant(100, 0.5)));
+        mixer.set_volume(id, 0.5);
+        mixer.play(id);
+        assert_eq!(left(&mut mixer, 2), [0.25, 0.25]);
+
+        mixer.replace_data(id, constant(3, 1.0));
+        assert!(mixer.is_playing(id));
+        assert_eq!(left(&mut mixer, 4), [0.5, 0.5, 0.5, 0.0]);
     }
 
     #[test]

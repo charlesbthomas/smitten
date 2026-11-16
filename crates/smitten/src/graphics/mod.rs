@@ -37,6 +37,7 @@ pub(crate) use screen::Screen;
 pub(crate) mod reloading {
     pub(crate) use super::image::{Inner as ImageInner, reload as reload_image};
     pub(crate) use super::shader::{Inner as ShaderInner, reload as reload_shader};
+    pub(crate) use super::text::{Inner as FontInner, reload as reload_font};
 }
 
 pub use canvas::Canvas;
@@ -900,7 +901,9 @@ pub fn new_font(path: impl AsRef<Path>, size: f32) -> Font {
 pub fn try_new_font(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
     let path = path.as_ref();
     let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    Font::from_bytes(&bytes, size)
+    let font = Font::from_bytes(&bytes, size)?;
+    font.watch(path);
+    Ok(font)
 }
 
 /// Loads a bitmap font: an image holding the characters of `glyphs` in a
@@ -920,10 +923,12 @@ pub fn new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Font {
 pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
     let path = path.as_ref();
     let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    Font::from_image(&bytes, glyphs, 0.0).map_err(|error| match error {
+    let font = Font::from_image(&bytes, glyphs, 0.0).map_err(|error| match error {
         FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
         other => other,
-    })
+    })?;
+    font.watch(path);
+    Ok(font)
 }
 
 /// Creates the built-in font at `size` pixels.
