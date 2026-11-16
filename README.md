@@ -60,6 +60,7 @@ cargo run --example shader
 cargo run --example stencil
 cargo run --example particles
 cargo run --example physics
+cargo run --example lighting
 cargo run --example pong
 cargo run --example design
 cargo run --release --example benchmark
