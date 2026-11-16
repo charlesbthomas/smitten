@@ -62,6 +62,7 @@ cargo run --example stencil
 cargo run --example particles
 cargo run --example mesh
 cargo run --example physics
+cargo run --example rumble
 cargo run --example lighting
 cargo run --example pong
 cargo run --example design
