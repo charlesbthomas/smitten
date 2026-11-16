@@ -66,6 +66,7 @@ cargo run --example physics
 cargo run --example rumble
 cargo run --example lighting
 cargo run --example pong
+cargo run --example topple
 cargo run --example design
 cargo run --release --example benchmark
 ```
