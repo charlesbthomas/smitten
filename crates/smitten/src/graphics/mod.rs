@@ -48,6 +48,7 @@ pub use image_data::ImageData;
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, UniformValue};
+pub use shapes::{LineJoin, LineStyle};
 pub use sprite_batch::SpriteBatch;
 pub use text::{Align, Font, FontError};
 pub use transform::Transform;
@@ -75,6 +76,8 @@ pub(crate) struct GraphicsState {
     background: Color,
     color: Color,
     line_width: f32,
+    line_join: LineJoin,
+    line_style: LineStyle,
     point_size: f32,
     pub(crate) default_filter: Filter,
     transform: Transform,
@@ -109,6 +112,8 @@ impl Default for GraphicsState {
             background: Color::BLACK,
             color: Color::WHITE,
             line_width: 1.0,
+            line_join: LineJoin::default(),
+            line_style: LineStyle::default(),
             point_size: 1.0,
             default_filter: Filter::default(),
             transform: Transform::IDENTITY,
@@ -423,6 +428,48 @@ impl GraphicsState {
     }
 
     /// Queues untextured triangles given in local coordinates.
+    /// How lines are drawn right now.
+    fn stroke(&self) -> shapes::Stroke {
+        let fringe = match self.line_style {
+            LineStyle::Rough => 0.0,
+            LineStyle::Smooth => {
+                // The size of one pixel of the target in the game's
+                // coordinates, taken from how much the transform enlarges
+                // areas.
+                let device = self.device();
+                let (ox, oy) = device.apply(0.0, 0.0);
+                let (ax, ay) = device.apply(1.0, 0.0);
+                let (bx, by) = device.apply(0.0, 1.0);
+                let area = ((ax - ox) * (by - oy) - (bx - ox) * (ay - oy)).abs();
+                if area > 1e-12 { 1.0 / area.sqrt() } else { 0.0 }
+            }
+        };
+        shapes::Stroke {
+            width: self.line_width,
+            join: self.line_join,
+            fringe,
+        }
+    }
+
+    /// Queues triangles in the current color, faded by each corner's
+    /// coverage.
+    fn push_covered(&mut self, triangles: &[shapes::Covered]) {
+        let color = color_array(self.color);
+        let device = self.device();
+        let vertices: Vec<Vertex> = triangles
+            .iter()
+            .map(|&(x, y, coverage)| {
+                let (x, y) = device.apply(x, y);
+                Vertex {
+                    position: [x, y],
+                    uv: [0.0, 0.0],
+                    color: [color[0], color[1], color[2], color[3] * coverage],
+                }
+            })
+            .collect();
+        self.batch.push(None, Filter::default(), &vertices);
+    }
+
     fn push_shape(&mut self, triangles: &[(f32, f32)]) {
         let color = color_array(self.color);
         let device = self.device();
@@ -876,6 +923,30 @@ pub fn set_default_filter(filter: Filter) {
     context::with(|ctx| ctx.gfx.default_filter = filter);
 }
 
+/// Sets how the corners of lines and outlines are drawn. They start out
+/// mitered.
+pub fn set_line_join(join: LineJoin) {
+    context::with(|ctx| ctx.gfx.line_join = join);
+}
+
+/// Returns how the corners of lines and outlines are drawn.
+pub fn line_join() -> LineJoin {
+    context::with(|ctx| ctx.gfx.line_join)
+}
+
+/// Sets whether the edges of lines and outlines are softened. They start
+/// out smooth, as in LÖVE. Pixel art usually wants [`LineStyle::Rough`].
+///
+/// Filled shapes are not affected: their edges are always hard.
+pub fn set_line_style(style: LineStyle) {
+    context::with(|ctx| ctx.gfx.line_style = style);
+}
+
+/// Returns whether the edges of lines and outlines are softened.
+pub fn line_style() -> LineStyle {
+    context::with(|ctx| ctx.gfx.line_style)
+}
+
 /// Returns the filter that newly created images start with.
 pub fn default_filter() -> Filter {
     context::with(|ctx| ctx.gfx.default_filter)
@@ -954,7 +1025,10 @@ pub fn polygon(mode: DrawMode, points: &[(f32, f32)]) {
     context::with(|ctx| {
         let triangles = match mode {
             DrawMode::Fill => shapes::fill_convex(points),
-            DrawMode::Line => shapes::outline_closed(points, ctx.gfx.line_width),
+            DrawMode::Line => {
+                let triangles = shapes::stroke(points, true, &ctx.gfx.stroke());
+                return ctx.gfx.push_covered(&triangles);
+            }
         };
         ctx.gfx.push_shape(&triangles);
     });
@@ -1002,12 +1076,14 @@ pub fn arc(
             // The center comes first so that filling fans out from it.
             path.insert(0, (x, y));
         }
-        let triangles = match (mode, arc_type) {
-            (DrawMode::Fill, _) => shapes::fill_convex(&path),
-            (DrawMode::Line, ArcType::Open) => shapes::outline_open(&path, ctx.gfx.line_width),
-            (DrawMode::Line, _) => shapes::outline_closed(&path, ctx.gfx.line_width),
-        };
-        ctx.gfx.push_shape(&triangles);
+        match mode {
+            DrawMode::Fill => ctx.gfx.push_shape(&shapes::fill_convex(&path)),
+            DrawMode::Line => {
+                let closed = arc_type != ArcType::Open;
+                let triangles = shapes::stroke(&path, closed, &ctx.gfx.stroke());
+                ctx.gfx.push_covered(&triangles);
+            }
+        }
     });
 }
 
@@ -1035,16 +1111,16 @@ pub fn points(points: &[(f32, f32)]) {
 /// The equivalent of `love.graphics.line` with more than two points.
 pub fn polyline(points: &[(f32, f32)]) {
     context::with(|ctx| {
-        let triangles = shapes::outline_open(points, ctx.gfx.line_width);
-        ctx.gfx.push_shape(&triangles);
+        let triangles = shapes::stroke(points, false, &ctx.gfx.stroke());
+        ctx.gfx.push_covered(&triangles);
     });
 }
 
 /// Draws a straight line between two points.
 pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
     context::with(|ctx| {
-        let triangles = shapes::segment((x1, y1), (x2, y2), ctx.gfx.line_width);
-        ctx.gfx.push_shape(&triangles);
+        let triangles = shapes::stroke(&[(x1, y1), (x2, y2)], false, &ctx.gfx.stroke());
+        ctx.gfx.push_covered(&triangles);
     });
 }
 

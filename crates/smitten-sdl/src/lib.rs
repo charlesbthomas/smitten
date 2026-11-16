@@ -21,8 +21,8 @@ use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, Frame, ShaderId, ShaderInfo, TextureId,
 };
 use smitten_core::{
-    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, PowerInfo,
-    PowerState, Wrap,
+    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
+    PowerInfo, PowerState, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -40,6 +40,13 @@ pub struct SdlBackend {
     audio: Option<audio::AudioOutput>,
     /// System cursors made so far. SDL frees them when it shuts down.
     cursors: HashMap<Cursor, *mut SDL_Cursor>,
+    /// Whether presenting waits for the display's refresh.
+    vsync: bool,
+    /// Whether window sizes are multiplied by the display's scale.
+    content_scaling: bool,
+    /// Whether the window was last reported shown rather than hidden or
+    /// minimized.
+    visible: bool,
 }
 
 pub(crate) fn sdl_error() -> String {
@@ -85,6 +92,7 @@ impl SdlBackend {
             } else {
                 1.0
             };
+            let mut vsync = true;
             let title = c_string(&config.title);
             let window = SDL_CreateWindow(
                 title.as_ptr(),
@@ -121,7 +129,7 @@ impl SdlBackend {
             if !config.vsync
                 && SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE)
             {
-                SDL_SetGPUSwapchainParameters(
+                vsync = !SDL_SetGPUSwapchainParameters(
                     device,
                     window,
                     SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
@@ -150,6 +158,9 @@ impl SdlBackend {
                 gamepads: HashMap::new(),
                 audio: None,
                 cursors: HashMap::new(),
+                vsync,
+                content_scaling: config.dpi_scaling,
+                visible: true,
             })
         }
     }
@@ -409,6 +420,169 @@ impl Backend for SdlBackend {
         (width.max(0) as u32, height.max(0) as u32)
     }
 
+    fn title(&self) -> String {
+        // SAFETY: the window is alive, and the string SDL returns is
+        // copied before anything else can change it.
+        unsafe {
+            let title = SDL_GetWindowTitle(self.window);
+            if title.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(title).to_string_lossy().into_owned()
+            }
+        }
+    }
+
+    fn set_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
+        let scale = self.content_scale();
+        // SAFETY: the window is alive.
+        unsafe {
+            if !SDL_SetWindowSize(
+                self.window,
+                (width as f32 * scale).round().max(1.0) as i32,
+                (height as f32 * scale).round().max(1.0) as i32,
+            ) {
+                return Err(sdl_error());
+            }
+            // Wait for the window system, so the new size can be read
+            // straight away.
+            SDL_SyncWindow(self.window);
+        }
+        Ok(())
+    }
+
+    fn window_position(&self) -> (i32, i32) {
+        let (mut x, mut y) = (0, 0);
+        // SAFETY: the window is alive and both out-pointers are valid.
+        unsafe { SDL_GetWindowPosition(self.window, &mut x, &mut y) };
+        (x, y)
+    }
+
+    fn set_window_position(&mut self, x: i32, y: i32) {
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_SetWindowPosition(self.window, x, y);
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn minimize(&mut self) {
+        // SAFETY: the window is alive.
+        unsafe { SDL_MinimizeWindow(self.window) };
+    }
+
+    fn maximize(&mut self) {
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_MaximizeWindow(self.window);
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn restore(&mut self) {
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_RestoreWindow(self.window);
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn window_state(&self) -> WindowState {
+        // SAFETY: the window is alive.
+        let flags = unsafe { SDL_GetWindowFlags(self.window) };
+        let minimized = flags & SDL_WINDOW_MINIMIZED != 0;
+        WindowState {
+            minimized,
+            maximized: flags & SDL_WINDOW_MAXIMIZED != 0,
+            focused: flags & SDL_WINDOW_INPUT_FOCUS != 0,
+            mouse_focused: flags & SDL_WINDOW_MOUSE_FOCUS != 0,
+            visible: !minimized && flags & SDL_WINDOW_HIDDEN == 0,
+        }
+    }
+
+    fn set_vsync(&mut self, vsync: bool) -> Result<(), String> {
+        let mode = if vsync {
+            SDL_GPU_PRESENTMODE_VSYNC
+        } else {
+            SDL_GPU_PRESENTMODE_IMMEDIATE
+        };
+        // SAFETY: the device and the window it has claimed are alive.
+        unsafe {
+            if !SDL_WindowSupportsGPUPresentMode(self.device, self.window, mode) {
+                return Err("this display cannot present that way".to_string());
+            }
+            if !SDL_SetGPUSwapchainParameters(
+                self.device,
+                self.window,
+                SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                mode,
+            ) {
+                return Err(sdl_error());
+            }
+        }
+        self.vsync = vsync;
+        Ok(())
+    }
+
+    fn vsync(&self) -> bool {
+        self.vsync
+    }
+
+    fn desktop_size(&self) -> (u32, u32) {
+        let scale = self.content_scale();
+        // SAFETY: the window is alive, and the mode SDL returns is read
+        // before anything else can change it.
+        unsafe {
+            let mode = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(self.window));
+            if mode.is_null() {
+                return (0, 0);
+            }
+            (
+                ((*mode).w.max(0) as f32 / scale).round() as u32,
+                ((*mode).h.max(0) as f32 / scale).round() as u32,
+            )
+        }
+    }
+
+    fn display_count(&self) -> u32 {
+        let mut count = 0;
+        // SAFETY: the out-pointer is valid, and the list is freed once.
+        unsafe {
+            let displays = SDL_GetDisplays(&mut count);
+            SDL_free(displays.cast());
+        }
+        count.max(0) as u32
+    }
+
+    fn show_message_box(
+        &mut self,
+        kind: MessageBoxKind,
+        title: &str,
+        message: &str,
+    ) -> Result<(), String> {
+        let flags = match kind {
+            MessageBoxKind::Info => SDL_MESSAGEBOX_INFORMATION,
+            MessageBoxKind::Warning => SDL_MESSAGEBOX_WARNING,
+            MessageBoxKind::Error => SDL_MESSAGEBOX_ERROR,
+        };
+        let (title, message) = (c_string(title), c_string(message));
+        // SAFETY: the window is alive and both strings outlive the call.
+        let shown = unsafe {
+            SDL_ShowSimpleMessageBox(flags, title.as_ptr(), message.as_ptr(), self.window)
+        };
+        if shown { Ok(()) } else { Err(sdl_error()) }
+    }
+
+    fn request_attention(&mut self, continuous: bool) {
+        let operation = if continuous {
+            SDL_FLASH_UNTIL_FOCUSED
+        } else {
+            SDL_FLASH_BRIEFLY
+        };
+        // SAFETY: the window is alive.
+        unsafe { SDL_FlashWindow(self.window, operation) };
+    }
+
     fn gamepad_can_rumble(&self, id: JoystickId) -> bool {
         let Some(&gamepad) = self.gamepads.get(&id.0) else {
             return false;
@@ -511,6 +685,27 @@ impl SdlBackend {
             let kind = SDL_EventType(event.r#type);
             if kind == SDL_EVENT_QUIT {
                 Some(BackendEvent::Quit)
+            } else if kind == SDL_EVENT_WINDOW_FOCUS_GAINED {
+                Some(BackendEvent::Focus(true))
+            } else if kind == SDL_EVENT_WINDOW_FOCUS_LOST {
+                Some(BackendEvent::Focus(false))
+            } else if kind == SDL_EVENT_WINDOW_MOUSE_ENTER {
+                Some(BackendEvent::MouseFocus(true))
+            } else if kind == SDL_EVENT_WINDOW_MOUSE_LEAVE {
+                Some(BackendEvent::MouseFocus(false))
+            } else if kind == SDL_EVENT_WINDOW_MINIMIZED
+                || kind == SDL_EVENT_WINDOW_HIDDEN
+                || kind == SDL_EVENT_WINDOW_RESTORED
+                || kind == SDL_EVENT_WINDOW_SHOWN
+            {
+                // Restoring also follows a maximize, so only a real change
+                // is passed on.
+                let visible = kind == SDL_EVENT_WINDOW_RESTORED || kind == SDL_EVENT_WINDOW_SHOWN;
+                if visible == self.visible {
+                    return None;
+                }
+                self.visible = visible;
+                Some(BackendEvent::Visible(visible))
             } else if kind == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED {
                 Some(BackendEvent::Resized {
                     width: event.window.data1.max(0) as u32,
@@ -622,6 +817,17 @@ impl SdlBackend {
     }
 
     /// Pixels per window coordinate, above 1.0 on high-DPI displays.
+    /// How many window coordinates make up one unit on the window's
+    /// display. See the note on the window's size in `new`.
+    fn content_scale(&self) -> f32 {
+        if !self.content_scaling {
+            return 1.0;
+        }
+        // SAFETY: the window is alive.
+        let scale = unsafe { SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(self.window)) };
+        if scale > 0.0 { scale } else { 1.0 }
+    }
+
     fn pixel_density(&self) -> f32 {
         // SAFETY: the window is alive.
         let density = unsafe { SDL_GetWindowPixelDensity(self.window) };

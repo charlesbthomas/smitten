@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton,
-    PowerInfo, StencilMode, Wrap,
+    BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
+    MouseButton, PowerInfo, StencilMode, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -80,6 +80,12 @@ pub enum BackendEvent {
         axis: GamepadAxis,
         value: f32,
     },
+    /// The window started or stopped receiving the keyboard.
+    Focus(bool),
+    /// The pointer entered or left the window.
+    MouseFocus(bool),
+    /// The window was shown, or was hidden or minimized.
+    Visible(bool),
 }
 
 /// A corner of a triangle, in pixels from the top-left of the drawable.
@@ -347,6 +353,51 @@ pub trait Backend {
     fn rumble_gamepad(&mut self, id: JoystickId, low: f32, high: f32, seconds: f32) -> bool;
 
     /// Sets the window title.
+    /// The window's title.
+    fn title(&self) -> String;
+
+    /// Resizes the window to `width` by `height` units. The backend
+    /// applies the display's scale, as it does for the size in
+    /// [`Config`](crate::Config).
+    fn set_window_size(&mut self, width: u32, height: u32) -> Result<(), String>;
+
+    /// Where the window's top-left corner is on the desktop.
+    fn window_position(&self) -> (i32, i32);
+
+    fn set_window_position(&mut self, x: i32, y: i32);
+
+    fn minimize(&mut self);
+
+    fn maximize(&mut self);
+
+    /// Undoes minimizing or maximizing.
+    fn restore(&mut self);
+
+    fn window_state(&self) -> WindowState;
+
+    /// Turns waiting for the display's refresh on or off.
+    fn set_vsync(&mut self, vsync: bool) -> Result<(), String>;
+
+    fn vsync(&self) -> bool;
+
+    /// The size in units of the desktop the window is on.
+    fn desktop_size(&self) -> (u32, u32);
+
+    /// How many displays are connected.
+    fn display_count(&self) -> u32;
+
+    /// Shows a message with an OK button and waits for it to be closed.
+    fn show_message_box(
+        &mut self,
+        kind: MessageBoxKind,
+        title: &str,
+        message: &str,
+    ) -> Result<(), String>;
+
+    /// Asks for the user's attention, for instance by flashing the
+    /// taskbar. `continuous` keeps asking until the window gets focus.
+    fn request_attention(&mut self, continuous: bool);
+
     fn set_title(&mut self, title: &str);
 
     /// Makes the window fill the whole screen, or puts it back. A
