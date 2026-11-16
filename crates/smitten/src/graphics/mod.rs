@@ -15,6 +15,7 @@ mod batch;
 mod canvas;
 pub(crate) mod image;
 mod image_data;
+mod mesh;
 mod particles;
 mod screen;
 mod shader;
@@ -44,6 +45,7 @@ pub(crate) mod reloading {
 pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
 pub use image_data::ImageData;
+pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, UniformValue};
 pub use sprite_batch::SpriteBatch;
@@ -412,6 +414,21 @@ impl GraphicsState {
         let image = sprites.image();
         self.batch
             .push(Some(image.texture()), image.filter(), &vertices);
+        self.scratch = vertices;
+    }
+
+    /// Queues the triangles of `mesh`, placed by `local`.
+    fn push_mesh(&mut self, mesh: &Mesh, local: &Transform) {
+        let transform = self.device().then_inner(local);
+        let mut vertices = std::mem::take(&mut self.scratch);
+        vertices.clear();
+        mesh.write_vertices(&transform, self.color, &mut vertices);
+        match mesh.texture() {
+            Some(image) => self
+                .batch
+                .push(Some(image.texture()), image.filter(), &vertices),
+            None => self.batch.push(None, Filter::default(), &vertices),
+        }
         self.scratch = vertices;
     }
 
@@ -1016,6 +1033,27 @@ pub fn draw_sprite_batch_ex(
 ) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
     context::with(|ctx| ctx.gfx.push_sprite_batch(sprites, &local));
+}
+
+// ---------------------------------------------------------------------------
+// Meshes
+
+/// Creates a mesh from its vertices. See [`Mesh`].
+pub fn new_mesh(vertices: &[MeshVertex], mode: MeshDrawMode) -> Mesh {
+    Mesh::new(vertices, mode)
+}
+
+/// Draws a mesh with its origin at `(x, y)`, tinted by the current color.
+pub fn draw_mesh(mesh: &Mesh, x: f32, y: f32) {
+    draw_mesh_ex(mesh, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a mesh with the full set of LÖVE's `draw` arguments. See
+/// [`draw_ex`].
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
+pub fn draw_mesh_ex(mesh: &Mesh, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
+    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+    context::with(|ctx| ctx.gfx.push_mesh(mesh, &local));
 }
 
 // ---------------------------------------------------------------------------
