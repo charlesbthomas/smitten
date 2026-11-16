@@ -143,6 +143,13 @@ fn main() {
 | `love.graphics.rectangle("fill", x, y, w, h, rx, ry)` | `graphics::rounded_rectangle(DrawMode::Fill, x, y, w, h, rx, ry)` | |
 | `love.graphics.points(...)` / `setPointSize(4)` | `graphics::points(&points)` / `graphics::set_point_size(4.0)` | |
 | `love.graphics.line(x1, y1, x2, y2, x3, y3, ...)` | `graphics::polyline(&points)` | Corners are joined. `graphics::line` stays the two-point form. |
+| `love.system.getOS()` / `getProcessorCount()` | `system::os()` / `system::processor_count()` | |
+| `love.system.setClipboardText(text)` / `getClipboardText()` | `system::set_clipboard_text(text)` / `system::clipboard_text()` | |
+| `love.system.openURL(url)` | `system::open_url(url)` | Returns whether it opened. |
+| `love.system.getPowerInfo()` | `system::power_info()` | A struct with the state, percent and seconds left. |
+| `love.mouse.setCursor(love.mouse.getSystemCursor("hand"))` | `mouse::set_cursor(Cursor::Hand)` | Image cursors are not supported yet. |
+| `love.mouse.setRelativeMode(true)` / `setGrabbed(true)` | `mouse::set_relative_mode(true)` / `mouse::set_grabbed(true)` | |
+| `love.mouse.setPosition(x, y)` | `mouse::set_position(x, y)` | In units, like `mouse::position()`. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
