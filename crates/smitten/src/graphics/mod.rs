@@ -179,6 +179,51 @@ impl GraphicsState {
         }
     }
 
+    /// Puts drawing back to how it starts out, for the error screen: the
+    /// game may have panicked half way through a frame, with a canvas, a
+    /// shader or a scissor in force. A design size is dropped too, since
+    /// it may be too small to read text in.
+    ///
+    /// Returns what the game left in use. Drop it once the framework state
+    /// is no longer borrowed.
+    pub(crate) fn reset_for_error_screen(&mut self, background: Color) -> impl Sized + use<> {
+        self.batch.clear();
+        self.batch.set_shader(None);
+        self.batch.blend = BlendMode::default();
+        self.batch.stencil = StencilMode::Off;
+        self.scissor = None;
+        self.screen.design = None;
+        let leftovers = (
+            self.surface.take(),
+            self.canvas.take(),
+            self.shader.take(),
+            self.font.take(),
+        );
+        self.set_canvas(None);
+        self.background = background;
+        self.color = Color::WHITE;
+        self.font = Some(Font::fallback_at(
+            text::ERROR_FONT_SIZE,
+            self.default_filter,
+            self.screen.draw_scale(),
+        ));
+        leftovers
+    }
+
+    /// Queues text at `(x, y)` in the current font, for the framework's
+    /// own messages.
+    pub(crate) fn print_plain(
+        &mut self,
+        backend: &mut dyn Backend,
+        text: &str,
+        x: f32,
+        y: f32,
+        wrap: Option<(f32, Align)>,
+    ) {
+        let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+        self.push_text(backend, text, wrap, &local);
+    }
+
     /// Called once the frame has been handed to the backend.
     pub(crate) fn end_frame(&mut self) {
         self.batch.clear();
