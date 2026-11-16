@@ -92,6 +92,12 @@ impl World {
         let collector = ChannelEventCollector::new(collisions, forces, tears);
         inner.world.integration_parameters.dt = dt;
         inner.world.step_with_events(&(), &collector);
+        // A force lasts for one update, as in LÖVE. The engine would keep
+        // applying it until told otherwise.
+        for (_, body) in inner.world.bodies.iter_mut() {
+            body.reset_forces(false);
+            body.reset_torques(false);
+        }
 
         inner.contacts.clear();
         while let Ok(event) = collision_events.try_recv() {
