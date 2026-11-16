@@ -37,6 +37,8 @@ pub mod joystick;
 pub mod keyboard;
 pub mod math;
 pub mod mouse;
+#[cfg(feature = "physics")]
+pub mod physics;
 pub mod timer;
 pub mod window;
 

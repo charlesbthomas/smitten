@@ -128,6 +128,15 @@ fn main() {
 | `love.graphics.getPixelDimensions()` | `graphics::pixel_dimensions()` | `graphics::dimensions()` is in units. |
 | `love.graphics.newCanvas(w, h, {dpiscale = 1})` | `Canvas::with_dpi_scale(w, h, 1.0)` | `new_canvas` matches the screen's scale. |
 | The push library, or a canvas scaled by hand | `Config::design_size` with `Scaling::Fit` or `Scaling::PixelPerfect` | Built in: a fixed design size scaled to the window, mouse included. |
+| `love.physics.newWorld(0, 9.81 * 64)` | `physics::World::new(0.0, 9.81 * 64.0)` | `world.set_meter(64.0)` replaces the global `setMeter`. |
+| `love.physics.newBody(world, x, y, "dynamic")` | `world.new_body(x, y, BodyType::Dynamic)` | `Static`, `Dynamic`, `Kinematic`. |
+| `newFixture(body, newRectangleShape(w, h))` | `body.add_rectangle(w, h)` | Shape and fixture in one step: `add_circle`, `add_polygon`, `add_edge`, `add_chain`. |
+| `fixture:setRestitution(0.5)` / `setFriction` / `setSensor` | `fixture.set_restitution(0.5)` and so on | Setters chain. |
+| `body:getPosition()` / `applyLinearImpulse(x, y)` | `body.position()` / `body.apply_linear_impulse(x, y)` | |
+| `world:update(dt)` | `world.update(dt)` | |
+| `world:setCallbacks(beginContact, endContact)` | `world.contacts()` after each update | A list to loop over instead of callbacks. |
+| `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
+| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 

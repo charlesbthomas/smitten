@@ -7,13 +7,16 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["sdl-from-source"]
+default = ["sdl-from-source", "physics"]
 # Build SDL3 from source with CMake so `cargo run` needs no system SDL install.
 # Turn this off to link against an SDL3 that is already installed.
 sdl-from-source = ["smitten-sdl/from-source"]
 # Build SDL3 from source and link it into the executable. Use this for
 # release builds so the game is a single file plus its assets.
 sdl-static = ["smitten-sdl/static"]
+# The `physics` module. Turn it off to leave the Rapier engine out of a
+# game that does not use it.
+physics = ["dep:rapier2d"]
 
 [dependencies]
 smitten-core.workspace = true
@@ -21,3 +24,4 @@ smitten-sdl.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 fontdue = "0.9"
 symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "mp3", "flac"] }
+rapier2d = { version = "0.36.1", optional = true }

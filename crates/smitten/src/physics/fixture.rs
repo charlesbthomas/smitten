@@ -1,0 +1,208 @@
+use std::rc::Rc;
+
+use rapier2d::prelude::*;
+
+use super::Body;
+use super::world::Shared;
+
+/// Box2D's defaults, which LÖVE games are tuned around.
+pub(super) const DEFAULT_DENSITY: f32 = 1.0;
+pub(super) const DEFAULT_FRICTION: f32 = 0.2;
+
+/// A shape attached to a [`Body`], the part that collides. The equivalent
+/// of LÖVE's `Fixture` and its `Shape` together.
+///
+/// Make one with the `add_` methods of [`Body`]. Cloning is cheap and
+/// gives another handle to the same fixture. Using a destroyed fixture
+/// panics, except for [`Fixture::is_destroyed`], [`Fixture::destroy`] and
+/// [`Fixture::body`].
+#[derive(Clone)]
+pub struct Fixture {
+    world: Shared,
+    handle: ColliderHandle,
+}
+
+impl PartialEq for Fixture {
+    fn eq(&self, other: &Fixture) -> bool {
+        self.handle == other.handle && Rc::ptr_eq(&self.world, &other.world)
+    }
+}
+
+impl Fixture {
+    pub(super) fn new(world: &Shared, handle: ColliderHandle) -> Fixture {
+        Fixture {
+            world: world.clone(),
+            handle,
+        }
+    }
+
+    fn read<R>(&self, read: impl FnOnce(&Collider) -> R) -> R {
+        let inner = self.world.borrow();
+        read(
+            inner
+                .world
+                .colliders
+                .get(self.handle)
+                .expect("this fixture was destroyed"),
+        )
+    }
+
+    fn change<R>(&self, change: impl FnOnce(&mut Collider) -> R) -> R {
+        let mut inner = self.world.borrow_mut();
+        change(
+            inner
+                .world
+                .colliders
+                .get_mut(self.handle)
+                .expect("this fixture was destroyed"),
+        )
+    }
+
+    /// Whether the fixture, or the body it was on, has been destroyed.
+    pub fn is_destroyed(&self) -> bool {
+        self.world
+            .borrow()
+            .world
+            .colliders
+            .get(self.handle)
+            .is_none()
+    }
+
+    /// Removes the fixture from its body. Does nothing if it was already
+    /// destroyed.
+    pub fn destroy(&self) {
+        self.world.borrow_mut().world.remove_collider(self.handle);
+    }
+
+    /// The body the fixture is attached to, or `None` if the fixture was
+    /// destroyed.
+    pub fn body(&self) -> Option<Body> {
+        let inner = self.world.borrow();
+        let parent = inner.world.colliders.get(self.handle)?.parent()?;
+        Some(Body::new(&self.world, parent))
+    }
+
+    /// How much the fixture grips what it slides along, from 0.0 (ice)
+    /// upwards. 0.2 by default.
+    pub fn friction(&self) -> f32 {
+        self.read(|collider| collider.friction())
+    }
+
+    /// Sets how much the fixture grips what it slides along.
+    pub fn set_friction(&self, friction: f32) -> &Fixture {
+        self.change(|collider| collider.set_friction(friction));
+        self
+    }
+
+    /// How bouncy the fixture is, from 0.0 (no bounce, the default) to
+    /// 1.0 (bounces back as fast as it arrived). When two fixtures meet,
+    /// the bouncier one decides.
+    pub fn restitution(&self) -> f32 {
+        self.read(|collider| collider.restitution())
+    }
+
+    /// Sets how bouncy the fixture is.
+    pub fn set_restitution(&self, restitution: f32) -> &Fixture {
+        self.change(|collider| collider.set_restitution(restitution));
+        self
+    }
+
+    /// The fixture's density: its mass for each square meter of its area.
+    /// 1.0 by default.
+    pub fn density(&self) -> f32 {
+        let meter = self.world.borrow().meter;
+        self.read(|collider| collider.density()) * meter * meter
+    }
+
+    /// Sets the fixture's density, which changes its body's mass.
+    pub fn set_density(&self, density: f32) -> &Fixture {
+        let mut inner = self.world.borrow_mut();
+        let density = density / (inner.meter * inner.meter);
+        let world = &mut inner.world;
+        let collider = world
+            .colliders
+            .get_mut(self.handle)
+            .expect("this fixture was destroyed");
+        collider.set_density(density);
+        // Update the body's mass now, not at the next step, so that
+        // `Body::mass` is right straight away.
+        if let Some(body) = collider
+            .parent()
+            .and_then(|parent| world.bodies.get_mut(parent))
+        {
+            body.recompute_mass_properties_from_colliders(&world.colliders);
+        }
+        drop(inner);
+        self
+    }
+
+    /// Whether the fixture only detects overlaps without colliding.
+    pub fn is_sensor(&self) -> bool {
+        self.read(|collider| collider.is_sensor())
+    }
+
+    /// Makes the fixture a sensor: things pass through it, and it still
+    /// shows up in [`World::contacts`](super::World::contacts). Useful
+    /// for triggers and pickups.
+    pub fn set_sensor(&self, sensor: bool) -> &Fixture {
+        self.change(|collider| collider.set_sensor(sensor));
+        self
+    }
+
+    /// Limits what the fixture collides with. `categories` are the groups
+    /// it belongs to and `mask` the groups it collides with, each a set of
+    /// 32 bits. Two fixtures collide only if each one's mask includes one
+    /// of the other's categories. By default a fixture is in every group
+    /// and collides with every group.
+    pub fn set_filter(&self, categories: u32, mask: u32) -> &Fixture {
+        self.change(|collider| {
+            collider.set_collision_groups(InteractionGroups::new(
+                Group::from_bits_truncate(categories),
+                Group::from_bits_truncate(mask),
+                InteractionTestMode::And,
+            ));
+        });
+        self
+    }
+
+    /// The fixture's `(categories, mask)`. See [`Fixture::set_filter`].
+    pub fn filter(&self) -> (u32, u32) {
+        self.read(|collider| {
+            let groups = collider.collision_groups();
+            (groups.memberships.bits(), groups.filter.bits())
+        })
+    }
+
+    /// Whether the fixture covers the world point `(x, y)`.
+    pub fn test_point(&self, x: f32, y: f32) -> bool {
+        self.read(|collider| {
+            collider
+                .shape()
+                .contains_point(collider.position(), Vector::new(x, y))
+        })
+    }
+
+    /// A number the game attached to the fixture, 0 until one is set.
+    pub fn user_data(&self) -> u64 {
+        self.read(|collider| collider.user_data as u64)
+    }
+
+    /// Attaches a number to the fixture, to recognize it in contacts.
+    pub fn set_user_data(&self, data: u64) -> &Fixture {
+        self.change(|collider| collider.user_data = u128::from(data));
+        self
+    }
+}
+
+impl std::fmt::Debug for Fixture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_destroyed() {
+            return f.write_str("Fixture(destroyed)");
+        }
+        f.debug_struct("Fixture")
+            .field("sensor", &self.is_sensor())
+            .field("friction", &self.friction())
+            .field("restitution", &self.restitution())
+            .finish()
+    }
+}
