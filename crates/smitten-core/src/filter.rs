@@ -7,3 +7,16 @@ pub enum Filter {
     /// Hard pixel edges, for pixel art.
     Nearest,
 }
+
+/// What a texture shows beyond its own edges, when a quad or a mesh asks
+/// for more of it than there is. LÖVE's `WrapMode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Wrap {
+    /// The edge pixels are stretched outward. The default, as in LÖVE.
+    #[default]
+    Clamp,
+    /// The texture starts again, like tiles.
+    Repeat,
+    /// The texture starts again, flipped each time so its edges meet.
+    MirroredRepeat,
+}
