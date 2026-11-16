@@ -179,6 +179,16 @@ fn main() {
 | `love.window.showMessageBox(title, message, "warning")` | `window::show_message_box(title, message, MessageBoxKind::Warning)` | One OK button. |
 | `love.window.requestAttention(continuous)` | `window::request_attention(continuous)` | |
 | `love.focus(f)` / `love.mousefocus(f)` / `love.visible(v)` | `Game::focus` / `Game::mouse_focus` / `Game::visible` | |
+| `love.audio.setPosition(x, y, z)` / `setOrientation(fx, fy, fz, ux, uy, uz)` / `setVelocity(x, y, z)` | `audio::set_position(x, y, z)` / `set_orientation((fx, fy, fz), (ux, uy, uz))` / `set_velocity(x, y, z)` | The listener. Getters drop `get`, as everywhere. |
+| `love.audio.setDistanceModel("inverseclamped")` / `setDopplerScale(s)` | `audio::set_distance_model(DistanceModel::InverseClamped)` / `set_doppler_scale(s)` | The same OpenAL formulas as LÖVE. |
+| `source:setPosition(x, y, z)` / `setVelocity(x, y, z)` / `setDirection(x, y, z)` / `setRelative(true)` | `source.set_position(x, y, z)` / `set_velocity(x, y, z)` / `set_direction(x, y, z)` / `set_relative(true)` | Mono sources only, as in LÖVE. Stereo sources are heard as they are rather than raising an error. |
+| `source:setAttenuationDistances(ref, max)` / `setRolloff(r)` / `setCone(inner, outer, vol)` / `setVolumeLimits(min, max)` | `source.set_attenuation_distances(reference, max)` / `set_rolloff(r)` / `set_cone(inner, outer, volume)` / `set_volume_limits(min, max)` | The maximum volume limit starts unlimited rather than at 1.0, so volumes above 1.0 keep working. |
+| `source:setFilter{type = "lowpass", highgain = 0.2}` / `setFilter()` | `source.set_filter(Some(Filter::low_pass(0.2)))` / `set_filter(None)` | `Filter::high_pass` and `Filter::band_pass` too, or build a `Filter` with a `volume`. |
+| `love.audio.setEffect("hall", {type = "reverb", decaytime = 3})` / `setEffect("hall", false)` | `audio::set_effect("hall", Reverb { decay_time: 3.0, ..Default::default() })` / `audio::remove_effect("hall")` | Every LÖVE effect: `Reverb`, `Chorus`, `Distortion`, `Echo`, `Flanger`, `Compressor`, `Equalizer`, `RingModulator`, with LÖVE's defaults. |
+| `source:setEffect("hall")` / `setEffect("hall", false)` / `getActiveEffects()` | `source.set_effect("hall", None)` / `source.remove_effect("hall")` / `source.active_effects()` | The second argument is an optional `Filter` on the send. Returns `false` if there is no such effect. |
+| `love.sound.newSoundData(path)` / `newSoundData(samples, rate, bits, channels)` | `sound::new_sound_data(path)` / `SoundData::new(samples, rate, channels)` | Samples are `f32` from -1.0 to 1.0, so there is no bit depth. |
+| `sounddata:getSample(i, channel)` / `setSample(i, channel, v)` / `getSampleCount()` | `data.sample(i, channel)` / `data.set_sample(i, channel, v)` / `data.sample_count()` | Channels count from 0. `samples()` gives the whole interleaved slice. |
+| `love.audio.newSource(sounddata)` | `Source::from_sound_data(&data)` | Copies the samples, as LÖVE does. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

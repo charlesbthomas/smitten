@@ -15,10 +15,13 @@ use symphonia::core::probe::Hint;
 pub(crate) type Frame = [f32; 2];
 
 /// A whole sound decoded into memory.
-pub(crate) struct SoundData {
+pub(crate) struct Decoded {
     pub frames: Vec<Frame>,
     /// Frames per second.
     pub rate: u32,
+    /// 1 for mono, whose frames hold the same sample twice, or 2 for
+    /// stereo.
+    pub channels: u16,
 }
 
 /// Decodes a file a little at a time.
@@ -27,6 +30,8 @@ pub(crate) struct Decoder {
     codec: Box<dyn CodecDecoder>,
     track_id: u32,
     rate: u32,
+    /// 1 or 2, from the file's header and then from what it decodes to.
+    channels: u16,
     total_frames: Option<u64>,
     /// Frames still to throw away after a seek that landed early.
     skip: u64,
@@ -61,8 +66,13 @@ impl Decoder {
             .make(&track.codec_params, &DecoderOptions::default())
             .map_err(|error| format!("unsupported audio codec ({error})"))?;
 
+        let channels = match track.codec_params.channels.map(|channels| channels.count()) {
+            Some(1) => 1,
+            _ => 2,
+        };
         Ok(Self {
             track_id: track.id,
+            channels,
             total_frames: track.codec_params.n_frames,
             rate,
             format,
@@ -74,6 +84,12 @@ impl Decoder {
     /// Frames per second.
     pub fn rate(&self) -> u32 {
         self.rate
+    }
+
+    /// 1 for mono or 2 for stereo. Files with more channels count as
+    /// stereo, since only their front left and right are kept.
+    pub fn channels(&self) -> u16 {
+        self.channels
     }
 
     /// The length of the sound, when the file states it.
@@ -105,6 +121,7 @@ impl Decoder {
             if channels == 0 {
                 continue;
             }
+            self.channels = if channels == 1 { 1 } else { 2 };
             let mut samples = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
             samples.copy_interleaved_ref(decoded);
 
@@ -144,12 +161,13 @@ impl Decoder {
     }
 
     /// Decodes everything that is left.
-    pub fn decode_all(mut self) -> SoundData {
+    pub fn decode_all(mut self) -> Decoded {
         let mut frames = Vec::with_capacity(self.total_frames.unwrap_or(0) as usize);
         while self.decode_next(&mut frames) {}
-        SoundData {
+        Decoded {
             frames,
             rate: self.rate,
+            channels: self.channels,
         }
     }
 }
@@ -190,6 +208,7 @@ pub(crate) mod tests {
         let decoder = Decoder::open(wav(8_000, 1, &[0, 16_384, -16_384])).unwrap();
         assert_eq!(decoder.rate(), 8_000);
         assert_eq!(decoder.total_frames(), Some(3));
+        assert_eq!(decoder.channels(), 1);
 
         let sound = decoder.decode_all();
         assert_eq!(sound.frames.len(), 3);
@@ -205,6 +224,7 @@ pub(crate) mod tests {
             .unwrap()
             .decode_all();
         assert_eq!(sound.rate, 44_100);
+        assert_eq!(sound.channels, 2);
         assert_eq!(sound.frames.len(), 2);
         assert!(sound.frames[0][0] > 0.4 && sound.frames[0][1] < -0.4);
         assert!(sound.frames[1][0].abs() < 1e-3 && sound.frames[1][1] > 0.2);
