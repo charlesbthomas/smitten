@@ -60,6 +60,7 @@ cargo run --example shader
 cargo run --example stencil
 cargo run --example particles
 cargo run --example physics
+cargo run --example lighting
 cargo run --example pong
 cargo run --example design
 cargo run --release --example benchmark
@@ -128,6 +129,13 @@ A game that does not use physics can leave the engine out of its build:
 ```toml
 smitten = { version = "...", default-features = false, features = ["sdl-from-source"] }
 ```
+
+## The error screen
+
+If a game panics, the window does not vanish. It turns blue and shows the
+message and the file and line it came from, as LÖVE's error screen does,
+until Escape is pressed or the window is closed. The message is still
+printed to the terminal, and the program still ends with the panic.
 
 ## Hot reload
 
