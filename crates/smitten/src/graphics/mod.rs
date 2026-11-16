@@ -1116,6 +1116,28 @@ pub fn polyline(points: &[(f32, f32)]) {
     });
 }
 
+/// Draws a dashed line through `points` in order: dashes `dash` long
+/// with gaps of `gap` between them, both measured along the line. The
+/// dashes use the current line width, join and style.
+///
+/// LÖVE has no dashed lines; this saves working the pieces out by hand.
+pub fn dashed_polyline(points: &[(f32, f32)], dash: f32, gap: f32) {
+    context::with(|ctx| {
+        let stroke = ctx.gfx.stroke();
+        let mut triangles = Vec::new();
+        for piece in shapes::dashes(points, dash, gap) {
+            triangles.extend(shapes::stroke(&piece, false, &stroke));
+        }
+        ctx.gfx.push_covered(&triangles);
+    });
+}
+
+/// Draws a straight dashed line between two points. See
+/// [`dashed_polyline`].
+pub fn dashed_line(x1: f32, y1: f32, x2: f32, y2: f32, dash: f32, gap: f32) {
+    dashed_polyline(&[(x1, y1), (x2, y2)], dash, gap);
+}
+
 /// Draws a straight line between two points.
 pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
     context::with(|ctx| {

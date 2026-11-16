@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -12,8 +13,24 @@ const DEFAULT_METER: f32 = 30.0;
 pub(super) struct Inner {
     pub world: PhysicsWorld,
     pub meter: f32,
-    contacts: Vec<(bool, ColliderHandle, ColliderHandle)>,
+    contacts: Vec<RawContact>,
 }
+
+/// A contact as the engine reported it, before handles are made for the
+/// game.
+#[derive(Clone, Copy)]
+struct RawContact {
+    began: bool,
+    a: ColliderHandle,
+    b: ColliderHandle,
+    point: Vector,
+    normal: Vector,
+    speed: f32,
+}
+
+/// How a body was moving before an update: its velocity, its spin, and
+/// the point it spins around.
+type Motion = (Vector, f32, Vector);
 
 pub(super) type Shared = Rc<RefCell<Inner>>;
 
@@ -35,6 +52,19 @@ pub struct Contact {
     pub began: bool,
     pub a: Fixture,
     pub b: Fixture,
+    /// Where they touch, in world coordinates. For a sensor, or once they
+    /// have stopped touching, it is the point half way between the two.
+    pub x: f32,
+    pub y: f32,
+    /// The direction from `a` into `b` at that point, as a vector one
+    /// unit long.
+    pub normal: (f32, f32),
+    /// How fast the two were closing on each other along the normal just
+    /// before the update, in units per second. It says how hard they hit:
+    /// near zero for things settling against each other, large for a
+    /// crash. Zero when they were moving apart, and when they stopped
+    /// touching.
+    pub speed: f32,
 }
 
 impl Contact {
@@ -42,6 +72,72 @@ impl Contact {
     pub fn involves(&self, body: &Body) -> bool {
         self.a.body().as_ref() == Some(body) || self.b.body().as_ref() == Some(body)
     }
+}
+
+/// Where two fixtures touch and the direction from the first into the
+/// second there. Without contact points to go by (a sensor, or two that
+/// no longer touch) this is half way between them.
+fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> (Vector, Vector) {
+    let place = |handle| {
+        world
+            .colliders
+            .get(handle)
+            .map(|collider| *collider.position())
+    };
+    let (Some(pose_a), Some(pose_b)) = (place(a), place(b)) else {
+        // One of them was destroyed.
+        return (Vector::ZERO, Vector::new(0.0, 1.0));
+    };
+    let unit = |vector: Vector, fallback: Vector| {
+        let length = vector.length();
+        if length > 1e-6 {
+            vector / length
+        } else {
+            fallback
+        }
+    };
+    let (center_a, center_b) = (
+        pose_a.transform_point(Vector::ZERO),
+        pose_b.transform_point(Vector::ZERO),
+    );
+    let apart = unit(center_b - center_a, Vector::new(0.0, 1.0));
+    let between = ((center_a + center_b) / 2.0, apart);
+
+    let Some(pair) = world.contact_pair(a, b) else {
+        return between;
+    };
+    let PairContacts::Rigid(contacts) = &pair.contacts else {
+        return between;
+    };
+    let Some(manifold) = contacts
+        .manifolds
+        .iter()
+        .find(|manifold| !manifold.points.is_empty())
+    else {
+        return between;
+    };
+    // The manifold's points are relative to the pair's first collider,
+    // which may be either of the two, or to one piece of it.
+    let first = if pair.collider1 == a { pose_a } else { pose_b };
+    let piece = manifold
+        .subshape_poses
+        .as_ref()
+        .and_then(|poses| poses.pos1);
+    let to_world = |local: Vector| {
+        first.transform_point(piece.map_or(local, |piece| piece.transform_point(local)))
+    };
+    let count = manifold.points.len() as f32;
+    let local = manifold
+        .points
+        .iter()
+        .fold(Vector::ZERO, |sum, point| sum + point.local_p1)
+        / count;
+    let point = to_world(local);
+    let mut normal = unit(to_world(local + manifold.local_n1) - point, apart);
+    if pair.collider1 != a {
+        normal = -normal;
+    }
+    (point, normal)
 }
 
 /// Where a ray first met a fixture.
@@ -91,6 +187,18 @@ impl World {
         let (tears, _tear_events) = mpsc::channel();
         let collector = ChannelEventCollector::new(collisions, forces, tears);
         inner.world.integration_parameters.dt = dt;
+        // Remembered so that a contact can say how hard the two hit.
+        let before: HashMap<RigidBodyHandle, Motion> = inner
+            .world
+            .bodies
+            .iter()
+            .map(|(handle, body)| {
+                (
+                    handle,
+                    (body.linvel(), body.angvel(), body.center_of_mass()),
+                )
+            })
+            .collect();
         inner.world.step_with_events(&(), &collector);
         // A force lasts for one update, as in LÖVE. The engine would keep
         // applying it until told otherwise.
@@ -101,9 +209,36 @@ impl World {
 
         inner.contacts.clear();
         while let Ok(event) = collision_events.try_recv() {
-            inner.contacts.push(match event {
+            let (began, a, b) = match event {
                 CollisionEvent::Started(a, b, _) => (true, a, b),
                 CollisionEvent::Stopped(a, b, _) => (false, a, b),
+            };
+            let (point, normal) = touching_at(&inner.world, a, b);
+            // The velocity each fixture's body had at the point.
+            let velocity = |collider: ColliderHandle| {
+                inner
+                    .world
+                    .colliders
+                    .get(collider)
+                    .and_then(|collider| collider.parent())
+                    .and_then(|body| before.get(&body))
+                    .map_or(Vector::ZERO, |&(velocity, spin, center)| {
+                        let arm = point - center;
+                        velocity + Vector::new(-arm.y, arm.x) * spin
+                    })
+            };
+            let speed = if began {
+                (velocity(a) - velocity(b)).dot(normal).max(0.0)
+            } else {
+                0.0
+            };
+            inner.contacts.push(RawContact {
+                began,
+                a,
+                b,
+                point,
+                normal,
+                speed,
             });
         }
     }
@@ -120,10 +255,14 @@ impl World {
         inner
             .contacts
             .iter()
-            .map(|&(began, a, b)| Contact {
-                began,
-                a: Fixture::new(&self.inner, a),
-                b: Fixture::new(&self.inner, b),
+            .map(|contact| Contact {
+                began: contact.began,
+                a: Fixture::new(&self.inner, contact.a),
+                b: Fixture::new(&self.inner, contact.b),
+                x: contact.point.x,
+                y: contact.point.y,
+                normal: (contact.normal.x, contact.normal.y),
+                speed: contact.speed,
             })
             .collect()
     }

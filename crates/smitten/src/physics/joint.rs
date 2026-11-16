@@ -21,6 +21,15 @@ impl PartialEq for Joint {
     }
 }
 
+impl Eq for Joint {}
+
+impl std::hash::Hash for Joint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.handle.hash(state);
+        Rc::as_ptr(&self.world).hash(state);
+    }
+}
+
 impl Joint {
     pub(super) fn new(world: &Shared, handle: ImpulseJointHandle) -> Joint {
         Joint {

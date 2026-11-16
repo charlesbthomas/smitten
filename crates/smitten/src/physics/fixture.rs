@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use rapier2d::prelude::*;
@@ -25,6 +26,16 @@ pub struct Fixture {
 impl PartialEq for Fixture {
     fn eq(&self, other: &Fixture) -> bool {
         self.handle == other.handle && Rc::ptr_eq(&self.world, &other.world)
+    }
+}
+
+impl Eq for Fixture {}
+
+/// Lets a fixture be a key in a `HashMap` or `HashSet`.
+impl Hash for Fixture {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.handle.hash(state);
+        Rc::as_ptr(&self.world).hash(state);
     }
 }
 

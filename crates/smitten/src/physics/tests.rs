@@ -410,3 +410,93 @@ fn polygons_edges_and_chains_collide() {
     );
     assert_eq!(wedge.user_data(), 7);
 }
+
+#[test]
+fn a_contact_says_where_and_how_hard() {
+    let world = World::new(0.0, 600.0);
+    let floor = world.new_body(0.0, 300.0, BodyType::Static);
+    floor.add_rectangle(400.0, 20.0);
+    let falling = world.new_body(40.0, 100.0, BodyType::Dynamic);
+    falling.add_rectangle(20.0, 20.0);
+
+    let mut landing = None;
+    let mut fall_speed = 0.0;
+    for _ in 0..240 {
+        let before = falling.linear_velocity().1;
+        world.update(STEP);
+        if let Some(contact) = world.contacts().into_iter().find(|c| c.began) {
+            landing = Some(contact);
+            fall_speed = before;
+            break;
+        }
+    }
+    let contact = landing.expect("the box never landed");
+    // Between the bottom of the box and the top of the floor, under the box.
+    assert!((contact.x - 40.0).abs() < 12.0, "x was {}", contact.x);
+    assert!((contact.y - 290.0).abs() < 6.0, "y was {}", contact.y);
+    // As hard as it was falling.
+    assert!(fall_speed > 100.0);
+    assert!(
+        (contact.speed - fall_speed).abs() < fall_speed * 0.1,
+        "speed was {} after falling at {fall_speed}",
+        contact.speed
+    );
+    // The normal points from the first fixture's body towards the second's.
+    let (first, second) = (contact.a.body().unwrap(), contact.b.body().unwrap());
+    let towards = second.y() - first.y();
+    assert!(contact.normal.1 * towards > 0.0);
+    assert!(contact.normal.0.abs() < 0.1);
+}
+
+#[test]
+fn bodies_fixtures_and_joints_work_as_map_keys() {
+    use std::collections::HashMap;
+    let world = World::new(0.0, 0.0);
+    let one = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    let two = world.new_body(100.0, 0.0, BodyType::Dynamic);
+    let fixture = one.add_circle(10.0);
+    two.add_circle(10.0);
+
+    let mut names = HashMap::new();
+    names.insert(one.clone(), "one");
+    names.insert(two.clone(), "two");
+    assert_eq!(names[&one], "one");
+    assert_eq!(names[&fixture.body().unwrap()], "one");
+    assert_eq!(names[&two], "two");
+
+    let mut fixtures = HashMap::new();
+    fixtures.insert(fixture.clone(), 7);
+    assert_eq!(fixtures[&one.fixtures()[0]], 7);
+
+    // The same handle in another world is a different body.
+    let elsewhere = World::new(0.0, 0.0);
+    let other = elsewhere.new_body(0.0, 0.0, BodyType::Dynamic);
+    assert!(!names.contains_key(&other));
+}
+
+#[test]
+fn an_acceleration_does_not_depend_on_mass_or_the_meter() {
+    let mut speeds = Vec::new();
+    let mut spins = Vec::new();
+    for (meter, size) in [(30.0, 20.0), (100.0, 20.0), (100.0, 60.0)] {
+        let world = World::new(0.0, 0.0);
+        world.set_meter(meter);
+        let body = world.new_body(0.0, 0.0, BodyType::Dynamic);
+        body.add_rectangle(size, size);
+        for _ in 0..30 {
+            body.apply_acceleration(400.0, 0.0);
+            body.apply_angular_acceleration(3.0);
+            world.update(STEP);
+        }
+        speeds.push(body.linear_velocity().0);
+        spins.push(body.angular_velocity());
+    }
+    // 400 pixels a second squared and 3 radians a second squared, for
+    // half a second, whatever the body weighs.
+    for speed in speeds {
+        assert!((speed - 200.0).abs() < 2.0, "speed was {speed}");
+    }
+    for spin in spins {
+        assert!((spin - 1.5).abs() < 0.02, "spin was {spin}");
+    }
+}
