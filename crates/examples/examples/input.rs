@@ -6,12 +6,13 @@
 //! - Each finger on a touch screen gets a green circle, larger the
 //!   harder it presses.
 //! - Typed text and the active gamepad appear in the title bar.
-//! - Escape or the gamepad's Start button quits.
+//! - Escape asks whether to quit, in a message box with two buttons.
+//!   The gamepad's Start button quits straight away.
 
 use smitten::graphics::DrawMode;
 use smitten::{
-    Color, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, MouseButton, event, graphics,
-    joystick, keyboard, mouse, touch, window,
+    Color, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, MessageBoxKind, MouseButton,
+    event, graphics, joystick, keyboard, mouse, touch, window,
 };
 
 const SPEED: f32 = 300.0;
@@ -117,7 +118,17 @@ impl Game for Input {
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {
         match key {
-            Key::Escape => event::quit(),
+            Key::Escape => {
+                let choice = window::show_message_box_with_buttons(
+                    "Quit?",
+                    "Leave the input example?",
+                    MessageBoxKind::Warning,
+                    &["Quit", "Keep playing"],
+                );
+                if choice == Some(0) {
+                    event::quit();
+                }
+            }
             Key::Backspace => {
                 self.typed.pop();
                 self.update_title();

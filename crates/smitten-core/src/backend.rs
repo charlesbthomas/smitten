@@ -422,6 +422,20 @@ pub trait Backend {
         message: &str,
     ) -> Result<(), String>;
 
+    /// Shows a message with a button for each of `buttons`, in order
+    /// from left to right, and waits for one to be chosen. Enter chooses
+    /// the first button and Escape the last.
+    ///
+    /// Returns the index of the chosen button, or `None` if the box was
+    /// closed without choosing one. `buttons` is never empty.
+    fn show_message_box_with_buttons(
+        &mut self,
+        kind: MessageBoxKind,
+        title: &str,
+        message: &str,
+        buttons: &[&str],
+    ) -> Result<Option<usize>, String>;
+
     /// Asks for the user's attention, for instance by flashing the
     /// taskbar. `continuous` keeps asking until the window gets focus.
     fn request_attention(&mut self, continuous: bool);

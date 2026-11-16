@@ -177,6 +177,7 @@ fn main() {
 | `love.window.setVSync(1)` / `getVSync()` | `window::set_vsync(true)` / `window::vsync()` | On or off. Adaptive vsync is not offered. |
 | `love.window.getDesktopDimensions()` / `getDisplayCount()` | `window::desktop_dimensions()` / `window::display_count()` | The desktop the window is on. |
 | `love.window.showMessageBox(title, message, "warning")` | `window::show_message_box(title, message, MessageBoxKind::Warning)` | One OK button. |
+| `love.window.showMessageBox(title, message, {"Quit", "Stay"}, "warning")` | `window::show_message_box_with_buttons(title, message, MessageBoxKind::Warning, &["Quit", "Stay"])` | Returns the button's index from 0 as an `Option`. Enter picks the first button and Escape the last; they cannot be chosen yet. |
 | `love.window.requestAttention(continuous)` | `window::request_attention(continuous)` | |
 | `love.focus(f)` / `love.mousefocus(f)` / `love.visible(v)` | `Game::focus` / `Game::mouse_focus` / `Game::visible` | |
 | `love.touch.getTouches()` | `touch::touches()` | Returns `Vec<TouchId>`, oldest finger first. |

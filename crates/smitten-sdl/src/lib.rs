@@ -573,6 +573,58 @@ impl Backend for SdlBackend {
         if shown { Ok(()) } else { Err(sdl_error()) }
     }
 
+    fn show_message_box_with_buttons(
+        &mut self,
+        kind: MessageBoxKind,
+        title: &str,
+        message: &str,
+        buttons: &[&str],
+    ) -> Result<Option<usize>, String> {
+        let flags = match kind {
+            MessageBoxKind::Info => SDL_MESSAGEBOX_INFORMATION,
+            MessageBoxKind::Warning => SDL_MESSAGEBOX_WARNING,
+            MessageBoxKind::Error => SDL_MESSAGEBOX_ERROR,
+        };
+        let (title, message) = (c_string(title), c_string(message));
+        let labels: Vec<CString> = buttons.iter().map(|label| c_string(label)).collect();
+        let last = labels.len().saturating_sub(1);
+        let buttons: Vec<SDL_MessageBoxButtonData> = labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let mut button_flags = SDL_MessageBoxButtonFlags(0);
+                if index == 0 {
+                    button_flags |= SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT;
+                }
+                if index == last {
+                    button_flags |= SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
+                }
+                SDL_MessageBoxButtonData {
+                    flags: button_flags,
+                    buttonID: index as i32,
+                    text: label.as_ptr(),
+                }
+            })
+            .collect();
+        let data = SDL_MessageBoxData {
+            flags: flags | SDL_MESSAGEBOX_BUTTONS_LEFT_TO_RIGHT,
+            window: self.window,
+            title: title.as_ptr(),
+            message: message.as_ptr(),
+            numbuttons: buttons.len() as i32,
+            buttons: buttons.as_ptr(),
+            colorScheme: ptr::null(),
+        };
+        let mut chosen = -1;
+        // SAFETY: the window is alive, and every string and the button
+        // array outlive the call.
+        if unsafe { SDL_ShowMessageBox(&data, &mut chosen) } {
+            Ok(usize::try_from(chosen).ok())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
     fn request_attention(&mut self, continuous: bool) {
         let operation = if continuous {
             SDL_FLASH_UNTIL_FOCUSED
