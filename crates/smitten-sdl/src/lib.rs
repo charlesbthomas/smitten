@@ -22,7 +22,7 @@ use smitten_core::backend::{
 };
 use smitten_core::{
     Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
-    PowerInfo, PowerState, WindowState, Wrap,
+    PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -766,6 +766,49 @@ impl SdlBackend {
                 Some(BackendEvent::WheelMoved {
                     dx: event.wheel.x * sign,
                     dy: event.wheel.y * sign,
+                })
+            } else if kind == SDL_EVENT_FINGER_DOWN
+                || kind == SDL_EVENT_FINGER_MOTION
+                || kind == SDL_EVENT_FINGER_UP
+                || kind == SDL_EVENT_FINGER_CANCELED
+            {
+                let finger = &event.tfinger;
+                // SDL reports fractions of the window; Smitten works in
+                // pixels.
+                let (width, height) = self.size_in_pixels();
+                let (width, height) = (width as f32, height as f32);
+                let id = TouchId(finger.fingerID.0);
+                let (x, y) = (finger.x * width, finger.y * height);
+                let (dx, dy) = (finger.dx * width, finger.dy * height);
+                let pressure = finger.pressure;
+                Some(if kind == SDL_EVENT_FINGER_DOWN {
+                    BackendEvent::TouchPressed {
+                        id,
+                        x,
+                        y,
+                        dx,
+                        dy,
+                        pressure,
+                    }
+                } else if kind == SDL_EVENT_FINGER_MOTION {
+                    BackendEvent::TouchMoved {
+                        id,
+                        x,
+                        y,
+                        dx,
+                        dy,
+                        pressure,
+                    }
+                } else {
+                    // A canceled touch is over just as a lifted one is.
+                    BackendEvent::TouchReleased {
+                        id,
+                        x,
+                        y,
+                        dx,
+                        dy,
+                        pressure,
+                    }
                 })
             } else if kind == SDL_EVENT_GAMEPAD_ADDED {
                 let which = event.gdevice.which;

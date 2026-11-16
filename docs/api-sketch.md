@@ -179,6 +179,9 @@ fn main() {
 | `love.window.showMessageBox(title, message, "warning")` | `window::show_message_box(title, message, MessageBoxKind::Warning)` | One OK button. |
 | `love.window.requestAttention(continuous)` | `window::request_attention(continuous)` | |
 | `love.focus(f)` / `love.mousefocus(f)` / `love.visible(v)` | `Game::focus` / `Game::mouse_focus` / `Game::visible` | |
+| `love.touch.getTouches()` | `touch::touches()` | Returns `Vec<TouchId>`, oldest finger first. |
+| `love.touch.getPosition(id)` / `getPressure(id)` | `touch::position(id)` / `touch::pressure(id)` | `None` once the finger has lifted, where LÖVE raises an error. |
+| `love.touchpressed(id, x, y, dx, dy, pressure)` | `Game::touch_pressed(id, x, y, dx, dy, pressure)` | Also `touch_moved` and `touch_released`. A canceled touch counts as released. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

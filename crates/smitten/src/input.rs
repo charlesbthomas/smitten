@@ -1,17 +1,25 @@
 //! Tracks what is currently held down or connected, from the stream of
-//! backend events. The `keyboard`, `mouse` and `joystick` modules answer
+//! backend events. The `keyboard`, `mouse`, `touch` and `joystick` modules answer
 //! their state queries from here.
 
 use std::collections::HashSet;
 
 use smitten_core::backend::BackendEvent;
-use smitten_core::{GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
+use smitten_core::{GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, TouchId};
 
 pub(crate) struct JoystickState {
     pub id: JoystickId,
     pub name: String,
     pub buttons: HashSet<GamepadButton>,
     pub axes: [f32; GamepadAxis::ALL.len()],
+}
+
+/// A finger that is on the screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TouchState {
+    pub id: TouchId,
+    pub position: (f32, f32),
+    pub pressure: f32,
 }
 
 pub(crate) struct InputState {
@@ -24,6 +32,8 @@ pub(crate) struct InputState {
     pub cursor: smitten_core::Cursor,
     /// In the order they were connected.
     pub joysticks: Vec<JoystickState>,
+    /// In the order they touched the screen.
+    pub touches: Vec<TouchState>,
 }
 
 impl Default for InputState {
@@ -37,6 +47,7 @@ impl Default for InputState {
             mouse_grabbed: false,
             cursor: smitten_core::Cursor::Arrow,
             joysticks: Vec::new(),
+            touches: Vec::new(),
         }
     }
 }
@@ -44,6 +55,10 @@ impl Default for InputState {
 impl InputState {
     pub fn joystick(&self, id: JoystickId) -> Option<&JoystickState> {
         self.joysticks.iter().find(|joystick| joystick.id == id)
+    }
+
+    pub fn touch(&self, id: TouchId) -> Option<&TouchState> {
+        self.touches.iter().find(|touch| touch.id == id)
     }
 
     fn joystick_mut(&mut self, id: JoystickId) -> Option<&mut JoystickState> {
@@ -70,6 +85,28 @@ impl InputState {
             BackendEvent::MouseReleased { x, y, button, .. } => {
                 self.mouse_position = (*x, *y);
                 self.mouse_buttons.remove(button);
+            }
+            BackendEvent::TouchPressed {
+                id, x, y, pressure, ..
+            }
+            | BackendEvent::TouchMoved {
+                id, x, y, pressure, ..
+            } => {
+                let touch = TouchState {
+                    id: *id,
+                    position: (*x, *y),
+                    pressure: *pressure,
+                };
+                // A move for a finger that was never pressed, which can
+                // happen if it touched down before the window opened,
+                // starts tracking it.
+                match self.touches.iter_mut().find(|known| known.id == *id) {
+                    Some(known) => *known = touch,
+                    None => self.touches.push(touch),
+                }
+            }
+            BackendEvent::TouchReleased { id, .. } => {
+                self.touches.retain(|touch| touch.id != *id);
             }
             BackendEvent::JoystickAdded { id, name } => {
                 if self.joystick(*id).is_none() {
@@ -158,6 +195,63 @@ mod tests {
         });
         assert_eq!(input.mouse_position, (41.0, 25.0));
         assert!(input.mouse_buttons.is_empty());
+    }
+
+    fn touch_at(id: u64, x: f32, y: f32) -> BackendEvent {
+        BackendEvent::TouchPressed {
+            id: TouchId(id),
+            x,
+            y,
+            dx: 0.0,
+            dy: 0.0,
+            pressure: 0.5,
+        }
+    }
+
+    #[test]
+    fn touches_are_tracked_from_press_to_release_in_order() {
+        let mut input = InputState::default();
+        input.apply(&touch_at(7, 10.0, 20.0));
+        input.apply(&touch_at(2, 30.0, 40.0));
+        input.apply(&BackendEvent::TouchMoved {
+            id: TouchId(7),
+            x: 12.0,
+            y: 21.0,
+            dx: 2.0,
+            dy: 1.0,
+            pressure: 0.75,
+        });
+
+        let ids: Vec<_> = input.touches.iter().map(|touch| touch.id).collect();
+        assert_eq!(ids, [TouchId(7), TouchId(2)]);
+        let moved = input.touch(TouchId(7)).expect("the finger is down");
+        assert_eq!(moved.position, (12.0, 21.0));
+        assert_eq!(moved.pressure, 0.75);
+
+        input.apply(&BackendEvent::TouchReleased {
+            id: TouchId(7),
+            x: 12.0,
+            y: 21.0,
+            dx: 0.0,
+            dy: 0.0,
+            pressure: 0.0,
+        });
+        assert!(input.touch(TouchId(7)).is_none());
+        assert_eq!(input.touches.len(), 1);
+    }
+
+    #[test]
+    fn a_move_without_a_press_starts_tracking_the_finger() {
+        let mut input = InputState::default();
+        input.apply(&BackendEvent::TouchMoved {
+            id: TouchId(1),
+            x: 5.0,
+            y: 6.0,
+            dx: 1.0,
+            dy: 1.0,
+            pressure: 1.0,
+        });
+        assert_eq!(input.touch(TouchId(1)).unwrap().position, (5.0, 6.0));
     }
 
     #[test]

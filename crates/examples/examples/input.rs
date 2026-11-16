@@ -3,13 +3,15 @@
 //! - Arrow keys, WASD or a gamepad's left stick move the square.
 //! - The ring follows the mouse, and the wheel resizes it.
 //! - Left click drops a dot, right click clears them.
+//! - Each finger on a touch screen gets a green circle, larger the
+//!   harder it presses.
 //! - Typed text and the active gamepad appear in the title bar.
 //! - Escape or the gamepad's Start button quits.
 
 use smitten::graphics::DrawMode;
 use smitten::{
     Color, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, MouseButton, event, graphics,
-    joystick, keyboard, mouse, window,
+    joystick, keyboard, mouse, touch, window,
 };
 
 const SPEED: f32 = 300.0;
@@ -104,6 +106,13 @@ impl Game for Input {
         graphics::set_line_width(3.0);
         let (mouse_x, mouse_y) = mouse::position();
         graphics::circle(DrawMode::Line, mouse_x, mouse_y, self.ring_radius);
+
+        graphics::set_color(Color::rgb(0.4, 0.9, 0.5));
+        for id in touch::touches() {
+            if let (Some((x, y)), Some(pressure)) = (touch::position(id), touch::pressure(id)) {
+                graphics::circle(DrawMode::Fill, x, y, 16.0 + 24.0 * pressure);
+            }
+        }
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {

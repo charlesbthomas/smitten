@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use crate::{
     BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
-    MouseButton, PowerInfo, StencilMode, WindowState, Wrap,
+    MouseButton, PowerInfo, StencilMode, TouchId, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -59,6 +59,34 @@ pub enum BackendEvent {
     WheelMoved {
         dx: f32,
         dy: f32,
+    },
+    /// A finger touched the screen at `(x, y)` in pixels. `pressure` runs
+    /// from 0.0 to 1.0, and is 1.0 on screens that cannot measure it.
+    TouchPressed {
+        id: TouchId,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        pressure: f32,
+    },
+    /// A finger on the screen moved to `(x, y)` in pixels, by `(dx, dy)`.
+    TouchMoved {
+        id: TouchId,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        pressure: f32,
+    },
+    /// A finger left the screen, or the system took the touch away.
+    TouchReleased {
+        id: TouchId,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        pressure: f32,
     },
     JoystickAdded {
         id: JoystickId,
