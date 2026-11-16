@@ -27,6 +27,7 @@
 
 mod context;
 mod input;
+mod reload;
 
 pub mod audio;
 pub mod event;
@@ -136,6 +137,7 @@ pub fn run<G: Game>(config: Config) {
             let now = ctx.backend.ticks_ns();
             ctx.timer.step(now)
         });
+        reload::check();
         game.update(dt);
 
         context::with(|ctx| ctx.gfx.begin_frame());

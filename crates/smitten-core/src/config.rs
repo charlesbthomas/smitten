@@ -14,6 +14,10 @@ pub struct Config {
     pub identity: Option<String>,
     /// Whether presentation waits for the display's vertical sync.
     pub vsync: bool,
+    /// Whether images and shader files are loaded again when they change
+    /// on disk while the game runs. On by default in debug builds, so
+    /// `cargo run` picks up edits, and off in release builds.
+    pub hot_reload: bool,
 }
 
 impl Default for Config {
@@ -25,6 +29,7 @@ impl Default for Config {
             resizable: false,
             identity: None,
             vsync: true,
+            hot_reload: cfg!(debug_assertions),
         }
     }
 }

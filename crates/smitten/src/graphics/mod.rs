@@ -31,6 +31,12 @@ use smitten_core::StencilMode;
 use crate::{BlendMode, Color, CompareMode, Filter, StencilAction};
 use batch::Batch;
 
+/// What [`crate::reload`] needs from the asset types.
+pub(crate) mod reloading {
+    pub(crate) use super::image::{Inner as ImageInner, reload as reload_image};
+    pub(crate) use super::shader::{Inner as ShaderInner, reload as reload_shader};
+}
+
 pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
 pub use particles::ParticleSystem;
