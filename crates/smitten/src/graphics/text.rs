@@ -22,6 +22,9 @@ static DEFAULT_FONT: &[u8] = include_bytes!("fonts/Vera.ttf");
 /// The size of LÖVE's default font.
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 12.0;
 
+/// The size of the text on the error screen.
+pub(crate) const ERROR_FONT_SIZE: f32 = 14.0;
+
 /// Empty pixels kept around each glyph in the atlas so that neighbours do
 /// not bleed into each other when text is scaled or rotated.
 const ATLAS_PADDING: u32 = 1;
@@ -150,8 +153,13 @@ impl Font {
     /// The built-in font at its default size, used when the game draws
     /// text without choosing a font.
     pub(crate) fn fallback(filter: Filter, scale: f32) -> Font {
-        Font::with_filter(DEFAULT_FONT, DEFAULT_FONT_SIZE, filter, scale)
-            .expect("the built-in font is valid")
+        Font::fallback_at(DEFAULT_FONT_SIZE, filter, scale)
+    }
+
+    /// The built-in font at `size` units, for use where the framework
+    /// state is already borrowed.
+    pub(crate) fn fallback_at(size: f32, filter: Filter, scale: f32) -> Font {
+        Font::with_filter(DEFAULT_FONT, size, filter, scale).expect("the built-in font is valid")
     }
 
     /// The size the font was created with, in units.

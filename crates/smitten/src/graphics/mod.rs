@@ -180,6 +180,51 @@ impl GraphicsState {
         }
     }
 
+    /// Puts drawing back to how it starts out, for the error screen: the
+    /// game may have panicked half way through a frame, with a canvas, a
+    /// shader or a scissor in force. A design size is dropped too, since
+    /// it may be too small to read text in.
+    ///
+    /// Returns what the game left in use. Drop it once the framework state
+    /// is no longer borrowed.
+    pub(crate) fn reset_for_error_screen(&mut self, background: Color) -> impl Sized + use<> {
+        self.batch.clear();
+        self.batch.set_shader(None);
+        self.batch.blend = BlendMode::default();
+        self.batch.stencil = StencilMode::Off;
+        self.scissor = None;
+        self.screen.design = None;
+        let leftovers = (
+            self.surface.take(),
+            self.canvas.take(),
+            self.shader.take(),
+            self.font.take(),
+        );
+        self.set_canvas(None);
+        self.background = background;
+        self.color = Color::WHITE;
+        self.font = Some(Font::fallback_at(
+            text::ERROR_FONT_SIZE,
+            self.default_filter,
+            self.screen.draw_scale(),
+        ));
+        leftovers
+    }
+
+    /// Queues text at `(x, y)` in the current font, for the framework's
+    /// own messages.
+    pub(crate) fn print_plain(
+        &mut self,
+        backend: &mut dyn Backend,
+        text: &str,
+        x: f32,
+        y: f32,
+        wrap: Option<(f32, Align)>,
+    ) {
+        let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+        self.push_text(backend, text, wrap, &local);
+    }
+
     /// Called once the frame has been handed to the backend.
     pub(crate) fn end_frame(&mut self) {
         self.batch.clear();
@@ -929,6 +974,29 @@ pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, 
     })?;
     font.watch(path);
     Ok(font)
+}
+
+/// Loads a bitmap font: an image holding the characters of `glyphs` in a
+/// row, separated by columns in the color of its top-left pixel. The
+/// equivalent of `love.graphics.newImageFont`. See [`Font::from_image`].
+///
+/// Pixel fonts usually want `font.set_filter(Filter::Nearest)` so they
+/// stay crisp when enlarged.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_font`] to handle the failure instead.
+pub fn new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Font {
+    try_new_image_font(path, glyphs).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a bitmap font, returning an error if it fails.
+pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
+    let path = path.as_ref();
+    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+    Font::from_image(&bytes, glyphs, 0.0).map_err(|error| match error {
+        FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
+        other => other,
+    })
 }
 
 /// Creates the built-in font at `size` pixels.
