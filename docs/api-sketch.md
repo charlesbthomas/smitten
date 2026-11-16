@@ -150,6 +150,9 @@ fn main() {
 | `love.mouse.setCursor(love.mouse.getSystemCursor("hand"))` | `mouse::set_cursor(Cursor::Hand)` | Image cursors are not supported yet. |
 | `love.mouse.setRelativeMode(true)` / `setGrabbed(true)` | `mouse::set_relative_mode(true)` / `mouse::set_grabbed(true)` | |
 | `love.mouse.setPosition(x, y)` | `mouse::set_position(x, y)` | In units, like `mouse::position()`. |
+| `love.filesystem.getDirectoryItems(dir)` | `filesystem::directory_items(dir)` | Sorted. Saved and shipped files together, as in LÖVE. |
+| `love.filesystem.getInfo(path)` | `filesystem::info(path)` | `Option<FileInfo>`. Also `is_file` and `is_directory`. |
+| `love.filesystem.lines(path)` | `filesystem::lines(path)` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
