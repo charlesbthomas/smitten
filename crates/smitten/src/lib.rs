@@ -47,7 +47,7 @@ pub mod window;
 pub use joystick::Joystick;
 pub use smitten_core::{
     BlendMode, Color, CompareMode, Config, Cursor, Filter, GamepadAxis, GamepadButton, Key,
-    MouseButton, Scaling, StencilAction,
+    MouseButton, Scaling, StencilAction, Wrap,
 };
 
 use smitten_core::backend::BackendEvent;

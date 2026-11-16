@@ -3,8 +3,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use smitten_core::Filter;
 use smitten_core::backend::{Backend, TextureId};
+use smitten_core::{Filter, Wrap};
 
 use crate::context;
 use crate::reload::Asset;
@@ -24,6 +24,7 @@ pub(crate) struct Inner {
     width: Cell<u32>,
     height: Cell<u32>,
     filter: Cell<Filter>,
+    wrap: Cell<(Wrap, Wrap)>,
 }
 
 impl Drop for Inner {
@@ -48,6 +49,7 @@ impl Image {
                     width: Cell::new(width),
                     height: Cell::new(height),
                     filter: Cell::new(ctx.gfx.default_filter),
+                    wrap: Cell::default(),
                 }),
             })
         })
@@ -67,6 +69,7 @@ impl Image {
                 width: Cell::new(width),
                 height: Cell::new(height),
                 filter: Cell::new(filter),
+                wrap: Cell::default(),
             }),
         }
     }
@@ -94,6 +97,22 @@ impl Image {
     /// Sets the filter for every handle to this image.
     pub fn set_filter(&self, filter: Filter) {
         self.inner.filter.set(filter);
+    }
+
+    /// What the image shows beyond its edges, horizontally and vertically.
+    pub fn wrap(&self) -> (Wrap, Wrap) {
+        self.inner.wrap.get()
+    }
+
+    /// Sets what the image shows beyond its edges, for every handle to it.
+    /// With [`Wrap::Repeat`], a [`Quad`] larger than the image draws it
+    /// tiled, which is the cheap way to fill a background.
+    pub fn set_wrap(&self, horizontal: Wrap, vertical: Wrap) {
+        self.inner.wrap.set((horizontal, vertical));
+        context::with(|ctx| {
+            ctx.backend
+                .set_texture_wrap(self.texture(), horizontal, vertical);
+        });
     }
 
     /// Copies pixels from memory over part of the image, with their
@@ -225,6 +244,8 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
     // A different size needs a new texture. Quads made for the old size
     // keep their old numbers until the game makes them again.
     let texture = backend.create_texture(width, height, decoded.as_raw())?;
+    let (horizontal, vertical) = inner.wrap.get();
+    backend.set_texture_wrap(texture, horizontal, vertical);
     backend.destroy_texture(inner.texture.replace(texture));
     inner.width.set(width);
     inner.height.set(height);

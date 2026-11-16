@@ -158,6 +158,7 @@ fn main() {
 | `data:getPixel(x, y)` / `setPixel` / `mapPixel` / `paste` | `data.pixel(x, y)` / `set_pixel` / `map_pixels` / `paste` | Colors are `Color`. |
 | `data:encode("png", path)` | `data.save(path)` | Or `data.encode_png()` for the bytes. |
 | `love.graphics.newImage(data)` / `image:replacePixels(data)` | `Image::from_image_data(&data)` / `image.replace_pixels(&data, x, y)` | |
+| `image:setWrap("repeat", "repeat")` | `image.set_wrap(Wrap::Repeat, Wrap::Repeat)` | `Clamp`, `Repeat` or `MirroredRepeat`. A quad larger than the image then tiles it. |
 | `love.graphics.newMesh(vertices, "fan")` | `graphics::new_mesh(&vertices, MeshDrawMode::Fan)` | Vertices are `MeshVertex { x, y, u, v, color }`. `Fan`, `Strip` or `Triangles`. |
 | `mesh:setTexture(image)` / `setVertexMap` / `setDrawRange` | `mesh.set_texture(Some(&image))` / `set_vertex_map` / `set_draw_range` | |
 | `love.graphics.draw(mesh, x, y)` | `graphics::draw_mesh(&mesh, x, y)` | |

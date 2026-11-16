@@ -19,7 +19,7 @@ mod system;
 pub use blend::BlendMode;
 pub use color::Color;
 pub use config::{Config, Scaling};
-pub use filter::Filter;
+pub use filter::{Filter, Wrap};
 pub use input::{GamepadAxis, GamepadButton, JoystickId, MouseButton};
 pub use key::Key;
 pub use stencil::{CompareMode, StencilAction, StencilMode};

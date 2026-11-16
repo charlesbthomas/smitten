@@ -12,7 +12,7 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId, Vertex};
-use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode};
+use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
 
 use crate::{sdl_error, shader};
 
@@ -48,6 +48,8 @@ struct Texture {
     stencil: *mut SDL_GPUTexture,
     /// Whether `stencil` is new and still holds garbage.
     stencil_fresh: bool,
+    /// What shows beyond the edges, horizontally and vertically.
+    wrap: (Wrap, Wrap),
 }
 
 /// A fragment shader supplied by the game.
@@ -75,6 +77,8 @@ pub(crate) struct Renderer {
     screen_stencil_fresh: bool,
     linear: *mut SDL_GPUSampler,
     nearest: *mut SDL_GPUSampler,
+    /// Samplers for textures that do not clamp, made when first asked for.
+    wrapping: HashMap<(Filter, Wrap, Wrap), *mut SDL_GPUSampler>,
     white: *mut SDL_GPUTexture,
     textures: HashMap<u32, Texture>,
     next_texture_id: u32,
@@ -100,6 +104,7 @@ impl Renderer {
             screen_stencil_size: (0, 0),
             screen_stencil_fresh: false,
             linear: ptr::null_mut(),
+            wrapping: HashMap::new(),
             nearest: ptr::null_mut(),
             white: ptr::null_mut(),
             textures: HashMap::new(),
@@ -154,8 +159,8 @@ impl Renderer {
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
-            renderer.linear = create_sampler(device, SDL_GPU_FILTER_LINEAR)?;
-            renderer.nearest = create_sampler(device, SDL_GPU_FILTER_NEAREST)?;
+            renderer.linear = create_sampler(device, Filter::Linear, (Wrap::Clamp, Wrap::Clamp))?;
+            renderer.nearest = create_sampler(device, Filter::Nearest, (Wrap::Clamp, Wrap::Clamp))?;
             renderer.white = new_texture(device, 1, 1, &[255, 255, 255, 255])?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
@@ -186,6 +191,7 @@ impl Renderer {
                 is_target: false,
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
+                wrap: (Wrap::Clamp, Wrap::Clamp),
             },
         );
         Ok(TextureId(id))
@@ -243,6 +249,7 @@ impl Renderer {
                 is_target: true,
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
+                wrap: (Wrap::Clamp, Wrap::Clamp),
             },
         );
         Ok(TextureId(id))
@@ -278,6 +285,34 @@ impl Renderer {
         // SAFETY: the texture is alive, the region was checked to lie inside
         // it, and `rgba` was checked to cover the region.
         unsafe { upload_region(self.device, target.handle, x, y, width, height, rgba) }
+    }
+
+    pub fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap) {
+        let Some(entry) = self.textures.get_mut(&texture.0) else {
+            return;
+        };
+        let wrap = (horizontal, vertical);
+        if wrap != (Wrap::Clamp, Wrap::Clamp) {
+            // Made now, for both filters, so that drawing never has to
+            // stop to make one.
+            for filter in [Filter::Linear, Filter::Nearest] {
+                if self.wrapping.contains_key(&(filter, horizontal, vertical)) {
+                    continue;
+                }
+                // SAFETY: the device is alive.
+                match unsafe { create_sampler(self.device, filter, wrap) } {
+                    Ok(sampler) => {
+                        self.wrapping
+                            .insert((filter, horizontal, vertical), sampler);
+                    }
+                    Err(message) => {
+                        eprintln!("smitten: {message}");
+                        return;
+                    }
+                }
+            }
+        }
+        entry.wrap = wrap;
     }
 
     pub fn destroy_texture(&mut self, texture: TextureId) {
@@ -688,10 +723,10 @@ impl Renderer {
                     continue;
                 }
                 // A texture that was freed while still queued draws nothing.
-                let texture = match call.texture {
-                    None => self.white,
+                let (texture, wrap) = match call.texture {
+                    None => (self.white, (Wrap::Clamp, Wrap::Clamp)),
                     Some(id) => match self.textures.get(&id.0) {
-                        Some(texture) => texture.handle,
+                        Some(texture) => (texture.handle, texture.wrap),
                         None => continue,
                     },
                 };
@@ -750,10 +785,15 @@ impl Renderer {
                     );
                     bound_scissor = Some(scissor);
                 }
-                let sampler = match call.filter {
+                let clamped = match call.filter {
                     Filter::Linear => self.linear,
                     Filter::Nearest => self.nearest,
                 };
+                let sampler = self
+                    .wrapping
+                    .get(&(call.filter, wrap.0, wrap.1))
+                    .copied()
+                    .unwrap_or(clamped);
                 SDL_BindGPUFragmentSamplers(
                     pass,
                     0,
@@ -868,6 +908,9 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
+            for &sampler in self.wrapping.values() {
+                SDL_ReleaseGPUSampler(self.device, sampler);
+            }
             for &pipeline in self.pipelines.values() {
                 SDL_ReleaseGPUGraphicsPipeline(self.device, pipeline);
             }
@@ -1079,13 +1122,23 @@ unsafe fn create_shader(
 /// `device` must be alive.
 unsafe fn create_sampler(
     device: *mut SDL_GPUDevice,
-    filter: SDL_GPUFilter,
+    filter: Filter,
+    wrap: (Wrap, Wrap),
 ) -> Result<*mut SDL_GPUSampler, String> {
+    let filter = match filter {
+        Filter::Linear => SDL_GPU_FILTER_LINEAR,
+        Filter::Nearest => SDL_GPU_FILTER_NEAREST,
+    };
+    let address_mode = |wrap: Wrap| match wrap {
+        Wrap::Clamp => SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        Wrap::Repeat => SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+        Wrap::MirroredRepeat => SDL_GPU_SAMPLERADDRESSMODE_MIRRORED_REPEAT,
+    };
     let info = SDL_GPUSamplerCreateInfo {
         min_filter: filter,
         mag_filter: filter,
-        address_mode_u: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-        address_mode_v: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        address_mode_u: address_mode(wrap.0),
+        address_mode_v: address_mode(wrap.1),
         address_mode_w: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
         ..Default::default()
     };

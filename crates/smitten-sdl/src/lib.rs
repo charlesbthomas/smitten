@@ -21,7 +21,8 @@ use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, Frame, ShaderId, ShaderInfo, TextureId,
 };
 use smitten_core::{
-    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, PowerInfo, PowerState,
+    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, PowerInfo,
+    PowerState, Wrap,
 };
 
 use renderer::Renderer;
@@ -365,6 +366,11 @@ impl Backend for SdlBackend {
 
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
         self.renderer.create_render_target(width, height)
+    }
+
+    fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap) {
+        self.renderer
+            .set_texture_wrap(texture, horizontal, vertical);
     }
 
     fn destroy_texture(&mut self, texture: TextureId) {
