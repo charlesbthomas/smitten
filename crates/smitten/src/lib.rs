@@ -25,7 +25,6 @@
 //! }
 //! ```
 
-mod backend;
 mod context;
 
 pub mod event;
@@ -34,37 +33,9 @@ pub mod keyboard;
 pub mod timer;
 pub mod window;
 
-pub use graphics::Color;
-pub use keyboard::Key;
+pub use smitten_core::{Color, Config, Key};
 
-use backend::BackendEvent;
-
-/// Startup settings, the equivalent of LÖVE's `conf.lua`.
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Window title.
-    pub title: String,
-    /// Window width in screen units.
-    pub width: u32,
-    /// Window height in screen units.
-    pub height: u32,
-    /// Whether the user can resize the window.
-    pub resizable: bool,
-    /// Whether presentation waits for the display's vertical sync.
-    pub vsync: bool,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            title: "Untitled".to_string(),
-            width: 800,
-            height: 600,
-            resizable: false,
-            vsync: true,
-        }
-    }
-}
+use smitten_core::backend::BackendEvent;
 
 /// The callbacks a game provides. Only [`Game::load`] is required.
 ///
@@ -99,7 +70,7 @@ pub trait Game: Sized + 'static {
 /// Must be called from the main thread. Panics if the platform cannot be
 /// initialized, because there is nothing a game can do without a window.
 pub fn run<G: Game>(config: Config) {
-    let backend = match backend::sdl::SdlBackend::new(&config) {
+    let backend = match smitten_sdl::SdlBackend::new(&config) {
         Ok(backend) => backend,
         Err(message) => panic!("smitten: could not start: {message}"),
     };

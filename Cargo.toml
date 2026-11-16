@@ -1,16 +1,14 @@
-[package]
-name = "smitten"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.0.1"
 edition = "2024"
-description = "A LÖVE-style 2D game framework for Rust"
 repository = "https://github.com/charlesbthomas/smitten"
 publish = false
 
-[features]
-default = ["sdl-from-source"]
-# Build SDL3 from source with CMake so `cargo run` needs no system SDL install.
-# Turn this off to link against an SDL3 that is already installed.
-sdl-from-source = ["sdl3-sys/build-from-source"]
-
-[dependencies]
+[workspace.dependencies]
+smitten-core = { path = "crates/smitten-core" }
+smitten-sdl = { path = "crates/smitten-sdl", default-features = false }
 sdl3-sys = "0.7.3"

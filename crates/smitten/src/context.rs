@@ -8,9 +8,9 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use crate::backend::Backend;
-use crate::graphics::Color;
-use crate::keyboard::Key;
+use smitten_core::backend::Backend;
+use smitten_core::{Color, Key};
+
 use crate::timer::TimerState;
 
 pub(crate) struct Context {

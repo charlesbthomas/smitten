@@ -32,6 +32,16 @@ Early. A window, the game loop, keyboard input, timing and clearing the
 screen work. Drawing images, shapes and text comes next. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
 
+## Layout
+
+Smitten is a Cargo workspace. Games depend only on `smitten`.
+
+| Crate | Purpose |
+| --- | --- |
+| `crates/smitten` | The public API: the `Game` trait, `run`, and the LÖVE-style modules. |
+| `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
+| `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
+
 ## Running the example
 
 ```

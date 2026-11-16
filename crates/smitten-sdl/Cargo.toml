@@ -1,0 +1,16 @@
+[package]
+name = "smitten-sdl"
+description = "SDL3 backend for the Smitten game framework"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["from-source"]
+# Build SDL3 from source with CMake instead of linking a system install.
+from-source = ["sdl3-sys/build-from-source"]
+
+[dependencies]
+smitten-core.workspace = true
+sdl3-sys.workspace = true

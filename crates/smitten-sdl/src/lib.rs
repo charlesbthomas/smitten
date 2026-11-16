@@ -1,19 +1,20 @@
-//! The SDL3 backend: window and events through SDL, drawing through SDL's
-//! GPU API (Vulkan, Direct3D 12 or Metal depending on the platform).
+//! The SDL3 backend for Smitten: window and events through SDL, drawing
+//! through SDL's GPU API (Vulkan, Direct3D 12 or Metal depending on the
+//! platform).
 //!
-//! All `unsafe` FFI in the crate lives in this file.
+//! This is the only Smitten crate that contains `unsafe` code or links a
+//! native library.
 
 use std::ffi::{CStr, CString};
 use std::ptr;
 
 use sdl3_sys::everything::*;
 
-use super::{Backend, BackendEvent};
-use crate::Config;
-use crate::graphics::Color;
-use crate::keyboard::Key;
+use smitten_core::backend::{Backend, BackendEvent};
+use smitten_core::{Color, Config, Key};
 
-pub(crate) struct SdlBackend {
+/// A window and GPU device owned through SDL3.
+pub struct SdlBackend {
     window: *mut SDL_Window,
     device: *mut SDL_GPUDevice,
 }
@@ -31,6 +32,10 @@ fn c_string(text: &str) -> CString {
 }
 
 impl SdlBackend {
+    /// Initializes SDL and opens the game window.
+    ///
+    /// Must be called on the main thread. The error is a message suitable
+    /// for showing to the developer.
     pub fn new(config: &Config) -> Result<Self, String> {
         // SAFETY: plain SDL calls on the main thread. Every pointer passed is
         // valid for the duration of its call, and each failure path releases

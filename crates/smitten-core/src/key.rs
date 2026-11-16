@@ -1,7 +1,3 @@
-//! Keyboard state, the equivalent of `love.keyboard`.
-
-use crate::context;
-
 /// A physical key, named by its position on a US layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -68,14 +64,4 @@ pub enum Key {
     F10,
     F11,
     F12,
-}
-
-/// Returns whether `key` is currently held.
-pub fn is_down(key: Key) -> bool {
-    context::with(|ctx| ctx.keys_down.contains(&key))
-}
-
-/// Returns whether any of `keys` is currently held.
-pub fn is_any_down(keys: &[Key]) -> bool {
-    context::with(|ctx| keys.iter().any(|key| ctx.keys_down.contains(key)))
 }
