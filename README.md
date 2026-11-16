@@ -30,7 +30,7 @@ fn main() {
 
 Early. A window (with fullscreen and an icon), the game loop, keyboard, mouse and gamepad input, timing,
 shapes, images, text, the transform stack, canvases, blend modes, the
-scissor, the stencil, particle systems, sprite batches, save files, random numbers and noise, and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
+scissor, the stencil, particle systems, sprite batches, save files, random numbers and noise, physics, and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
 streamed) work, as do custom shaders written in WGSL. Rendering currently
 uses Vulkan only, so macOS is not supported yet. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
@@ -59,6 +59,7 @@ cargo run --example canvas
 cargo run --example shader
 cargo run --example stencil
 cargo run --example particles
+cargo run --example physics
 cargo run --example pong
 cargo run --release --example benchmark
 ```
@@ -83,6 +84,21 @@ compiler.
 
 To link against an SDL3 that is already installed, build with
 `--no-default-features`.
+
+## Physics
+
+`smitten::physics` follows `love.physics`: a `World` holds bodies, bodies
+get fixtures (circles, rectangles, polygons, edges, chains), and joints tie
+bodies together. `world.contacts()` reports what started or stopped
+touching, in place of LÖVE's contact callbacks. The simulation is done by
+[Rapier](https://rapier.rs) where LÖVE uses Box2D, so the API carries over
+but the exact motion does not.
+
+A game that does not use physics can leave the engine out of its build:
+
+```toml
+smitten = { version = "...", default-features = false, features = ["sdl-from-source"] }
+```
 
 ## Hot reload
 
