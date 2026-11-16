@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use crate::{
     BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton,
-    PowerInfo, StencilMode,
+    PowerInfo, StencilMode, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -255,6 +255,10 @@ pub trait Backend {
     /// [`Pass::target`], and sampled like any other. It starts out
     /// transparent, and keeps its contents between frames.
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String>;
+
+    /// Sets what a texture shows beyond its edges, along each axis. It
+    /// applies to everything drawn with the texture from this frame on.
+    fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap);
 
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
