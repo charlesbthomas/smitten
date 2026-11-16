@@ -33,7 +33,7 @@ pub mod keyboard;
 pub mod timer;
 pub mod window;
 
-pub use smitten_core::{Color, Config, Key};
+pub use smitten_core::{Color, Config, Filter, Key};
 
 use smitten_core::backend::BackendEvent;
 
@@ -105,12 +105,9 @@ pub fn run<G: Game>(config: Config) {
         });
         game.update(dt);
 
-        context::with(|ctx| ctx.frame_clear = ctx.background);
+        context::with(|ctx| ctx.gfx.begin_frame());
         game.draw();
-        context::with(|ctx| {
-            let clear = ctx.frame_clear;
-            ctx.backend.present(clear);
-        });
+        context::with(|ctx| ctx.backend.present(&ctx.gfx.frame()));
     }
 
     drop(game);

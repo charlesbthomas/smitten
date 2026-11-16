@@ -28,8 +28,9 @@ fn main() {
 
 ## Status
 
-Early. A window, the game loop, keyboard input, timing and clearing the
-screen work. Drawing images, shapes and text comes next. See
+Early. A window, the game loop, keyboard input, timing, shapes, images and
+the transform stack work. Text and audio come next. Rendering currently
+uses Vulkan only, so macOS is not supported yet. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
 
 ## Layout
@@ -42,10 +43,11 @@ Smitten is a Cargo workspace. Games depend only on `smitten`.
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
 
-## Running the example
+## Running the examples
 
 ```
 cargo run --example hello
+cargo run --example sprites
 ```
 
 SDL3 is built from source on the first build, which needs CMake and a C
