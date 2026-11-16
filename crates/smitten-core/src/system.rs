@@ -53,3 +53,27 @@ pub struct PowerInfo {
     /// How many seconds of battery life are left, if that is known.
     pub seconds: Option<u32>,
 }
+
+/// What the window is doing right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowState {
+    /// Shrunk to the taskbar or Dock.
+    pub minimized: bool,
+    /// Enlarged to fill the desktop, short of fullscreen.
+    pub maximized: bool,
+    /// Receiving the keyboard.
+    pub focused: bool,
+    /// Under the pointer.
+    pub mouse_focused: bool,
+    /// Shown on screen: neither hidden nor minimized.
+    pub visible: bool,
+}
+
+/// The icon a message box shows, as LÖVE's `MessageBoxType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MessageBoxKind {
+    #[default]
+    Info,
+    Warning,
+    Error,
+}

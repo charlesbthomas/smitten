@@ -47,7 +47,7 @@ pub mod window;
 pub use joystick::Joystick;
 pub use smitten_core::{
     BlendMode, Color, CompareMode, Config, Cursor, Filter, GamepadAxis, GamepadButton, Key,
-    MouseButton, Scaling, StencilAction, Wrap,
+    MessageBoxKind, MouseButton, Scaling, StencilAction, Wrap,
 };
 
 use smitten_core::backend::BackendEvent;
@@ -109,6 +109,18 @@ pub trait Game: Sized + 'static {
     /// Called when the window's size changes, with its new size in units
     /// (see [`window::dimensions`]).
     fn resized(&mut self, _width: u32, _height: u32) {}
+
+    /// Called when the window starts or stops receiving the keyboard,
+    /// for instance when the player switches to another program. A game
+    /// might pause here.
+    fn focus(&mut self, _focused: bool) {}
+
+    /// Called when the pointer enters or leaves the window.
+    fn mouse_focus(&mut self, _focused: bool) {}
+
+    /// Called when the window is minimized or hidden, and when it comes
+    /// back.
+    fn visible(&mut self, _visible: bool) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
     fn quit(&mut self) -> bool {
@@ -277,5 +289,8 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::GamepadAxis { id, axis, value } => {
             game.gamepad_axis(Joystick::new(id), axis, value);
         }
+        BackendEvent::Focus(focused) => game.focus(focused),
+        BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
+        BackendEvent::Visible(visible) => game.visible(visible),
     }
 }
