@@ -381,9 +381,269 @@ pub fn linear_to_gamma(component: f32) -> f32 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Curves
+
+/// A Bezier curve of any degree, the equivalent of LÖVE's `BezierCurve`.
+///
+/// The curve starts at its first control point, ends at its last, and is
+/// pulled towards the ones between. Two points make a straight line, three
+/// a quadratic curve, four a cubic one. Draw it by passing
+/// [`BezierCurve::render`] to a line-drawing function.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BezierCurve {
+    points: Vec<(f32, f32)>,
+}
+
+impl BezierCurve {
+    /// Creates a curve from its control points.
+    ///
+    /// Panics if there are fewer than two, since that is not a curve.
+    pub fn new(points: &[(f32, f32)]) -> BezierCurve {
+        assert!(
+            points.len() >= 2,
+            "a Bezier curve needs at least 2 control points, got {}",
+            points.len()
+        );
+        BezierCurve {
+            points: points.to_vec(),
+        }
+    }
+
+    /// One less than the number of control points.
+    pub fn degree(&self) -> usize {
+        self.points.len() - 1
+    }
+
+    /// The control points in order.
+    pub fn control_points(&self) -> &[(f32, f32)] {
+        &self.points
+    }
+
+    /// The control point at `index`, counting from zero.
+    pub fn control_point(&self, index: usize) -> Option<(f32, f32)> {
+        self.points.get(index).copied()
+    }
+
+    /// Moves the control point at `index`. Panics if there is none.
+    pub fn set_control_point(&mut self, index: usize, point: (f32, f32)) {
+        self.points[index] = point;
+    }
+
+    /// Adds a control point before position `index`, or at the end if
+    /// `index` is the number of points.
+    pub fn insert_control_point(&mut self, index: usize, point: (f32, f32)) {
+        self.points.insert(index, point);
+    }
+
+    /// Removes and returns the control point at `index`.
+    ///
+    /// Panics if that would leave fewer than two.
+    pub fn remove_control_point(&mut self, index: usize) -> (f32, f32) {
+        assert!(
+            self.points.len() > 2,
+            "a Bezier curve needs at least 2 control points"
+        );
+        self.points.remove(index)
+    }
+
+    /// The point on the curve at `t`, where 0 is the start and 1 the end.
+    pub fn evaluate(&self, t: f32) -> (f32, f32) {
+        // De Casteljau: blend neighbours until one point is left.
+        let mut points = self.points.clone();
+        while points.len() > 1 {
+            for i in 0..points.len() - 1 {
+                points[i] = lerp(points[i], points[i + 1], t);
+            }
+            points.pop();
+        }
+        points[0]
+    }
+
+    /// The curve whose points are this curve's velocity: `evaluate(t)` on
+    /// the result gives the direction and speed of travel at `t`.
+    pub fn derivative(&self) -> BezierCurve {
+        let degree = self.degree() as f32;
+        let mut points: Vec<(f32, f32)> = self
+            .points
+            .windows(2)
+            .map(|pair| {
+                (
+                    (pair[1].0 - pair[0].0) * degree,
+                    (pair[1].1 - pair[0].1) * degree,
+                )
+            })
+            .collect();
+        if points.len() == 1 {
+            // A straight line moves at one constant velocity.
+            points.push(points[0]);
+        }
+        BezierCurve { points }
+    }
+
+    /// The part of the curve between `t1` and `t2` as a curve of its own.
+    pub fn segment(&self, t1: f32, t2: f32) -> BezierCurve {
+        // Cut off everything after t2, then everything before t1 in what
+        // remains.
+        let (left, _) = split(&self.points, t2);
+        let inner = if t2 == 0.0 { 0.0 } else { t1 / t2 };
+        let (_, right) = split(&left, inner);
+        BezierCurve { points: right }
+    }
+
+    /// Points along the whole curve, for drawing it as a line. Each step
+    /// of `depth` doubles how many there are; LÖVE's default is 5.
+    pub fn render(&self, depth: u32) -> Vec<(f32, f32)> {
+        self.render_segment(0.0, 1.0, depth)
+    }
+
+    /// Points along the curve between `t1` and `t2`.
+    pub fn render_segment(&self, t1: f32, t2: f32, depth: u32) -> Vec<(f32, f32)> {
+        let steps = self.degree() << depth.min(12);
+        (0..=steps)
+            .map(|step| self.evaluate(t1 + (t2 - t1) * step as f32 / steps as f32))
+            .collect()
+    }
+
+    /// Moves the whole curve by `(dx, dy)`.
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        for point in &mut self.points {
+            *point = (point.0 + dx, point.1 + dy);
+        }
+    }
+
+    /// Turns the curve by `angle` radians around `(ox, oy)`.
+    pub fn rotate(&mut self, angle: f32, ox: f32, oy: f32) {
+        let (sin, cos) = angle.sin_cos();
+        for point in &mut self.points {
+            let (x, y) = (point.0 - ox, point.1 - oy);
+            *point = (ox + x * cos - y * sin, oy + x * sin + y * cos);
+        }
+    }
+
+    /// Grows or shrinks the curve by `factor` around `(ox, oy)`.
+    pub fn scale(&mut self, factor: f32, ox: f32, oy: f32) {
+        for point in &mut self.points {
+            *point = (ox + (point.0 - ox) * factor, oy + (point.1 - oy) * factor);
+        }
+    }
+}
+
+type Points = Vec<(f32, f32)>;
+
+fn lerp(a: (f32, f32), b: (f32, f32), t: f32) -> (f32, f32) {
+    (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+}
+
+/// Cuts a curve's control points at `t` into the control points of the
+/// part before and the part after.
+fn split(points: &[(f32, f32)], t: f32) -> (Points, Points) {
+    let mut working = points.to_vec();
+    let mut left = Vec::with_capacity(points.len());
+    let mut right = Vec::with_capacity(points.len());
+    while !working.is_empty() {
+        left.push(working[0]);
+        right.push(working[working.len() - 1]);
+        for i in 0..working.len() - 1 {
+            working[i] = lerp(working[i], working[i + 1], t);
+        }
+        working.pop();
+    }
+    right.reverse();
+    (left, right)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn close(a: (f32, f32), b: (f32, f32)) -> bool {
+        (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3
+    }
+
+    #[test]
+    fn a_curve_starts_and_ends_at_its_outer_control_points() {
+        let curve = BezierCurve::new(&[(0.0, 0.0), (50.0, 100.0), (100.0, 0.0)]);
+        assert_eq!(curve.degree(), 2);
+        assert!(close(curve.evaluate(0.0), (0.0, 0.0)));
+        assert!(close(curve.evaluate(1.0), (100.0, 0.0)));
+        // A quadratic reaches half way to its middle control point.
+        assert!(close(curve.evaluate(0.5), (50.0, 50.0)));
+    }
+
+    #[test]
+    fn a_two_point_curve_is_a_straight_line() {
+        let line = BezierCurve::new(&[(0.0, 0.0), (10.0, 20.0)]);
+        assert!(close(line.evaluate(0.25), (2.5, 5.0)));
+        assert!(close(line.derivative().evaluate(0.7), (10.0, 20.0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "at least 2 control points")]
+    fn a_curve_needs_two_points() {
+        BezierCurve::new(&[(0.0, 0.0)]);
+    }
+
+    #[test]
+    fn the_derivative_is_the_velocity_along_the_curve() {
+        let curve = BezierCurve::new(&[(0.0, 0.0), (50.0, 100.0), (100.0, 0.0)]);
+        let velocity = curve.derivative();
+        assert_eq!(velocity.degree(), 1);
+        // Leaving towards the middle point, flat at the top, then down.
+        assert!(close(velocity.evaluate(0.0), (100.0, 200.0)));
+        assert!(close(velocity.evaluate(0.5), (100.0, 0.0)));
+        assert!(close(velocity.evaluate(1.0), (100.0, -200.0)));
+    }
+
+    #[test]
+    fn a_segment_traces_the_same_path_as_the_whole_curve() {
+        let curve = BezierCurve::new(&[(0.0, 0.0), (30.0, 90.0), (70.0, -40.0), (100.0, 10.0)]);
+        let part = curve.segment(0.25, 0.75);
+        assert_eq!(part.degree(), 3);
+        for step in 0..=4 {
+            let t = step as f32 / 4.0;
+            assert!(close(part.evaluate(t), curve.evaluate(0.25 + t * 0.5)));
+        }
+        assert!(close(curve.segment(0.0, 0.0).evaluate(0.5), (0.0, 0.0)));
+    }
+
+    #[test]
+    fn rendering_gives_more_points_at_greater_depth() {
+        let curve = BezierCurve::new(&[(0.0, 0.0), (50.0, 100.0), (100.0, 0.0)]);
+        let coarse = curve.render(1);
+        let fine = curve.render(5);
+        assert_eq!(coarse.len(), 5);
+        assert_eq!(fine.len(), 65);
+        assert!(close(fine[0], (0.0, 0.0)) && close(fine[64], (100.0, 0.0)));
+        let half = curve.render_segment(0.0, 0.5, 3);
+        assert!(close(half[half.len() - 1], curve.evaluate(0.5)));
+    }
+
+    #[test]
+    fn control_points_can_be_changed() {
+        let mut curve = BezierCurve::new(&[(0.0, 0.0), (10.0, 0.0)]);
+        curve.insert_control_point(1, (5.0, 5.0));
+        assert_eq!(
+            curve.control_points(),
+            [(0.0, 0.0), (5.0, 5.0), (10.0, 0.0)]
+        );
+        curve.set_control_point(1, (5.0, 9.0));
+        assert_eq!(curve.control_point(1), Some((5.0, 9.0)));
+        assert_eq!(curve.remove_control_point(1), (5.0, 9.0));
+        assert_eq!(curve.degree(), 1);
+        assert_eq!(curve.control_point(7), None);
+    }
+
+    #[test]
+    fn a_curve_can_be_moved_turned_and_resized() {
+        let mut curve = BezierCurve::new(&[(0.0, 0.0), (10.0, 0.0)]);
+        curve.translate(5.0, 5.0);
+        assert_eq!(curve.control_points(), [(5.0, 5.0), (15.0, 5.0)]);
+        curve.scale(2.0, 5.0, 5.0);
+        assert_eq!(curve.control_points(), [(5.0, 5.0), (25.0, 5.0)]);
+        curve.rotate(std::f32::consts::FRAC_PI_2, 5.0, 5.0);
+        assert!(close(curve.control_points()[1], (5.0, 25.0)));
+    }
 
     #[test]
     fn the_same_seed_gives_the_same_numbers() {
