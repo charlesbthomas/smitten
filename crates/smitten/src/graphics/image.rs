@@ -129,7 +129,7 @@ impl std::error::Error for ImageError {
 }
 
 pub(crate) fn load(path: &Path) -> Result<Image, ImageError> {
-    let bytes = std::fs::read(path).map_err(|source| ImageError::Read {
+    let bytes = crate::filesystem::read(path).map_err(|source| ImageError::Read {
         path: path.to_path_buf(),
         source,
     })?;

@@ -10,6 +10,7 @@ mod renderer;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::mem::ManuallyDrop;
+use std::path::PathBuf;
 use std::ptr;
 
 use sdl3_sys::everything::*;
@@ -160,6 +161,23 @@ impl Backend for SdlBackend {
         }
     }
 
+    fn save_directory(&mut self, identity: &str) -> Result<PathBuf, String> {
+        let identity = c_string(identity);
+        // SAFETY: both strings are valid for the call. SDL returns a string
+        // it allocated, which is copied and then freed exactly once.
+        unsafe {
+            // An empty organization puts the folder directly under the
+            // user's application data directory.
+            let path = SDL_GetPrefPath(c"".as_ptr(), identity.as_ptr());
+            if path.is_null() {
+                return Err(format!("could not find a save directory: {}", sdl_error()));
+            }
+            let owned = CStr::from_ptr(path).to_string_lossy().into_owned();
+            SDL_free(path.cast());
+            Ok(PathBuf::from(owned))
+        }
+    }
+
     fn set_mouse_visible(&mut self, visible: bool) {
         // SAFETY: no preconditions once the video subsystem is running.
         unsafe {
@@ -178,6 +196,19 @@ impl Backend for SdlBackend {
         rgba: &[u8],
     ) -> Result<TextureId, String> {
         self.renderer.create_texture(width, height, rgba)
+    }
+
+    fn update_texture(
+        &mut self,
+        texture: TextureId,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), String> {
+        self.renderer
+            .update_texture(texture, x, y, width, height, rgba)
     }
 
     fn destroy_texture(&mut self, texture: TextureId) {

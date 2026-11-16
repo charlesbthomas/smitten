@@ -58,10 +58,7 @@ impl Game for Sprites {
         // Keep the pixel art crisp when it is scaled up.
         graphics::set_default_filter(Filter::Nearest);
 
-        let image = graphics::new_image(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/examples/assets/heart.png"
-        ));
+        let image = graphics::new_image("heart.png");
         let mut game = Sprites {
             image,
             hearts: Vec::new(),

@@ -29,7 +29,8 @@ fn main() {
 ## Status
 
 Early. A window, the game loop, keyboard, mouse and gamepad input, timing,
-shapes, images and the transform stack work. Text and audio come next. Rendering currently
+shapes, images, text, the transform stack and save files work. Audio comes
+next. Rendering currently
 uses Vulkan only, so macOS is not supported yet. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
 
@@ -49,6 +50,7 @@ Smitten is a Cargo workspace. Games depend only on `smitten`.
 cargo run --example hello
 cargo run --example sprites
 cargo run --example input
+cargo run --example text
 ```
 
 SDL3 is built from source on the first build, which needs CMake and a C

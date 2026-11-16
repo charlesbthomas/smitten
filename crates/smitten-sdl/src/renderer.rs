@@ -21,13 +21,20 @@ static FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite.frag.spv");
 const VERTEX_SIZE: u32 = size_of::<Vertex>() as u32;
 const INITIAL_VERTEX_CAPACITY: u32 = 4096;
 
+#[derive(Clone, Copy)]
+struct Texture {
+    handle: *mut SDL_GPUTexture,
+    width: u32,
+    height: u32,
+}
+
 pub(crate) struct Renderer {
     device: *mut SDL_GPUDevice,
     pipeline: *mut SDL_GPUGraphicsPipeline,
     linear: *mut SDL_GPUSampler,
     nearest: *mut SDL_GPUSampler,
     white: *mut SDL_GPUTexture,
-    textures: HashMap<u32, *mut SDL_GPUTexture>,
+    textures: HashMap<u32, Texture>,
     next_texture_id: u32,
     vertex_buffer: *mut SDL_GPUBuffer,
     transfer_buffer: *mut SDL_GPUTransferBuffer,
@@ -57,7 +64,7 @@ impl Renderer {
             renderer.pipeline = create_pipeline(device, window)?;
             renderer.linear = create_sampler(device, SDL_GPU_FILTER_LINEAR)?;
             renderer.nearest = create_sampler(device, SDL_GPU_FILTER_NEAREST)?;
-            renderer.white = upload_texture(device, 1, 1, &[255, 255, 255, 255])?;
+            renderer.white = new_texture(device, 1, 1, &[255, 255, 255, 255])?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
         Ok(renderer)
@@ -72,27 +79,60 @@ impl Renderer {
         if width == 0 || height == 0 {
             return Err("an image must be at least 1x1 pixels".to_string());
         }
-        let expected = width as usize * height as usize * 4;
-        if rgba.len() != expected {
-            return Err(format!(
-                "a {width}x{height} image needs {expected} bytes of RGBA data, got {}",
-                rgba.len()
-            ));
-        }
+        check_pixel_count(width, height, rgba)?;
         // SAFETY: the device is alive and `rgba` was just checked to cover
         // the whole texture.
-        let texture = unsafe { upload_texture(self.device, width, height, rgba)? };
+        let handle = unsafe { new_texture(self.device, width, height, rgba)? };
         let id = self.next_texture_id;
         self.next_texture_id += 1;
-        self.textures.insert(id, texture);
+        self.textures.insert(
+            id,
+            Texture {
+                handle,
+                width,
+                height,
+            },
+        );
         Ok(TextureId(id))
+    }
+
+    pub fn update_texture(
+        &mut self,
+        texture: TextureId,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), String> {
+        let Some(&target) = self.textures.get(&texture.0) else {
+            return Err("the texture no longer exists".to_string());
+        };
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        let fits = x
+            .checked_add(width)
+            .is_some_and(|right| right <= target.width)
+            && y.checked_add(height)
+                .is_some_and(|bottom| bottom <= target.height);
+        if !fits {
+            return Err(format!(
+                "a {width}x{height} update at ({x}, {y}) does not fit in a {}x{} texture",
+                target.width, target.height
+            ));
+        }
+        check_pixel_count(width, height, rgba)?;
+        // SAFETY: the texture is alive, the region was checked to lie inside
+        // it, and `rgba` was checked to cover the region.
+        unsafe { upload_region(self.device, target.handle, x, y, width, height, rgba) }
     }
 
     pub fn destroy_texture(&mut self, texture: TextureId) {
         if let Some(texture) = self.textures.remove(&texture.0) {
             // SAFETY: the texture came from this device. SDL defers the
             // actual free until no in-flight frame uses it.
-            unsafe { SDL_ReleaseGPUTexture(self.device, texture) };
+            unsafe { SDL_ReleaseGPUTexture(self.device, texture.handle) };
         }
     }
 
@@ -280,7 +320,7 @@ impl Renderer {
                 let texture = match call.texture {
                     None => self.white,
                     Some(id) => match self.textures.get(&id.0) {
-                        Some(&texture) => texture,
+                        Some(texture) => texture.handle,
                         None => continue,
                     },
                 };
@@ -306,7 +346,7 @@ impl Drop for Renderer {
         // SDL ignores null handles.
         unsafe {
             for (_, texture) in self.textures.drain() {
-                SDL_ReleaseGPUTexture(self.device, texture);
+                SDL_ReleaseGPUTexture(self.device, texture.handle);
             }
             SDL_ReleaseGPUTexture(self.device, self.white);
             SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
@@ -469,19 +509,30 @@ unsafe fn create_sampler(
     Ok(sampler)
 }
 
+fn check_pixel_count(width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{width}x{height} pixels need {expected} bytes of RGBA data, got {}",
+            rgba.len()
+        ))
+    }
+}
+
 /// Creates a texture and fills it with `rgba`.
 ///
 /// # Safety
 /// `device` must be alive and `rgba` must hold `width * height * 4` bytes.
-unsafe fn upload_texture(
+unsafe fn new_texture(
     device: *mut SDL_GPUDevice,
     width: u32,
     height: u32,
     rgba: &[u8],
 ) -> Result<*mut SDL_GPUTexture, String> {
-    let size = u32::try_from(rgba.len()).map_err(|_| "the image is too large".to_string())?;
-    // SAFETY: the transfer buffer is `size` bytes, exactly what is copied
-    // in, and every handle is released on the paths that abandon it.
+    // SAFETY: the create-info is valid for the call, and the new texture is
+    // released if filling it fails.
     unsafe {
         let texture = SDL_CreateGPUTexture(
             device,
@@ -500,7 +551,32 @@ unsafe fn upload_texture(
         if texture.is_null() {
             return Err(format!("could not create a texture: {}", sdl_error()));
         }
+        if let Err(message) = upload_region(device, texture, 0, 0, width, height, rgba) {
+            SDL_ReleaseGPUTexture(device, texture);
+            return Err(message);
+        }
+        Ok(texture)
+    }
+}
 
+/// Copies `rgba` into a region of `texture`.
+///
+/// # Safety
+/// `device` and `texture` must be alive, the region must lie inside the
+/// texture, and `rgba` must hold `width * height * 4` bytes.
+unsafe fn upload_region(
+    device: *mut SDL_GPUDevice,
+    texture: *mut SDL_GPUTexture,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(), String> {
+    let size = u32::try_from(rgba.len()).map_err(|_| "the image is too large".to_string())?;
+    // SAFETY: the transfer buffer is `size` bytes, exactly what is copied
+    // in, and it is released on every path.
+    unsafe {
         let transfer = SDL_CreateGPUTransferBuffer(
             device,
             &SDL_GPUTransferBufferCreateInfo {
@@ -524,7 +600,6 @@ unsafe fn upload_texture(
         if commands.is_null() {
             let message = format!("could not upload a texture: {}", sdl_error());
             SDL_ReleaseGPUTransferBuffer(device, transfer);
-            SDL_ReleaseGPUTexture(device, texture);
             return Err(message);
         }
 
@@ -539,6 +614,8 @@ unsafe fn upload_texture(
             },
             &SDL_GPUTextureRegion {
                 texture,
+                x,
+                y,
                 w: width,
                 h: height,
                 d: 1,
@@ -549,7 +626,6 @@ unsafe fn upload_texture(
         SDL_EndGPUCopyPass(pass);
         SDL_SubmitGPUCommandBuffer(commands);
         SDL_ReleaseGPUTransferBuffer(device, transfer);
-
-        Ok(texture)
+        Ok(())
     }
 }

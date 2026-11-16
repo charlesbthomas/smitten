@@ -23,7 +23,7 @@ impl Game for Catch {
         graphics::set_background_color(Color::rgb(0.1, 0.1, 0.2)); // works today
         Catch {
             player: graphics::new_image("player.png"),      // works today
-            font: graphics::new_font("font.ttf", 24.0),
+            font: graphics::new_font("font.ttf", 24.0),     // works today
             blip: audio::new_source("blip.ogg", audio::SourceType::Static),
             x: 400.0,
             score: 0,
@@ -43,8 +43,8 @@ impl Game for Catch {
         graphics::draw(&self.player, self.x, 500.0);      // works today
         graphics::set_color(Color::WHITE);                // works today
         graphics::rectangle(DrawMode::Fill, 0.0, 580.0, 800.0, 20.0); // works today
-        graphics::set_font(&self.font);
-        graphics::print(&format!("Score: {}", self.score), 10.0, 10.0);
+        graphics::set_font(&self.font);                   // works today
+        graphics::print(&format!("Score: {}", self.score), 10.0, 10.0); // works today
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) { // works today
@@ -74,6 +74,14 @@ fn main() {
 | `love.graphics.draw(img, x, y, r, sx, sy, ox, oy)` | `graphics::draw_ex(&img, x, y, r, sx, sy, ox, oy)` | Same arguments in the same order. |
 | `love.graphics.draw(img, quad, x, y)` | `graphics::draw_quad(&img, &quad, x, y)` | |
 | `love.graphics.push()` / `pop()` | `graphics::push()` / `graphics::pop()` | |
+| `love.graphics.newFont(path, size)` | `graphics::new_font(path, size)` | |
+| `love.graphics.newFont(size)` | `graphics::new_default_font(size)` | The same built-in font as LÖVE. |
+| `love.graphics.print(text, x, y)` | `graphics::print(text, x, y)` | `print_ex` takes the rotation, scale and origin. |
+| `love.graphics.printf(text, x, y, limit, align)` | `graphics::printf(text, x, y, limit, Align)` | |
+| `font:getWidth(text)` / `font:getWrap(text, limit)` | `font.width(text)` / `font.wrap(text, limit)` | |
+| `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
+| `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
+| `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
 | `love.graphics.setColor(r, g, b, a)` | `graphics::set_color(Color)` | Components are 0.0 to 1.0. |
 | `love.graphics.newImage(path)` | `graphics::new_image(path)` | |
 | `love.keyboard.isDown(key)` | `keyboard::is_down(Key)` | Keys are an enum, not strings. |

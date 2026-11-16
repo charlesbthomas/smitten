@@ -4,22 +4,24 @@
 //! pointing down. Everything drawn is tinted by the current color and moved
 //! by the current transform, both of which are set with functions here.
 //!
-//! Text, canvases and shaders are not implemented yet.
+//! Canvases and shaders are not implemented yet.
 
 mod batch;
 mod image;
 mod shapes;
+mod text;
 mod transform;
 
 use std::path::Path;
 
-use smitten_core::backend::{Frame, Vertex};
+use smitten_core::backend::{Backend, Frame, TextureId, Vertex};
 
 use crate::context;
 use crate::{Color, Filter};
 use batch::Batch;
 
 pub use image::{Image, ImageError, Quad};
+pub use text::{Align, Font, FontError};
 pub use transform::Transform;
 
 /// Whether a shape is filled in or drawn as an outline.
@@ -38,6 +40,9 @@ pub(crate) struct GraphicsState {
     transform: Transform,
     stack: Vec<Transform>,
     batch: Batch,
+    /// The font `print` uses. Created on first use so games that never
+    /// print text pay nothing for it.
+    font: Option<Font>,
 }
 
 impl Default for GraphicsState {
@@ -51,6 +56,7 @@ impl Default for GraphicsState {
             transform: Transform::IDENTITY,
             stack: Vec::new(),
             batch: Batch::default(),
+            font: None,
         }
     }
 }
@@ -123,6 +129,59 @@ impl GraphicsState {
                 bottom_left,
             ],
         );
+    }
+}
+
+impl GraphicsState {
+    /// Queues `text` in the current font, placed by `local`.
+    fn push_text(
+        &mut self,
+        backend: &mut dyn Backend,
+        text: &str,
+        wrap: Option<(f32, Align)>,
+        local: &Transform,
+    ) {
+        let font = self
+            .font
+            .get_or_insert_with(|| Font::default_at(text::DEFAULT_FONT_SIZE))
+            .clone();
+        let transform = self.transform.then_inner(local);
+        let color = color_array(self.color);
+        let filter = font.filter();
+
+        // Glyphs usually share one atlas page, so collect each run of
+        // quads on the same page and queue it in one go.
+        let mut run: Vec<Vertex> = Vec::with_capacity(text.len() * 6);
+        let mut run_texture: Option<TextureId> = None;
+        let batch = &mut self.batch;
+        font.layout(backend, text, wrap, |texture, rect, uv| {
+            if run_texture != Some(texture) {
+                batch.push(run_texture, filter, &run);
+                run.clear();
+                run_texture = Some(texture);
+            }
+            let corner = |x: f32, y: f32, u: f32, v: f32| {
+                let (x, y) = transform.apply(x, y);
+                Vertex {
+                    position: [x, y],
+                    uv: [u, v],
+                    color,
+                }
+            };
+            let top_left = corner(rect[0], rect[1], uv[0], uv[1]);
+            let top_right = corner(rect[2], rect[1], uv[2], uv[1]);
+            let bottom_right = corner(rect[2], rect[3], uv[2], uv[3]);
+            let bottom_left = corner(rect[0], rect[3], uv[0], uv[3]);
+            run.extend_from_slice(&[
+                top_left,
+                top_right,
+                bottom_right,
+                top_left,
+                bottom_right,
+                bottom_left,
+            ]);
+        });
+        batch.push(run_texture, filter, &run);
     }
 }
 
@@ -300,6 +359,9 @@ pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
 
 /// Loads an image file (PNG or JPEG).
 ///
+/// A relative path is looked up as [`crate::filesystem`] describes, which
+/// normally means inside the game's `assets` folder.
+///
 /// Panics with the file name if it cannot be loaded, since a missing asset
 /// is usually a bug. Use [`try_new_image`] to handle the failure instead.
 pub fn new_image(path: impl AsRef<Path>) -> Image {
@@ -349,4 +411,87 @@ pub fn draw_quad_ex(
 ) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
     context::with(|ctx| ctx.gfx.push_image(image, quad, &local));
+}
+
+// ---------------------------------------------------------------------------
+// Text
+
+/// Loads a TrueType or OpenType font file at `size` pixels.
+///
+/// A relative path is looked up as [`crate::filesystem`] describes, which
+/// normally means inside the game's `assets` folder.
+///
+/// Panics with the file name if it cannot be loaded. Use [`try_new_font`]
+/// to handle the failure instead.
+pub fn new_font(path: impl AsRef<Path>, size: f32) -> Font {
+    try_new_font(path, size).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a font file at `size` pixels, returning an error if it fails.
+pub fn try_new_font(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
+    let path = path.as_ref();
+    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+    Font::from_bytes(&bytes, size)
+}
+
+/// Creates the built-in font at `size` pixels.
+pub fn new_default_font(size: f32) -> Font {
+    Font::default_at(size)
+}
+
+/// Sets the font used by [`print`] and [`printf`].
+pub fn set_font(font: &Font) {
+    context::with(|ctx| ctx.gfx.font = Some(font.clone()));
+}
+
+/// Returns the current font. Until one is set, this is the built-in font
+/// at 12 pixels, as in LÖVE.
+pub fn font() -> Font {
+    context::with(|ctx| {
+        ctx.gfx
+            .font
+            .get_or_insert_with(|| Font::default_at(text::DEFAULT_FONT_SIZE))
+            .clone()
+    })
+}
+
+/// Draws text with its top-left corner at `(x, y)` in the current font and
+/// color. Line breaks in the text start new lines.
+pub fn print(text: &str, x: f32, y: f32) {
+    print_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws text with the full set of LÖVE's `print` arguments. See
+/// [`draw_ex`] for what they mean.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.print.
+pub fn print_ex(text: &str, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
+    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+    context::with(|ctx| ctx.gfx.push_text(ctx.backend.as_mut(), text, None, &local));
+}
+
+/// Draws text wrapped to `limit` pixels wide and aligned within that
+/// width, the equivalent of `love.graphics.printf`.
+pub fn printf(text: &str, x: f32, y: f32, limit: f32, align: Align) {
+    printf_ex(text, x, y, limit, align, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws wrapped text with the full set of LÖVE's `printf` arguments.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.printf.
+pub fn printf_ex(
+    text: &str,
+    x: f32,
+    y: f32,
+    limit: f32,
+    align: Align,
+    r: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+) {
+    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text(ctx.backend.as_mut(), text, Some((limit, align)), &local);
+    });
 }

@@ -1,0 +1,544 @@
+//! Fonts and text layout.
+//!
+//! A [`Font`] is a typeface at one size. Its glyphs are drawn into a
+//! texture atlas the first time each is needed, so printing text costs one
+//! textured quad per character and usually a single draw call.
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use smitten_core::Filter;
+use smitten_core::backend::{Backend, TextureId};
+
+use crate::context;
+
+/// The typeface LÖVE also uses by default.
+static DEFAULT_FONT: &[u8] = include_bytes!("fonts/Vera.ttf");
+
+/// The size of LÖVE's default font.
+pub(crate) const DEFAULT_FONT_SIZE: f32 = 12.0;
+
+/// Empty pixels kept around each glyph in the atlas so that neighbours do
+/// not bleed into each other when text is scaled or rotated.
+const ATLAS_PADDING: u32 = 1;
+
+/// How text is placed within the width given to [`crate::graphics::printf`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// A typeface at one size, the equivalent of LÖVE's `Font`.
+///
+/// Cloning is cheap and gives another handle to the same font.
+#[derive(Clone)]
+pub struct Font {
+    inner: Rc<Inner>,
+}
+
+struct Inner {
+    face: Face,
+    atlas: RefCell<Atlas>,
+    filter: Cell<Filter>,
+    line_height: Cell<f32>,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        let pages = std::mem::take(&mut self.atlas.get_mut().pages);
+        // If the game has already shut down, the backend freed everything.
+        context::try_with(|ctx| {
+            for page in &pages {
+                ctx.backend.destroy_texture(page.texture);
+            }
+        });
+    }
+}
+
+impl Font {
+    /// Creates a font from the bytes of a TrueType or OpenType file.
+    /// `size` is the height of the font in pixels.
+    pub fn from_bytes(bytes: &[u8], size: f32) -> Result<Font, FontError> {
+        let face = Face::new(bytes, size).map_err(FontError::Parse)?;
+        let filter = context::with(|ctx| ctx.gfx.default_filter);
+        Ok(Font {
+            inner: Rc::new(Inner {
+                atlas: RefCell::new(Atlas::new(face.size)),
+                face,
+                filter: Cell::new(filter),
+                line_height: Cell::new(1.0),
+            }),
+        })
+    }
+
+    /// Creates the built-in font, Bitstream Vera Sans, at `size` pixels.
+    pub fn default_at(size: f32) -> Font {
+        Font::from_bytes(DEFAULT_FONT, size).expect("the built-in font is valid")
+    }
+
+    /// The size the font was created with, in pixels.
+    pub fn size(&self) -> f32 {
+        self.inner.face.size
+    }
+
+    /// The height of one line of text in pixels, before line height scaling.
+    pub fn height(&self) -> f32 {
+        self.inner.face.height
+    }
+
+    /// The distance from the top of a line to its baseline.
+    pub fn ascent(&self) -> f32 {
+        self.inner.face.ascent
+    }
+
+    /// The distance from the baseline to the bottom of a line.
+    pub fn descent(&self) -> f32 {
+        self.inner.face.descent
+    }
+
+    /// The spacing between lines as a multiple of [`Font::height`].
+    pub fn line_height(&self) -> f32 {
+        self.inner.line_height.get()
+    }
+
+    /// Sets the spacing between lines as a multiple of [`Font::height`].
+    /// The default is 1.0.
+    pub fn set_line_height(&self, line_height: f32) {
+        self.inner.line_height.set(line_height);
+    }
+
+    /// The width in pixels of `text`. For several lines, the widest one.
+    pub fn width(&self, text: &str) -> f32 {
+        text.split('\n')
+            .map(|line| self.inner.face.line_width(line))
+            .fold(0.0, f32::max)
+    }
+
+    /// Breaks `text` into lines no wider than `limit` pixels.
+    ///
+    /// Returns the width of the widest line and the lines themselves.
+    pub fn wrap(&self, text: &str, limit: f32) -> (f32, Vec<String>) {
+        let lines = self.inner.face.wrap(text, limit);
+        let width = lines
+            .iter()
+            .map(|line| self.inner.face.line_width(line))
+            .fold(0.0, f32::max);
+        (width, lines)
+    }
+
+    /// How the font is sampled when scaled or rotated.
+    pub fn filter(&self) -> Filter {
+        self.inner.filter.get()
+    }
+
+    /// Sets the filter for every handle to this font.
+    pub fn set_filter(&self, filter: Filter) {
+        self.inner.filter.set(filter);
+    }
+
+    /// Lays out `text` and calls `emit` for every visible glyph with its
+    /// atlas texture, its rectangle in text coordinates (origin at the
+    /// top-left of the first line), and its texture coordinates.
+    pub(crate) fn layout(
+        &self,
+        backend: &mut dyn Backend,
+        text: &str,
+        wrap: Option<(f32, Align)>,
+        mut emit: impl FnMut(TextureId, [f32; 4], [f32; 4]),
+    ) {
+        let face = &self.inner.face;
+        let mut atlas = self.inner.atlas.borrow_mut();
+        let lines = match wrap {
+            Some((limit, _)) => face.wrap(text, limit),
+            None => text.split('\n').map(str::to_string).collect(),
+        };
+        let line_advance = (face.height * self.inner.line_height.get()).round();
+
+        for (index, line) in lines.iter().enumerate() {
+            let start_x = match wrap {
+                Some((limit, Align::Center)) => ((limit - face.line_width(line)) / 2.0).round(),
+                Some((limit, Align::Right)) => (limit - face.line_width(line)).round(),
+                _ => 0.0,
+            };
+            let baseline = index as f32 * line_advance + face.ascent.round();
+
+            let mut pen = start_x;
+            let mut previous = None;
+            for character in line.chars() {
+                if let Some(previous) = previous {
+                    pen += face.kerning(previous, character);
+                }
+                if let Some(glyph) = atlas.glyph(face, backend, character) {
+                    // Snapping to whole pixels keeps unscaled text sharp.
+                    let left = (pen + glyph.left).round();
+                    let top = baseline + glyph.top;
+                    emit(
+                        atlas.pages[glyph.page].texture,
+                        [left, top, left + glyph.width, top + glyph.height],
+                        glyph.uv,
+                    );
+                }
+                pen += face.advance(character);
+                previous = Some(character);
+            }
+        }
+    }
+}
+
+impl fmt::Debug for Font {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Font")
+            .field("size", &self.inner.face.size)
+            .field("height", &self.inner.face.height)
+            .finish()
+    }
+}
+
+/// Why a font could not be created.
+#[derive(Debug)]
+pub enum FontError {
+    /// The file could not be read.
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// The data is not a font Smitten can use.
+    Parse(String),
+}
+
+impl FontError {
+    pub(crate) fn read(path: &Path, source: std::io::Error) -> Self {
+        FontError::Read {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+impl fmt::Display for FontError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FontError::Read { path, source } => {
+                write!(f, "could not read font {}: {source}", path.display())
+            }
+            FontError::Parse(message) => write!(f, "could not load font: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for FontError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            FontError::Read { source, .. } => Some(source),
+            FontError::Parse(_) => None,
+        }
+    }
+}
+
+/// The measuring half of a font: metrics and line breaking, no GPU.
+struct Face {
+    font: fontdue::Font,
+    size: f32,
+    ascent: f32,
+    descent: f32,
+    height: f32,
+}
+
+impl Face {
+    fn new(bytes: &[u8], size: f32) -> Result<Self, String> {
+        if !(size.is_finite() && size > 0.0) {
+            return Err(format!("the font size must be positive, got {size}"));
+        }
+        let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
+            .map_err(str::to_string)?;
+        let metrics = font
+            .horizontal_line_metrics(size)
+            .ok_or("the font has no horizontal metrics")?;
+        // fontdue reports the descent as a negative number.
+        let (ascent, descent) = (metrics.ascent, -metrics.descent);
+        Ok(Self {
+            font,
+            size,
+            ascent,
+            descent,
+            height: (ascent + descent).ceil(),
+        })
+    }
+
+    fn advance(&self, character: char) -> f32 {
+        if character.is_control() {
+            0.0
+        } else {
+            self.font.metrics(character, self.size).advance_width
+        }
+    }
+
+    fn kerning(&self, left: char, right: char) -> f32 {
+        self.font
+            .horizontal_kern(left, right, self.size)
+            .unwrap_or(0.0)
+    }
+
+    /// The width of text that contains no line breaks.
+    fn line_width(&self, line: &str) -> f32 {
+        let mut width = 0.0;
+        let mut previous = None;
+        for character in line.chars() {
+            if let Some(previous) = previous {
+                width += self.kerning(previous, character);
+            }
+            width += self.advance(character);
+            previous = Some(character);
+        }
+        width
+    }
+
+    /// Breaks text at spaces so no line is wider than `limit`. Existing
+    /// line breaks are kept, and a single word wider than the limit is
+    /// split between characters.
+    fn wrap(&self, text: &str, limit: f32) -> Vec<String> {
+        let mut lines = Vec::new();
+        for paragraph in text.split('\n') {
+            let mut line = String::new();
+            for word in paragraph.split(' ') {
+                let candidate = if line.is_empty() {
+                    word.to_string()
+                } else {
+                    format!("{line} {word}")
+                };
+                if self.line_width(&candidate) <= limit {
+                    line = candidate;
+                    continue;
+                }
+                if !line.is_empty() {
+                    lines.push(std::mem::take(&mut line));
+                }
+                // The word starts a new line; split it if it is too wide
+                // even on its own.
+                for character in word.chars() {
+                    let mut longer = line.clone();
+                    longer.push(character);
+                    if !line.is_empty() && self.line_width(&longer) > limit {
+                        lines.push(std::mem::replace(&mut line, character.to_string()));
+                    } else {
+                        line = longer;
+                    }
+                }
+            }
+            lines.push(line);
+        }
+        lines
+    }
+}
+
+/// Where one glyph sits in the atlas and relative to the pen.
+#[derive(Clone, Copy)]
+struct Glyph {
+    page: usize,
+    /// Left, top, right, bottom in texture coordinates.
+    uv: [f32; 4],
+    width: f32,
+    height: f32,
+    /// Offset from the pen position to the bitmap's left edge.
+    left: f32,
+    /// Offset from the baseline to the bitmap's top edge; negative is up.
+    top: f32,
+}
+
+/// One atlas texture, filled left to right in rows.
+struct Page {
+    texture: TextureId,
+    cursor_x: u32,
+    cursor_y: u32,
+    row_height: u32,
+}
+
+struct Atlas {
+    page_size: u32,
+    pages: Vec<Page>,
+    /// `None` records a character with nothing to draw, such as a space.
+    glyphs: HashMap<char, Option<Glyph>>,
+}
+
+impl Atlas {
+    fn new(font_size: f32) -> Self {
+        // Room for a few hundred glyphs per page at typical sizes.
+        let page_size = ((font_size.ceil() as u32).saturating_mul(8))
+            .next_power_of_two()
+            .clamp(256, 2048);
+        Self {
+            page_size,
+            pages: Vec::new(),
+            glyphs: HashMap::new(),
+        }
+    }
+
+    /// Returns the glyph for `character`, drawing it into the atlas first
+    /// if this is the first time it is used.
+    fn glyph(&mut self, face: &Face, backend: &mut dyn Backend, character: char) -> Option<Glyph> {
+        if let Some(&known) = self.glyphs.get(&character) {
+            return known;
+        }
+        let glyph = self.rasterize(face, backend, character);
+        self.glyphs.insert(character, glyph);
+        glyph
+    }
+
+    fn rasterize(
+        &mut self,
+        face: &Face,
+        backend: &mut dyn Backend,
+        character: char,
+    ) -> Option<Glyph> {
+        if character.is_control() {
+            return None;
+        }
+        let (metrics, coverage) = face.font.rasterize(character, face.size);
+        let (width, height) = (metrics.width as u32, metrics.height as u32);
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let (page, x, y) = self.allocate(backend, width, height)?;
+        // White pixels whose alpha is the glyph's coverage, so the current
+        // color tints text the same way it tints images.
+        let rgba: Vec<u8> = coverage
+            .iter()
+            .flat_map(|&alpha| [255, 255, 255, alpha])
+            .collect();
+        backend
+            .update_texture(self.pages[page].texture, x, y, width, height, &rgba)
+            .ok()?;
+
+        let size = self.page_size as f32;
+        Some(Glyph {
+            page,
+            uv: [
+                x as f32 / size,
+                y as f32 / size,
+                (x + width) as f32 / size,
+                (y + height) as f32 / size,
+            ],
+            width: width as f32,
+            height: height as f32,
+            left: metrics.xmin as f32,
+            // fontdue measures up from the baseline to the bitmap's bottom.
+            top: -(metrics.ymin as f32 + height as f32),
+        })
+    }
+
+    /// Finds room for a `width` by `height` bitmap, adding a page if needed.
+    /// Returns the page index and the bitmap's top-left corner.
+    fn allocate(
+        &mut self,
+        backend: &mut dyn Backend,
+        width: u32,
+        height: u32,
+    ) -> Option<(usize, u32, u32)> {
+        let (padded_width, padded_height) = (width + ATLAS_PADDING, height + ATLAS_PADDING);
+        if padded_width > self.page_size || padded_height > self.page_size {
+            return None;
+        }
+
+        let last = self.pages.len().wrapping_sub(1);
+        if let Some(page) = self.pages.last_mut() {
+            if page.cursor_x + padded_width > self.page_size {
+                // This row is full; start the next one.
+                page.cursor_x = 0;
+                page.cursor_y += page.row_height;
+                page.row_height = 0;
+            }
+            if page.cursor_y + padded_height <= self.page_size {
+                let position = (last, page.cursor_x, page.cursor_y);
+                page.cursor_x += padded_width;
+                page.row_height = page.row_height.max(padded_height);
+                return Some(position);
+            }
+        }
+
+        let blank = vec![0; self.page_size as usize * self.page_size as usize * 4];
+        let texture = backend
+            .create_texture(self.page_size, self.page_size, &blank)
+            .ok()?;
+        self.pages.push(Page {
+            texture,
+            cursor_x: padded_width,
+            cursor_y: 0,
+            row_height: padded_height,
+        });
+        Some((self.pages.len() - 1, 0, 0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn face() -> Face {
+        Face::new(DEFAULT_FONT, 16.0).expect("the built-in font is valid")
+    }
+
+    #[test]
+    fn the_built_in_font_has_sensible_metrics() {
+        let face = face();
+        assert!(face.ascent > 0.0 && face.descent > 0.0);
+        assert!(face.height >= face.ascent + face.descent);
+        // A line is roughly as tall as the requested size.
+        assert!((12.0..=24.0).contains(&face.height));
+    }
+
+    #[test]
+    fn a_bad_size_or_bad_data_is_an_error() {
+        assert!(Face::new(DEFAULT_FONT, 0.0).is_err());
+        assert!(Face::new(DEFAULT_FONT, f32::NAN).is_err());
+        assert!(Face::new(b"not a font", 16.0).is_err());
+    }
+
+    #[test]
+    fn longer_text_is_wider() {
+        let face = face();
+        assert_eq!(face.line_width(""), 0.0);
+        assert!(face.line_width("hello") > 0.0);
+        assert!(face.line_width("hello world") > face.line_width("hello"));
+    }
+
+    #[test]
+    fn text_that_fits_stays_on_one_line() {
+        assert_eq!(face().wrap("hello world", 1000.0), ["hello world"]);
+    }
+
+    #[test]
+    fn wrapping_breaks_at_spaces_and_respects_the_limit() {
+        let face = face();
+        let limit = face.line_width("the quick brown") + 1.0;
+        let lines = face.wrap("the quick brown fox jumps", limit);
+
+        assert_eq!(lines, ["the quick brown", "fox jumps"]);
+        assert!(lines.iter().all(|line| face.line_width(line) <= limit));
+    }
+
+    #[test]
+    fn wrapping_keeps_existing_line_breaks() {
+        assert_eq!(face().wrap("one\n\ntwo", 1000.0), ["one", "", "two"]);
+    }
+
+    #[test]
+    fn a_word_wider_than_the_limit_is_split() {
+        let face = face();
+        let limit = face.line_width("aaaa") + 0.5;
+        let lines = face.wrap("aaaaaaaaaa", limit);
+
+        assert_eq!(lines, ["aaaa", "aaaa", "aa"]);
+    }
+
+    #[test]
+    fn a_limit_too_small_for_one_character_still_makes_progress() {
+        assert_eq!(face().wrap("abc", 0.0), ["a", "b", "c"]);
+    }
+}
