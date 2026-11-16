@@ -102,6 +102,77 @@ impl Font {
         })
     }
 
+    /// Creates a bitmap font from the bytes of an image file, the
+    /// equivalent of `love.graphics.newImageFont`.
+    ///
+    /// The image holds the characters of `glyphs` in a row from left to
+    /// right. The color of its top-left pixel is the spacer: a column of
+    /// that color separates each character from the next, and the image
+    /// starts with one. A character can be any width.
+    ///
+    /// `extra_spacing` is added after each character, in units, and may be
+    /// negative. One pixel of the image is one unit.
+    pub fn from_image(bytes: &[u8], glyphs: &str, extra_spacing: f32) -> Result<Font, FontError> {
+        let decoded = super::image::decode(bytes).map_err(FontError::Parse)?;
+        let (width, height) = (decoded.width(), decoded.height());
+        let rgba = decoded.into_raw();
+        let cells = slice_glyphs(width, height, &rgba, glyphs).map_err(FontError::Parse)?;
+
+        let (filter, texture) = context::with(|ctx| {
+            (
+                ctx.gfx.default_filter,
+                ctx.backend.create_texture(width, height, &rgba),
+            )
+        });
+        let texture = texture.map_err(|error| FontError::Parse(error.to_string()))?;
+
+        let mut advances = HashMap::new();
+        let mut known = HashMap::new();
+        for cell in cells {
+            advances.insert(cell.character, cell.width as f32 + extra_spacing);
+            known.insert(
+                cell.character,
+                Some(Glyph {
+                    page: 0,
+                    uv: [
+                        cell.x as f32 / width as f32,
+                        0.0,
+                        (cell.x + cell.width) as f32 / width as f32,
+                        1.0,
+                    ],
+                    width: cell.width as f32,
+                    height: height as f32,
+                    left: 0.0,
+                    top: -(height as f32),
+                }),
+            );
+        }
+        Ok(Font {
+            inner: Rc::new(Inner {
+                face: Face {
+                    source: Source::Image(advances),
+                    size: height as f32,
+                    scale: 1.0,
+                    ascent: height as f32,
+                    descent: 0.0,
+                    height: height as f32,
+                },
+                atlas: RefCell::new(Atlas {
+                    page_size: width.max(height),
+                    pages: vec![Page {
+                        texture,
+                        cursor_x: width,
+                        cursor_y: height,
+                        row_height: 0,
+                    }],
+                    glyphs: known,
+                }),
+                filter: Cell::new(filter),
+                line_height: Cell::new(1.0),
+            }),
+        })
+    }
+
     /// Creates the built-in font, Bitstream Vera Sans, at `size` units.
     pub fn default_at(size: f32) -> Font {
         Font::from_bytes(DEFAULT_FONT, size).expect("the built-in font is valid")
@@ -286,7 +357,7 @@ impl std::error::Error for FontError {
 
 /// The measuring half of a font: metrics and line breaking, no GPU.
 struct Face {
-    font: fontdue::Font,
+    source: Source,
     /// In units. All the metrics here are in units too.
     size: f32,
     /// Pixels per unit that glyphs are drawn at.
@@ -294,6 +365,14 @@ struct Face {
     ascent: f32,
     descent: f32,
     height: f32,
+}
+
+/// Where a font's characters come from.
+enum Source {
+    /// Outlines from a TrueType or OpenType file, drawn when first used.
+    Vector(fontdue::Font),
+    /// A picture of every character. Holds how far each one moves the pen.
+    Image(HashMap<char, f32>),
 }
 
 impl Face {
@@ -312,7 +391,7 @@ impl Face {
         // fontdue reports the descent as a negative number.
         let (ascent, descent) = (metrics.ascent, -metrics.descent);
         Ok(Self {
-            font,
+            source: Source::Vector(font),
             size,
             scale,
             ascent,
@@ -322,17 +401,20 @@ impl Face {
     }
 
     fn advance(&self, character: char) -> f32 {
-        if character.is_control() {
-            0.0
-        } else {
-            self.font.metrics(character, self.size).advance_width
+        match &self.source {
+            _ if character.is_control() => 0.0,
+            Source::Vector(font) => font.metrics(character, self.size).advance_width,
+            // A character the picture lacks takes no room, as it draws
+            // nothing.
+            Source::Image(advances) => advances.get(&character).copied().unwrap_or(0.0),
         }
     }
 
     fn kerning(&self, left: char, right: char) -> f32 {
-        self.font
-            .horizontal_kern(left, right, self.size)
-            .unwrap_or(0.0)
+        match &self.source {
+            Source::Vector(font) => font.horizontal_kern(left, right, self.size).unwrap_or(0.0),
+            Source::Image(_) => 0.0,
+        }
     }
 
     /// The width of text that contains no line breaks.
@@ -385,6 +467,59 @@ impl Face {
         }
         lines
     }
+}
+
+/// One character's columns in a bitmap font's image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Slot {
+    character: char,
+    x: u32,
+    width: u32,
+}
+
+/// Finds each character of `glyphs` in a bitmap font's image by reading
+/// its top row: columns in the color of the top-left pixel are spacers,
+/// and each run of other columns between them is the next character.
+fn slice_glyphs(width: u32, height: u32, rgba: &[u8], glyphs: &str) -> Result<Vec<Slot>, String> {
+    if width == 0 || height == 0 {
+        return Err("the font image is empty".to_string());
+    }
+    let pixel = |x: u32| &rgba[x as usize * 4..x as usize * 4 + 4];
+    let spacer = pixel(0);
+
+    let mut characters = glyphs.chars();
+    let mut cells = Vec::new();
+    let mut x = 0;
+    while x < width {
+        if pixel(x) == spacer {
+            x += 1;
+            continue;
+        }
+        let start = x;
+        while x < width && pixel(x) != spacer {
+            x += 1;
+        }
+        // Columns beyond the last character named are ignored.
+        let Some(character) = characters.next() else {
+            break;
+        };
+        cells.push(Slot {
+            character,
+            x: start,
+            width: x - start,
+        });
+    }
+
+    let missing = characters.count();
+    if missing > 0 {
+        return Err(format!(
+            "the font image holds {} characters but {} were named; check that a \
+             column in the color of the top-left pixel separates each one",
+            cells.len(),
+            cells.len() + missing
+        ));
+    }
+    Ok(cells)
 }
 
 /// Where one glyph sits in the atlas and relative to the pen.
@@ -449,7 +584,11 @@ impl Atlas {
         if character.is_control() {
             return None;
         }
-        let (metrics, coverage) = face.font.rasterize(character, face.size * face.scale);
+        // A bitmap font has all its glyphs from the start.
+        let Source::Vector(font) = &face.source else {
+            return None;
+        };
+        let (metrics, coverage) = font.rasterize(character, face.size * face.scale);
         let (width, height) = (metrics.width as u32, metrics.height as u32);
         if width == 0 || height == 0 {
             return None;
@@ -533,6 +672,72 @@ mod tests {
 
     fn face() -> Face {
         Face::new(DEFAULT_FONT, 16.0, 1.0).expect("the built-in font is valid")
+    }
+
+    /// A font image one pixel tall: `#` is a spacer column, a letter is a
+    /// column of that character's color, so `#aa#b#` holds a two-pixel
+    /// glyph and a one-pixel glyph.
+    fn strip(columns: &str) -> Vec<u8> {
+        columns
+            .bytes()
+            .flat_map(|column| match column {
+                b'#' => [255, 0, 255, 255],
+                other => [other, other, other, 255],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_font_image_is_cut_at_its_spacer_columns() {
+        let columns = "#aaa#b#cc#";
+        let cells = slice_glyphs(columns.len() as u32, 1, &strip(columns), "ABC").unwrap();
+        let found: Vec<_> = cells
+            .iter()
+            .map(|cell| (cell.character, cell.x, cell.width))
+            .collect();
+        assert_eq!(found, [('A', 1, 3), ('B', 5, 1), ('C', 7, 2)]);
+    }
+
+    #[test]
+    fn a_font_image_may_end_without_a_spacer_or_double_one() {
+        let columns = "##aa##bb";
+        let cells = slice_glyphs(columns.len() as u32, 1, &strip(columns), "AB").unwrap();
+        assert_eq!((cells[0].x, cells[0].width), (2, 2));
+        assert_eq!((cells[1].x, cells[1].width), (6, 2));
+    }
+
+    #[test]
+    fn naming_more_characters_than_the_image_holds_is_an_error() {
+        let columns = "#aa#bb#";
+        let error = slice_glyphs(columns.len() as u32, 1, &strip(columns), "ABC").unwrap_err();
+        assert!(
+            error.contains("holds 2 characters but 3 were named"),
+            "{error}"
+        );
+        assert!(slice_glyphs(0, 0, &[], "A").is_err());
+    }
+
+    #[test]
+    fn spare_columns_in_a_font_image_are_ignored() {
+        let columns = "#aa#bb#";
+        let cells = slice_glyphs(columns.len() as u32, 1, &strip(columns), "A").unwrap();
+        assert_eq!(cells.len(), 1);
+    }
+
+    #[test]
+    fn a_bitmap_face_measures_with_its_own_widths() {
+        let face = Face {
+            source: Source::Image(HashMap::from([('A', 4.0), ('B', 2.0)])),
+            size: 6.0,
+            scale: 1.0,
+            ascent: 6.0,
+            descent: 0.0,
+            height: 6.0,
+        };
+        assert_eq!(face.line_width("ABA"), 10.0);
+        // A character the image lacks takes no room.
+        assert_eq!(face.line_width("A?B"), 6.0);
+        assert_eq!(face.wrap("AA BB", 8.0), ["AA", "BB"]);
     }
 
     #[test]

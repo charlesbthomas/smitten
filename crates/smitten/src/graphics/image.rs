@@ -148,7 +148,7 @@ impl std::error::Error for ImageError {
     }
 }
 
-fn decode(bytes: &[u8]) -> Result<::image::RgbaImage, String> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<::image::RgbaImage, String> {
     ::image::load_from_memory(bytes)
         .map(::image::DynamicImage::into_rgba8)
         .map_err(|error| error.to_string())

@@ -76,6 +76,7 @@ fn main() {
 | `love.graphics.push()` / `pop()` | `graphics::push()` / `graphics::pop()` | |
 | `love.graphics.newFont(path, size)` | `graphics::new_font(path, size)` | |
 | `love.graphics.newFont(size)` | `graphics::new_default_font(size)` | The same built-in font as LÖVE. |
+| `love.graphics.newImageFont(path, glyphs)` | `graphics::new_image_font(path, glyphs)` | Same image layout as LÖVE. `Font::from_image` takes the extra spacing. |
 | `love.graphics.print(text, x, y)` | `graphics::print(text, x, y)` | `print_ex` takes the rotation, scale and origin. |
 | `love.graphics.printf(text, x, y, limit, align)` | `graphics::printf(text, x, y, limit, Align)` | |
 | `font:getWidth(text)` / `font:getWrap(text, limit)` | `font.width(text)` / `font.wrap(text, limit)` | |
