@@ -1,7 +1,7 @@
 //! Smitten is a LÖVE-style 2D game framework for Rust.
 //!
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
-//! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`],
+//! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
 //! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
 //! the same way `love.graphics` and friends work in LÖVE.
 //!
@@ -43,12 +43,13 @@ pub mod physics;
 pub mod sound;
 pub mod system;
 pub mod timer;
+pub mod touch;
 pub mod window;
 
 pub use joystick::Joystick;
 pub use smitten_core::{
     BlendMode, Color, CompareMode, Config, Cursor, Filter, GamepadAxis, GamepadButton, Key,
-    MessageBoxKind, MouseButton, Scaling, StencilAction, Wrap,
+    MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
 };
 
 use smitten_core::backend::BackendEvent;
@@ -90,6 +91,39 @@ pub trait Game: Sized + 'static {
     /// Called when the mouse wheel moves. Positive `dy` is away from the
     /// user, which usually means scroll up.
     fn wheel_moved(&mut self, _dx: f32, _dy: f32) {}
+
+    /// Called when a finger touches the screen at `(x, y)`. `pressure`
+    /// runs from 0.0 to 1.0, and is 1.0 on screens that cannot measure it.
+    ///
+    /// The platform also reports the first finger as a mouse, so a game
+    /// that only needs taps can use `mouse_pressed` alone.
+    fn touch_pressed(
+        &mut self,
+        _id: TouchId,
+        _x: f32,
+        _y: f32,
+        _dx: f32,
+        _dy: f32,
+        _pressure: f32,
+    ) {
+    }
+
+    /// Called when a finger on the screen moves to `(x, y)`, having moved
+    /// `(dx, dy)`.
+    fn touch_moved(&mut self, _id: TouchId, _x: f32, _y: f32, _dx: f32, _dy: f32, _pressure: f32) {}
+
+    /// Called when a finger leaves the screen. Its id is not reported
+    /// again.
+    fn touch_released(
+        &mut self,
+        _id: TouchId,
+        _x: f32,
+        _y: f32,
+        _dx: f32,
+        _dy: f32,
+        _pressure: f32,
+    ) {
+    }
 
     /// Called when a gamepad is plugged in, and once at startup for each
     /// gamepad that was already connected.
@@ -247,6 +281,60 @@ fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
                 presses,
             }
         }
+        BackendEvent::TouchPressed {
+            id,
+            x,
+            y,
+            dx,
+            dy,
+            pressure,
+        } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::TouchPressed {
+                id,
+                x,
+                y,
+                dx: dx / view.scale,
+                dy: dy / view.scale,
+                pressure,
+            }
+        }
+        BackendEvent::TouchMoved {
+            id,
+            x,
+            y,
+            dx,
+            dy,
+            pressure,
+        } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::TouchMoved {
+                id,
+                x,
+                y,
+                dx: dx / view.scale,
+                dy: dy / view.scale,
+                pressure,
+            }
+        }
+        BackendEvent::TouchReleased {
+            id,
+            x,
+            y,
+            dx,
+            dy,
+            pressure,
+        } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::TouchReleased {
+                id,
+                x,
+                y,
+                dx: dx / view.scale,
+                dy: dy / view.scale,
+                pressure,
+            }
+        }
         other => other,
     }
 }
@@ -279,6 +367,30 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
             presses,
         } => game.mouse_released(x, y, button, presses),
         BackendEvent::WheelMoved { dx, dy } => game.wheel_moved(dx, dy),
+        BackendEvent::TouchPressed {
+            id,
+            x,
+            y,
+            dx,
+            dy,
+            pressure,
+        } => game.touch_pressed(id, x, y, dx, dy, pressure),
+        BackendEvent::TouchMoved {
+            id,
+            x,
+            y,
+            dx,
+            dy,
+            pressure,
+        } => game.touch_moved(id, x, y, dx, dy, pressure),
+        BackendEvent::TouchReleased {
+            id,
+            x,
+            y,
+            dx,
+            dy,
+            pressure,
+        } => game.touch_released(id, x, y, dx, dy, pressure),
         BackendEvent::JoystickAdded { id, .. } => game.joystick_added(Joystick::new(id)),
         BackendEvent::JoystickRemoved { id } => game.joystick_removed(Joystick::new(id)),
         BackendEvent::GamepadPressed { id, button } => {

@@ -878,6 +878,7 @@ dependencies = [
  "smitten-core",
  "smitten-sdl",
  "symphonia",
+ "zip",
 ]
 
 [[package]]

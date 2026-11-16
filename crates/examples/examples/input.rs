@@ -3,13 +3,17 @@
 //! - Arrow keys, WASD or a gamepad's left stick move the square.
 //! - The ring follows the mouse, and the wheel resizes it.
 //! - Left click drops a dot, right click clears them.
+//! - Each finger on a touch screen gets a green circle, larger the
+//!   harder it presses.
+//! - Tab swaps the pointer for a cursor drawn from an image, and back.
 //! - Typed text and the active gamepad appear in the title bar.
-//! - Escape or the gamepad's Start button quits.
+//! - Escape asks whether to quit, in a message box with two buttons.
+//!   The gamepad's Start button quits straight away.
 
-use smitten::graphics::DrawMode;
+use smitten::graphics::{DrawMode, ImageData};
 use smitten::{
-    Color, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, MouseButton, event, graphics,
-    joystick, keyboard, mouse, window,
+    Color, Config, Cursor, Game, GamepadAxis, GamepadButton, Joystick, Key, MessageBoxKind,
+    MouseButton, event, graphics, joystick, keyboard, mouse, touch, window,
 };
 
 const SPEED: f32 = 300.0;
@@ -21,6 +25,7 @@ struct Input {
     ring_radius: f32,
     dots: Vec<(f32, f32)>,
     typed: String,
+    target_cursor: mouse::ImageCursor,
 }
 
 impl Input {
@@ -75,6 +80,7 @@ impl Game for Input {
             ring_radius: 24.0,
             dots: Vec::new(),
             typed: String::new(),
+            target_cursor: target_cursor(),
         };
         game.update_title();
         game
@@ -104,11 +110,35 @@ impl Game for Input {
         graphics::set_line_width(3.0);
         let (mouse_x, mouse_y) = mouse::position();
         graphics::circle(DrawMode::Line, mouse_x, mouse_y, self.ring_radius);
+
+        graphics::set_color(Color::rgb(0.4, 0.9, 0.5));
+        for id in touch::touches() {
+            if let (Some((x, y)), Some(pressure)) = (touch::position(id), touch::pressure(id)) {
+                graphics::circle(DrawMode::Fill, x, y, 16.0 + 24.0 * pressure);
+            }
+        }
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {
         match key {
-            Key::Escape => event::quit(),
+            Key::Escape => {
+                let choice = window::show_message_box_with_buttons(
+                    "Quit?",
+                    "Leave the input example?",
+                    MessageBoxKind::Warning,
+                    &["Quit", "Keep playing"],
+                );
+                if choice == Some(0) {
+                    event::quit();
+                }
+            }
+            Key::Tab => {
+                if mouse::image_cursor().is_some() {
+                    mouse::set_cursor(Cursor::Arrow);
+                } else {
+                    mouse::set_image_cursor(&self.target_cursor);
+                }
+            }
             Key::Backspace => {
                 self.typed.pop();
                 self.update_title();
@@ -147,6 +177,23 @@ impl Game for Input {
             event::quit();
         }
     }
+}
+
+/// A 21 by 21 target, drawn pixel by pixel, that points from its middle.
+fn target_cursor() -> mouse::ImageCursor {
+    let mut data = ImageData::new(21, 21);
+    for y in 0..21_i32 {
+        for x in 0..21_i32 {
+            let (dx, dy) = (x - 10, y - 10);
+            let distance = ((dx * dx + dy * dy) as f32).sqrt();
+            let ring = (distance - 8.0).abs() < 1.0;
+            let cross = (dx == 0 || dy == 0) && distance <= 10.0;
+            if ring || cross {
+                data.set_pixel(x as u32, y as u32, Color::rgb(0.4, 0.9, 0.5));
+            }
+        }
+    }
+    mouse::ImageCursor::from_image_data(&data, 10, 10).expect("the cursor image is valid")
 }
 
 fn main() {

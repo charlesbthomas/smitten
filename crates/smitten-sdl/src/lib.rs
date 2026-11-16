@@ -18,11 +18,11 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
-    AudioFill, Backend, BackendEvent, Frame, ShaderId, ShaderInfo, TextureId,
+    AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId,
 };
 use smitten_core::{
     Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
-    PowerInfo, PowerState, WindowState, Wrap,
+    PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -40,6 +40,9 @@ pub struct SdlBackend {
     audio: Option<audio::AudioOutput>,
     /// System cursors made so far. SDL frees them when it shuts down.
     cursors: HashMap<Cursor, *mut SDL_Cursor>,
+    /// Cursors made from images, freed by `destroy_cursor`.
+    image_cursors: HashMap<u32, *mut SDL_Cursor>,
+    next_image_cursor: u32,
     /// Whether presenting waits for the display's refresh.
     vsync: bool,
     /// Whether window sizes are multiplied by the display's scale.
@@ -158,6 +161,8 @@ impl SdlBackend {
                 gamepads: HashMap::new(),
                 audio: None,
                 cursors: HashMap::new(),
+                image_cursors: HashMap::new(),
+                next_image_cursor: 0,
                 vsync,
                 content_scaling: config.dpi_scaling,
                 visible: true,
@@ -175,6 +180,9 @@ impl Drop for SdlBackend {
             self.audio = None;
             for (_, gamepad) in self.gamepads.drain() {
                 SDL_CloseGamepad(gamepad);
+            }
+            for (_, cursor) in self.image_cursors.drain() {
+                SDL_DestroyCursor(cursor);
             }
             ManuallyDrop::drop(&mut self.renderer);
             SDL_ReleaseWindowFromGPUDevice(self.device, self.window);
@@ -270,6 +278,78 @@ impl Backend for SdlBackend {
             } else {
                 Err(sdl_error())
             }
+        }
+    }
+
+    fn create_cursor(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        hot_x: u32,
+        hot_y: u32,
+    ) -> Result<CursorId, String> {
+        if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
+            return Err(format!(
+                "a cursor of {width} by {height} pixels needs {} bytes, got {}",
+                width as usize * height as usize * 4,
+                rgba.len()
+            ));
+        }
+        if hot_x >= width || hot_y >= height {
+            return Err(format!(
+                "the hot spot ({hot_x}, {hot_y}) is outside the {width} by {height} cursor"
+            ));
+        }
+        // SAFETY: the surface is SDL's own, sized as checked above, and
+        // each row copied fits its pitch. SDL keeps what it needs of the
+        // surface, so it is released here once the cursor exists.
+        unsafe {
+            let surface = SDL_CreateSurface(width as i32, height as i32, SDL_PIXELFORMAT_RGBA32);
+            if surface.is_null() {
+                return Err(sdl_error());
+            }
+            let pitch = (*surface).pitch as usize;
+            let pixels = (*surface).pixels.cast::<u8>();
+            let row = width as usize * 4;
+            for (y, source) in rgba.chunks_exact(row).enumerate() {
+                ptr::copy_nonoverlapping(source.as_ptr(), pixels.add(y * pitch), row);
+            }
+            let cursor = SDL_CreateColorCursor(surface, hot_x as i32, hot_y as i32);
+            let message = if cursor.is_null() {
+                sdl_error()
+            } else {
+                String::new()
+            };
+            SDL_DestroySurface(surface);
+            if cursor.is_null() {
+                return Err(message);
+            }
+            let id = self.next_image_cursor;
+            self.next_image_cursor += 1;
+            self.image_cursors.insert(id, cursor);
+            Ok(CursorId(id))
+        }
+    }
+
+    fn set_image_cursor(&mut self, cursor: CursorId) -> Result<(), String> {
+        let handle = *self
+            .image_cursors
+            .get(&cursor.0)
+            .ok_or_else(|| "that cursor no longer exists".to_string())?;
+        // SAFETY: the cursor is alive until `destroy_cursor`.
+        if unsafe { SDL_SetCursor(handle) } {
+            Ok(())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
+    fn destroy_cursor(&mut self, cursor: CursorId) {
+        if let Some(handle) = self.image_cursors.remove(&cursor.0) {
+            // SAFETY: the cursor came from SDL_CreateColorCursor and is
+            // freed once.
+            unsafe { SDL_DestroyCursor(handle) };
         }
     }
 
@@ -573,6 +653,58 @@ impl Backend for SdlBackend {
         if shown { Ok(()) } else { Err(sdl_error()) }
     }
 
+    fn show_message_box_with_buttons(
+        &mut self,
+        kind: MessageBoxKind,
+        title: &str,
+        message: &str,
+        buttons: &[&str],
+    ) -> Result<Option<usize>, String> {
+        let flags = match kind {
+            MessageBoxKind::Info => SDL_MESSAGEBOX_INFORMATION,
+            MessageBoxKind::Warning => SDL_MESSAGEBOX_WARNING,
+            MessageBoxKind::Error => SDL_MESSAGEBOX_ERROR,
+        };
+        let (title, message) = (c_string(title), c_string(message));
+        let labels: Vec<CString> = buttons.iter().map(|label| c_string(label)).collect();
+        let last = labels.len().saturating_sub(1);
+        let buttons: Vec<SDL_MessageBoxButtonData> = labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let mut button_flags = SDL_MessageBoxButtonFlags(0);
+                if index == 0 {
+                    button_flags |= SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT;
+                }
+                if index == last {
+                    button_flags |= SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
+                }
+                SDL_MessageBoxButtonData {
+                    flags: button_flags,
+                    buttonID: index as i32,
+                    text: label.as_ptr(),
+                }
+            })
+            .collect();
+        let data = SDL_MessageBoxData {
+            flags: flags | SDL_MESSAGEBOX_BUTTONS_LEFT_TO_RIGHT,
+            window: self.window,
+            title: title.as_ptr(),
+            message: message.as_ptr(),
+            numbuttons: buttons.len() as i32,
+            buttons: buttons.as_ptr(),
+            colorScheme: ptr::null(),
+        };
+        let mut chosen = -1;
+        // SAFETY: the window is alive, and every string and the button
+        // array outlive the call.
+        if unsafe { SDL_ShowMessageBox(&data, &mut chosen) } {
+            Ok(usize::try_from(chosen).ok())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
     fn request_attention(&mut self, continuous: bool) {
         let operation = if continuous {
             SDL_FLASH_UNTIL_FOCUSED
@@ -766,6 +898,49 @@ impl SdlBackend {
                 Some(BackendEvent::WheelMoved {
                     dx: event.wheel.x * sign,
                     dy: event.wheel.y * sign,
+                })
+            } else if kind == SDL_EVENT_FINGER_DOWN
+                || kind == SDL_EVENT_FINGER_MOTION
+                || kind == SDL_EVENT_FINGER_UP
+                || kind == SDL_EVENT_FINGER_CANCELED
+            {
+                let finger = &event.tfinger;
+                // SDL reports fractions of the window; Smitten works in
+                // pixels.
+                let (width, height) = self.size_in_pixels();
+                let (width, height) = (width as f32, height as f32);
+                let id = TouchId(finger.fingerID.0);
+                let (x, y) = (finger.x * width, finger.y * height);
+                let (dx, dy) = (finger.dx * width, finger.dy * height);
+                let pressure = finger.pressure;
+                Some(if kind == SDL_EVENT_FINGER_DOWN {
+                    BackendEvent::TouchPressed {
+                        id,
+                        x,
+                        y,
+                        dx,
+                        dy,
+                        pressure,
+                    }
+                } else if kind == SDL_EVENT_FINGER_MOTION {
+                    BackendEvent::TouchMoved {
+                        id,
+                        x,
+                        y,
+                        dx,
+                        dy,
+                        pressure,
+                    }
+                } else {
+                    // A canceled touch is over just as a lifted one is.
+                    BackendEvent::TouchReleased {
+                        id,
+                        x,
+                        y,
+                        dx,
+                        dy,
+                        pressure,
+                    }
                 })
             } else if kind == SDL_EVENT_GAMEPAD_ADDED {
                 let which = event.gdevice.which;

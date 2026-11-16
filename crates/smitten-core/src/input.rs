@@ -10,6 +10,13 @@ pub enum MouseButton {
     X2,
 }
 
+/// Identifies one finger on a touch screen, from the moment it touches
+/// until it lifts.
+///
+/// A finger that touches again later may get a different id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TouchId(pub u64);
+
 /// Identifies one connected joystick for as long as it stays connected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct JoystickId(pub u32);

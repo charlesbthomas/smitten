@@ -149,7 +149,7 @@ fn main() {
 | `love.system.setClipboardText(text)` / `getClipboardText()` | `system::set_clipboard_text(text)` / `system::clipboard_text()` | |
 | `love.system.openURL(url)` | `system::open_url(url)` | Returns whether it opened. |
 | `love.system.getPowerInfo()` | `system::power_info()` | A struct with the state, percent and seconds left. |
-| `love.mouse.setCursor(love.mouse.getSystemCursor("hand"))` | `mouse::set_cursor(Cursor::Hand)` | Image cursors are not supported yet. |
+| `love.mouse.setCursor(love.mouse.getSystemCursor("hand"))` | `mouse::set_cursor(Cursor::Hand)` | |
 | `love.mouse.setRelativeMode(true)` / `setGrabbed(true)` | `mouse::set_relative_mode(true)` / `mouse::set_grabbed(true)` | |
 | `love.mouse.setPosition(x, y)` | `mouse::set_position(x, y)` | In units, like `mouse::position()`. |
 | `love.filesystem.getDirectoryItems(dir)` | `filesystem::directory_items(dir)` | Sorted. Saved and shipped files together, as in LÖVE. |
@@ -177,6 +177,7 @@ fn main() {
 | `love.window.setVSync(1)` / `getVSync()` | `window::set_vsync(true)` / `window::vsync()` | On or off. Adaptive vsync is not offered. |
 | `love.window.getDesktopDimensions()` / `getDisplayCount()` | `window::desktop_dimensions()` / `window::display_count()` | The desktop the window is on. |
 | `love.window.showMessageBox(title, message, "warning")` | `window::show_message_box(title, message, MessageBoxKind::Warning)` | One OK button. |
+| `love.window.showMessageBox(title, message, {"Quit", "Stay"}, "warning")` | `window::show_message_box_with_buttons(title, message, MessageBoxKind::Warning, &["Quit", "Stay"])` | Returns the button's index from 0 as an `Option`. Enter picks the first button and Escape the last; they cannot be chosen yet. |
 | `love.window.requestAttention(continuous)` | `window::request_attention(continuous)` | |
 | `love.focus(f)` / `love.mousefocus(f)` / `love.visible(v)` | `Game::focus` / `Game::mouse_focus` / `Game::visible` | |
 | `love.audio.setPosition(x, y, z)` / `setOrientation(fx, fy, fz, ux, uy, uz)` / `setVelocity(x, y, z)` | `audio::set_position(x, y, z)` / `set_orientation((fx, fy, fz), (ux, uy, uz))` / `set_velocity(x, y, z)` | The listener. Getters drop `get`, as everywhere. |
@@ -189,6 +190,11 @@ fn main() {
 | `love.sound.newSoundData(path)` / `newSoundData(samples, rate, bits, channels)` | `sound::new_sound_data(path)` / `SoundData::new(samples, rate, channels)` | Samples are `f32` from -1.0 to 1.0, so there is no bit depth. |
 | `sounddata:getSample(i, channel)` / `setSample(i, channel, v)` / `getSampleCount()` | `data.sample(i, channel)` / `data.set_sample(i, channel, v)` / `data.sample_count()` | Channels count from 0. `samples()` gives the whole interleaved slice. |
 | `love.audio.newSource(sounddata)` | `Source::from_sound_data(&data)` | Copies the samples, as LÖVE does. |
+| `love.touch.getTouches()` | `touch::touches()` | Returns `Vec<TouchId>`, oldest finger first. |
+| `love.touch.getPosition(id)` / `getPressure(id)` | `touch::position(id)` / `touch::pressure(id)` | `None` once the finger has lifted, where LÖVE raises an error. |
+| `love.touchpressed(id, x, y, dx, dy, pressure)` | `Game::touch_pressed(id, x, y, dx, dy, pressure)` | Also `touch_moved` and `touch_released`. A canceled touch counts as released. |
+| `love.mouse.newCursor(path, hotx, hoty)` / `setCursor(cursor)` | `mouse::new_cursor(path, hot_x, hot_y)` / `mouse::set_image_cursor(&cursor)` | `ImageCursor::from_image_data` takes an `ImageData`. `mouse::image_cursor()` is `getCursor`. One image pixel per screen pixel. |
+| `love.filesystem.mount(archive, mountpoint)` / `unmount(archive)` | `filesystem::mount(archive, mount_point)` / `filesystem::unmount(archive)` | Zip archives or directories. `mount_after` is `appendToPath = true`. Images, fonts, shaders and sounds load from mounted files too. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

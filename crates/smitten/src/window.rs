@@ -146,6 +146,51 @@ pub fn show_message_box(title: &str, message: &str, kind: MessageBoxKind) -> boo
     )
 }
 
+/// Shows a message with a button for each label in `buttons`, from left
+/// to right, and waits until the player picks one. The game stands still
+/// meanwhile. Enter picks the first button and Escape the last, so put
+/// the safe choice last.
+///
+/// Returns the index of the button picked, or `None` if the box was closed
+/// some other way, could not be shown, or `buttons` is empty.
+///
+/// ```no_run
+/// use smitten::{MessageBoxKind, event, window};
+///
+/// let choice = window::show_message_box_with_buttons(
+///     "Quit?",
+///     "Your progress since the last save will be lost.",
+///     MessageBoxKind::Warning,
+///     &["Quit", "Keep playing"],
+/// );
+/// if choice == Some(0) {
+///     event::quit();
+/// }
+/// ```
+pub fn show_message_box_with_buttons(
+    title: &str,
+    message: &str,
+    kind: MessageBoxKind,
+    buttons: &[&str],
+) -> Option<usize> {
+    if buttons.is_empty() {
+        eprintln!("smitten: a message box needs at least one button");
+        return None;
+    }
+    context::with(|ctx| {
+        match ctx
+            .backend
+            .show_message_box_with_buttons(kind, title, message, buttons)
+        {
+            Ok(choice) => choice,
+            Err(error) => {
+                eprintln!("smitten: could not show a message box: {error}");
+                None
+            }
+        }
+    })
+}
+
 /// Asks for the player's attention when the window is in the background,
 /// usually by flashing its taskbar button. `continuous` keeps asking
 /// until the window gets focus.
