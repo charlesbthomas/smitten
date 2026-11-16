@@ -7,8 +7,10 @@
 
 use std::cell::RefCell;
 
+use smitten_core::Config;
 use smitten_core::backend::Backend;
 
+use crate::filesystem::FilesystemState;
 use crate::graphics::GraphicsState;
 use crate::input::InputState;
 use crate::timer::TimerState;
@@ -18,6 +20,7 @@ pub(crate) struct Context {
     pub timer: TimerState,
     pub input: InputState,
     pub gfx: GraphicsState,
+    pub fs: FilesystemState,
     pub quit_requested: bool,
 }
 
@@ -25,7 +28,7 @@ thread_local! {
     static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn install(backend: Box<dyn Backend>) {
+pub(crate) fn install(backend: Box<dyn Backend>, config: &Config) {
     CONTEXT.with(|slot| {
         let mut slot = slot.borrow_mut();
         assert!(
@@ -37,6 +40,7 @@ pub(crate) fn install(backend: Box<dyn Backend>) {
             timer: TimerState::default(),
             input: InputState::default(),
             gfx: GraphicsState::default(),
+            fs: FilesystemState::new(config),
             quit_requested: false,
         });
     });

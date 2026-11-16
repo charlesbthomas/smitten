@@ -16,3 +16,4 @@ sdl-from-source = ["smitten-sdl/from-source"]
 smitten-core.workspace = true
 smitten-sdl.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+fontdue = "0.9"

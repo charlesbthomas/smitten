@@ -9,6 +9,8 @@
 //! Games never use this module. It is public only so backend crates can
 //! implement it.
 
+use std::path::PathBuf;
+
 use crate::{Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
 
 /// Something that happened on the platform since the last poll.
@@ -128,6 +130,18 @@ pub trait Backend {
     fn create_texture(&mut self, width: u32, height: u32, rgba: &[u8])
     -> Result<TextureId, String>;
 
+    /// Replaces the `width` by `height` region of a texture whose top-left
+    /// corner is at `(x, y)`. `rgba` is laid out as in `create_texture`.
+    fn update_texture(
+        &mut self,
+        texture: TextureId,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), String>;
+
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
 
@@ -139,6 +153,12 @@ pub trait Backend {
 
     /// Drawable size in pixels.
     fn size_in_pixels(&self) -> (u32, u32);
+
+    /// Returns a directory the game may write to, creating it if needed.
+    ///
+    /// `identity` names the game. The same identity always gives the same
+    /// directory on a given machine and user account.
+    fn save_directory(&mut self, identity: &str) -> Result<PathBuf, String>;
 
     /// Shows or hides the mouse cursor while it is over the window.
     fn set_mouse_visible(&mut self, visible: bool);

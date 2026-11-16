@@ -9,6 +9,9 @@ pub struct Config {
     pub height: u32,
     /// Whether the user can resize the window.
     pub resizable: bool,
+    /// Names the game's save directory, like `t.identity` in LÖVE's
+    /// `conf.lua`. When `None`, the executable's name is used.
+    pub identity: Option<String>,
     /// Whether presentation waits for the display's vertical sync.
     pub vsync: bool,
 }
@@ -20,6 +23,7 @@ impl Default for Config {
             width: 800,
             height: 600,
             resizable: false,
+            identity: None,
             vsync: true,
         }
     }
