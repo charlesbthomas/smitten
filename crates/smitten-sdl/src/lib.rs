@@ -7,6 +7,7 @@
 
 mod audio;
 mod renderer;
+mod shader;
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -16,7 +17,9 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 
-use smitten_core::backend::{AudioFill, Backend, BackendEvent, Frame, TextureId};
+use smitten_core::backend::{
+    AudioFill, Backend, BackendEvent, Frame, ShaderId, ShaderInfo, TextureId,
+};
 use smitten_core::{Config, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
 
 use renderer::Renderer;
@@ -231,6 +234,14 @@ impl Backend for SdlBackend {
 
     fn destroy_texture(&mut self, texture: TextureId) {
         self.renderer.destroy_texture(texture);
+    }
+
+    fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
+        self.renderer.create_shader(source)
+    }
+
+    fn destroy_shader(&mut self, shader: ShaderId) {
+        self.renderer.destroy_shader(shader);
     }
 
     fn present(&mut self, frame: &Frame) {

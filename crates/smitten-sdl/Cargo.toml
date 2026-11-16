@@ -14,3 +14,4 @@ from-source = ["sdl3-sys/build-from-source"]
 [dependencies]
 smitten-core.workspace = true
 sdl3-sys.workspace = true
+naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out"] }

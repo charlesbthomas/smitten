@@ -97,6 +97,59 @@ pub struct Vertex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
+/// A handle to a custom shader owned by a backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShaderId(pub u32);
+
+/// The type of a value a game can send to a shader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UniformKind {
+    /// `f32`
+    Float,
+    /// `i32`
+    Int,
+    /// `u32`
+    Uint,
+    /// `vec2<f32>`
+    Vec2,
+    /// `vec3<f32>`
+    Vec3,
+    /// `vec4<f32>`
+    Vec4,
+}
+
+impl UniformKind {
+    /// How many bytes a value of this type occupies.
+    pub fn size(self) -> usize {
+        match self {
+            UniformKind::Float | UniformKind::Int | UniformKind::Uint => 4,
+            UniformKind::Vec2 => 8,
+            UniformKind::Vec3 => 12,
+            UniformKind::Vec4 => 16,
+        }
+    }
+}
+
+/// One named value in a shader's `Params` struct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniformField {
+    pub name: String,
+    /// Where the value starts in the shader's uniform bytes.
+    pub offset: u32,
+    /// `None` for a type that cannot be sent yet, such as a matrix.
+    pub kind: Option<UniformKind>,
+}
+
+/// What a backend reports about a shader it compiled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShaderInfo {
+    pub id: ShaderId,
+    /// The size in bytes of the shader's uniform data, or 0 if it has none.
+    /// Every [`DrawCall`] using the shader must supply exactly this many.
+    pub uniform_size: u32,
+    pub fields: Vec<UniformField>,
+}
+
 /// A rectangle of pixels on a render target, measured from its top-left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Scissor {
@@ -116,6 +169,11 @@ pub struct DrawCall {
     /// Pixels outside this rectangle are left untouched. `None` draws
     /// anywhere on the target.
     pub scissor: Option<Scissor>,
+    /// The custom shader to draw with, or `None` for the built-in one.
+    pub shader: Option<ShaderId>,
+    /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its
+    /// length is the shader's [`ShaderInfo::uniform_size`].
+    pub uniform_offset: u32,
     /// Index into [`Frame::vertices`] of the first vertex.
     pub first_vertex: u32,
     /// A multiple of three, since every three vertices form a triangle.
@@ -142,6 +200,8 @@ pub struct Frame<'a> {
     /// In pixels of the target they are drawn to.
     pub vertices: &'a [Vertex],
     pub calls: &'a [DrawCall],
+    /// Uniform data for the calls that use a custom shader.
+    pub uniforms: &'a [u8],
     /// Run in order. A later pass may sample a target drawn by an
     /// earlier one.
     pub passes: &'a [Pass],
@@ -188,6 +248,21 @@ pub trait Backend {
 
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
+
+    /// Compiles a custom fragment shader written in WGSL.
+    ///
+    /// `source` must define
+    /// `fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32>`,
+    /// which returns the color of one pixel. It may read the texture being
+    /// drawn through `image` and `image_sampler`, and values sent by the
+    /// game through `params` if it declares a `struct Params`.
+    ///
+    /// The error is a message for the game's author, with line numbers
+    /// that refer to `source`.
+    fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String>;
+
+    /// Frees a shader. Its handle must not be used afterwards.
+    fn destroy_shader(&mut self, shader: ShaderId);
 
     /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);

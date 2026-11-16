@@ -6,14 +6,14 @@
 //! frame's vertices are uploaded once and drawn as a few runs, pass by pass.
 
 use std::collections::HashMap;
-use std::ffi::c_void;
+use std::ffi::{CStr, c_void};
 use std::ptr;
 
 use sdl3_sys::everything::*;
-use smitten_core::backend::{DrawCall, Frame, Scissor, TextureId, Vertex};
+use smitten_core::backend::{DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId, Vertex};
 use smitten_core::{BlendMode, Filter};
 
-use crate::sdl_error;
+use crate::{sdl_error, shader};
 
 // Compiled from the GLSL beside them by `shaders/build.sh`.
 static VERTEX_SPIRV: &[u8] = include_bytes!("../shaders/sprite.vert.spv");
@@ -43,8 +43,26 @@ struct Texture {
     is_target: bool,
 }
 
+/// A fragment shader supplied by the game.
+struct CustomShader {
+    fragment: *mut SDL_GPUShader,
+    /// How many bytes of uniform data each draw must supply.
+    uniform_size: u32,
+}
+
+/// Identifies a pipeline built for a custom shader: the shader, whether it
+/// draws to a render target rather than the screen, and the blend mode.
+type CustomPipelineKey = (u32, bool, usize);
+
 pub(crate) struct Renderer {
     device: *mut SDL_GPUDevice,
+    screen_format: SDL_GPUTextureFormat,
+    /// The vertex shader every pipeline shares.
+    vertex_shader: *mut SDL_GPUShader,
+    shaders: HashMap<u32, CustomShader>,
+    next_shader_id: u32,
+    /// Built the first time each combination is drawn with.
+    custom_pipelines: HashMap<CustomPipelineKey, *mut SDL_GPUGraphicsPipeline>,
     /// For drawing to the screen.
     screen_pipelines: Pipelines,
     /// For drawing to render targets.
@@ -65,6 +83,11 @@ impl Renderer {
     pub fn new(device: *mut SDL_GPUDevice, window: *mut SDL_Window) -> Result<Self, String> {
         let mut renderer = Self {
             device,
+            screen_format: SDL_GPU_TEXTUREFORMAT_INVALID,
+            vertex_shader: ptr::null_mut(),
+            shaders: HashMap::new(),
+            next_shader_id: 1,
+            custom_pipelines: HashMap::new(),
             screen_pipelines: [ptr::null_mut(); BlendMode::ALL.len()],
             target_pipelines: [ptr::null_mut(); BlendMode::ALL.len()],
             linear: ptr::null_mut(),
@@ -81,12 +104,45 @@ impl Renderer {
         // SAFETY: `device` and `window` are alive and belong together.
         unsafe {
             let screen_format = SDL_GetGPUSwapchainTextureFormat(device, window);
+            renderer.screen_format = screen_format;
+            renderer.vertex_shader = create_shader(
+                device,
+                VERTEX_SPIRV,
+                c"main",
+                SDL_GPU_SHADERSTAGE_VERTEX,
+                0,
+                1,
+            )?;
+            let fragment = create_shader(
+                device,
+                FRAGMENT_SPIRV,
+                c"main",
+                SDL_GPU_SHADERSTAGE_FRAGMENT,
+                1,
+                0,
+            )?;
+            let mut built = Ok(());
             for mode in BlendMode::ALL {
-                renderer.screen_pipelines[blend_index(mode)] =
-                    create_pipeline(device, screen_format, mode)?;
-                renderer.target_pipelines[blend_index(mode)] =
-                    create_pipeline(device, TEXTURE_FORMAT, mode)?;
+                let vertex = renderer.vertex_shader;
+                let mut build =
+                    |format, slot: &mut *mut SDL_GPUGraphicsPipeline| match create_pipeline(
+                        device, vertex, fragment, format, mode,
+                    ) {
+                        Ok(pipeline) => *slot = pipeline,
+                        Err(message) => built = Err(message),
+                    };
+                build(
+                    screen_format,
+                    &mut renderer.screen_pipelines[blend_index(mode)],
+                );
+                build(
+                    TEXTURE_FORMAT,
+                    &mut renderer.target_pipelines[blend_index(mode)],
+                );
             }
+            // The pipelines keep what they need from the fragment shader.
+            SDL_ReleaseGPUShader(device, fragment);
+            built?;
             renderer.linear = create_sampler(device, SDL_GPU_FILTER_LINEAR)?;
             renderer.nearest = create_sampler(device, SDL_GPU_FILTER_NEAREST)?;
             renderer.white = new_texture(device, 1, 1, &[255, 255, 255, 255])?;
@@ -217,6 +273,93 @@ impl Renderer {
         }
     }
 
+    pub fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
+        let compiled = shader::compile(source)?;
+        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let fragment = unsafe {
+            create_shader(
+                self.device,
+                &compiled.spirv,
+                shader::ENTRY_POINT,
+                SDL_GPU_SHADERSTAGE_FRAGMENT,
+                1,
+                u32::from(compiled.uniform_size > 0),
+            )?
+        };
+        let id = self.next_shader_id;
+        self.next_shader_id += 1;
+        self.shaders.insert(
+            id,
+            CustomShader {
+                fragment,
+                uniform_size: compiled.uniform_size,
+            },
+        );
+        Ok(ShaderInfo {
+            id: ShaderId(id),
+            uniform_size: compiled.uniform_size,
+            fields: compiled.fields,
+        })
+    }
+
+    pub fn destroy_shader(&mut self, shader: ShaderId) {
+        let device = self.device;
+        self.custom_pipelines
+            .retain(|&(owner, _, _), &mut pipeline| {
+                if owner == shader.0 {
+                    // SAFETY: the pipeline came from this device. SDL defers
+                    // the free until no in-flight frame uses it.
+                    unsafe { SDL_ReleaseGPUGraphicsPipeline(device, pipeline) };
+                }
+                owner != shader.0
+            });
+        if let Some(shader) = self.shaders.remove(&shader.0) {
+            // SAFETY: as above.
+            unsafe { SDL_ReleaseGPUShader(device, shader.fragment) };
+        }
+    }
+
+    /// Builds any pipeline `frame` needs for a custom shader that has not
+    /// been drawn with this way before. A pipeline that cannot be built is
+    /// left out, and draws that need it are skipped.
+    fn prepare_custom_pipelines(&mut self, frame: &Frame) {
+        for pass in frame.passes {
+            let to_target = pass.target.is_some();
+            let calls = (pass.first_call as usize)
+                .checked_add(pass.call_count as usize)
+                .and_then(|end| frame.calls.get(pass.first_call as usize..end))
+                .unwrap_or(&[]);
+            for call in calls {
+                let Some(id) = call.shader else { continue };
+                let key = (id.0, to_target, blend_index(call.blend));
+                let Some(shader) = self.shaders.get(&id.0) else {
+                    continue;
+                };
+                if self.custom_pipelines.contains_key(&key) {
+                    continue;
+                }
+                let format = if to_target {
+                    TEXTURE_FORMAT
+                } else {
+                    self.screen_format
+                };
+                // SAFETY: the device and both shaders are alive.
+                let pipeline = unsafe {
+                    create_pipeline(
+                        self.device,
+                        self.vertex_shader,
+                        shader.fragment,
+                        format,
+                        call.blend,
+                    )
+                };
+                if let Ok(pipeline) = pipeline {
+                    self.custom_pipelines.insert(key, pipeline);
+                }
+            }
+        }
+    }
+
     /// Makes room for at least `count` vertices.
     fn reserve_vertices(&mut self, count: u32) -> Result<(), String> {
         if count <= self.vertex_capacity {
@@ -308,6 +451,8 @@ impl Renderer {
         // SAFETY: passes are begun and ended in the order SDL requires, and
         // the command buffer is always submitted.
         unsafe {
+            self.prepare_custom_pipelines(frame);
+
             let commands = SDL_AcquireGPUCommandBuffer(self.device);
             if commands.is_null() {
                 return;
@@ -382,6 +527,7 @@ impl Renderer {
                         commands,
                         render_pass,
                         calls,
+                        frame.uniforms,
                         pass.target,
                         pipelines,
                         frame.vertices.len() as u32,
@@ -406,6 +552,7 @@ impl Renderer {
         commands: *mut SDL_GPUCommandBuffer,
         pass: *mut SDL_GPURenderPass,
         calls: &[DrawCall],
+        uniforms: &[u8],
         target: Option<TextureId>,
         pipelines: &Pipelines,
         vertex_count: u32,
@@ -414,7 +561,7 @@ impl Renderer {
     ) {
         // Padded to 16 bytes, the size of the shader's uniform block.
         let pixel_to_clip = [2.0 / width as f32, 2.0 / height as f32, 0.0, 0.0];
-        let mut bound_blend = None;
+        let mut bound_pipeline = ptr::null_mut();
         let mut bound_scissor = None;
 
         // SAFETY: every handle bound here is alive, and each draw is checked
@@ -459,9 +606,38 @@ impl Renderer {
                 let Some(scissor) = clip_scissor(call.scissor, width, height) else {
                     continue;
                 };
-                if bound_blend != Some(call.blend) {
-                    SDL_BindGPUGraphicsPipeline(pass, pipelines[blend_index(call.blend)]);
-                    bound_blend = Some(call.blend);
+                let pipeline = match call.shader {
+                    None => pipelines[blend_index(call.blend)],
+                    Some(id) => {
+                        let key = (id.0, target.is_some(), blend_index(call.blend));
+                        // A shader that was freed while still queued, or
+                        // whose data is missing, draws nothing.
+                        let (Some(shader), Some(&pipeline)) =
+                            (self.shaders.get(&id.0), self.custom_pipelines.get(&key))
+                        else {
+                            continue;
+                        };
+                        if shader.uniform_size > 0 {
+                            let start = call.uniform_offset as usize;
+                            let Some(data) = start
+                                .checked_add(shader.uniform_size as usize)
+                                .and_then(|end| uniforms.get(start..end))
+                            else {
+                                continue;
+                            };
+                            SDL_PushGPUFragmentUniformData(
+                                commands,
+                                0,
+                                data.as_ptr().cast::<c_void>(),
+                                shader.uniform_size,
+                            );
+                        }
+                        pipeline
+                    }
+                };
+                if bound_pipeline != pipeline {
+                    SDL_BindGPUGraphicsPipeline(pass, pipeline);
+                    bound_pipeline = pipeline;
                 }
                 if bound_scissor != Some(scissor) {
                     SDL_SetGPUScissor(
@@ -591,33 +767,34 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
-            for &pipeline in self.screen_pipelines.iter().chain(&self.target_pipelines) {
+            for &pipeline in self
+                .screen_pipelines
+                .iter()
+                .chain(&self.target_pipelines)
+                .chain(self.custom_pipelines.values())
+            {
                 SDL_ReleaseGPUGraphicsPipeline(self.device, pipeline);
             }
+            for shader in self.shaders.values() {
+                SDL_ReleaseGPUShader(self.device, shader.fragment);
+            }
+            SDL_ReleaseGPUShader(self.device, self.vertex_shader);
         }
     }
 }
 
 /// # Safety
-/// `device` must be alive.
+/// `device` and both shaders must be alive.
 unsafe fn create_pipeline(
     device: *mut SDL_GPUDevice,
+    vertex_shader: *mut SDL_GPUShader,
+    fragment_shader: *mut SDL_GPUShader,
     format: SDL_GPUTextureFormat,
     blend: BlendMode,
 ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
     // SAFETY: all pointers in the create-info structs outlive the calls
-    // that read them, and the shaders are released on every path.
+    // that read them.
     unsafe {
-        let vertex_shader = create_shader(device, VERTEX_SPIRV, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1)?;
-        let fragment_shader =
-            match create_shader(device, FRAGMENT_SPIRV, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0) {
-                Ok(shader) => shader,
-                Err(message) => {
-                    SDL_ReleaseGPUShader(device, vertex_shader);
-                    return Err(message);
-                }
-            };
-
         let buffers = [SDL_GPUVertexBufferDescription {
             slot: 0,
             pitch: VERTEX_SIZE,
@@ -677,10 +854,6 @@ unsafe fn create_pipeline(
         };
         let pipeline = SDL_CreateGPUGraphicsPipeline(device, &info);
 
-        // The pipeline keeps what it needs from the shaders.
-        SDL_ReleaseGPUShader(device, vertex_shader);
-        SDL_ReleaseGPUShader(device, fragment_shader);
-
         if pipeline.is_null() {
             return Err(format!(
                 "could not create the draw pipeline: {}",
@@ -695,7 +868,8 @@ unsafe fn create_pipeline(
 /// `device` must be alive.
 unsafe fn create_shader(
     device: *mut SDL_GPUDevice,
-    spirv: &'static [u8],
+    spirv: &[u8],
+    entrypoint: &CStr,
     stage: SDL_GPUShaderStage,
     num_samplers: u32,
     num_uniform_buffers: u32,
@@ -703,7 +877,7 @@ unsafe fn create_shader(
     let info = SDL_GPUShaderCreateInfo {
         code_size: spirv.len(),
         code: spirv.as_ptr(),
-        entrypoint: c"main".as_ptr(),
+        entrypoint: entrypoint.as_ptr(),
         format: SDL_GPU_SHADERFORMAT_SPIRV,
         stage,
         num_samplers,
@@ -713,7 +887,7 @@ unsafe fn create_shader(
     // SAFETY: `info` and the bytes it points at are valid for the call.
     let shader = unsafe { SDL_CreateGPUShader(device, &info) };
     if shader.is_null() {
-        return Err(format!("could not load a built-in shader: {}", sdl_error()));
+        return Err(format!("could not load a shader: {}", sdl_error()));
     }
     Ok(shader)
 }

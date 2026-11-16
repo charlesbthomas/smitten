@@ -8,11 +8,13 @@
 //! image to draw to instead, for effects, lighting, or rendering a
 //! low-resolution game and scaling it up.
 //!
-//! Custom shaders are not implemented yet.
+//! A [`Shader`] replaces the way pixels are colored, for effects such as
+//! grayscale, outlines or distortion.
 
 mod batch;
 mod canvas;
 mod image;
+mod shader;
 mod shapes;
 mod text;
 mod transform;
@@ -27,6 +29,7 @@ use batch::Batch;
 
 pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
+pub use shader::{Shader, ShaderError, UniformValue};
 pub use text::{Align, Font, FontError};
 pub use transform::Transform;
 
@@ -50,6 +53,8 @@ pub(crate) struct GraphicsState {
     font: Option<Font>,
     /// Where drawing goes, or `None` for the screen.
     canvas: Option<Canvas>,
+    /// The custom shader in use, if any.
+    shader: Option<Shader>,
 }
 
 impl Default for GraphicsState {
@@ -64,6 +69,7 @@ impl Default for GraphicsState {
             batch: Batch::default(),
             font: None,
             canvas: None,
+            shader: None,
         }
     }
 }
@@ -92,7 +98,25 @@ impl GraphicsState {
         Frame {
             vertices: &self.batch.vertices,
             calls: &self.batch.calls,
+            uniforms: &self.batch.uniforms,
             passes: &self.batch.passes,
+        }
+    }
+
+    fn set_shader(&mut self, shader: Option<Shader>) {
+        match &shader {
+            Some(shader) => {
+                shader.with_data(|data| self.batch.set_shader(Some((shader.id(), data))))
+            }
+            None => self.batch.set_shader(None),
+        }
+        self.shader = shader;
+    }
+
+    /// Picks up new values sent to `shader` if it is the one in use.
+    pub(crate) fn refresh_shader(&mut self, shader: &Shader) {
+        if self.shader.as_ref().is_some_and(|active| active.is(shader)) {
+            shader.with_data(|data| self.batch.set_shader(Some((shader.id(), data))));
         }
     }
 
@@ -280,6 +304,31 @@ pub fn set_canvas(canvas: Option<&Canvas>) {
 /// Returns the canvas being drawn to, or `None` for the screen.
 pub fn canvas() -> Option<Canvas> {
     context::with(|ctx| ctx.gfx.canvas.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Shaders
+
+/// Compiles a shader from WGSL source. See [`Shader`] for what to write.
+///
+/// Panics with the compiler's message if the source is not valid. Use
+/// [`Shader::new`] to handle the failure instead, or [`Shader::from_file`]
+/// to load the source from a file.
+pub fn new_shader(source: &str) -> Shader {
+    Shader::new(source).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Draws everything from now on with `shader`, or with the built-in
+/// shader for `None`.
+///
+/// The shader stays set until changed, even across frames.
+pub fn set_shader(shader: Option<&Shader>) {
+    context::with(|ctx| ctx.gfx.set_shader(shader.cloned()));
+}
+
+/// Returns the shader in use, or `None` for the built-in one.
+pub fn shader() -> Option<Shader> {
+    context::with(|ctx| ctx.gfx.shader.clone())
 }
 
 // ---------------------------------------------------------------------------
