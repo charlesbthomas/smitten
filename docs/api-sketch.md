@@ -118,6 +118,7 @@ fn main() {
 | `love.joystick.getJoysticks()` | `joystick::joysticks()` | Returns `Vec<Joystick>`. |
 | `joystick:isGamepadDown("a")` | `joystick.is_gamepad_down(GamepadButton::A)` | |
 | `joystick:getGamepadAxis("leftx")` | `joystick.gamepad_axis(GamepadAxis::LeftX)` | |
+| `joystick:setVibration(left, right, duration)` | `joystick.set_vibration(left, right, seconds)` | `stop_vibration()` ends it. `is_vibration_supported()` asks first. |
 | `love.gamepadpressed(joystick, button)` | `Game::gamepad_pressed(joystick, button)` | |
 | `love.math.random()` / `random(1, 6)` | `math::random()` / `math::random_int(1, 6)` | `random_range(min, max)` gives a fraction. Also `random_normal`, `chance`, `choose`, `shuffle`. |
 | `love.math.setRandomSeed(seed)` / `newRandomGenerator(seed)` | `math::set_random_seed(seed)` / `RandomGenerator::new(seed)` | A seed gives the same numbers on every platform. |

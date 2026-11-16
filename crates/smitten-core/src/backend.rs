@@ -344,6 +344,14 @@ pub trait Backend {
     /// The state of the battery, if there is one.
     fn power_info(&mut self) -> PowerInfo;
 
+    /// Whether the gamepad `id` has rumble motors.
+    fn gamepad_can_rumble(&self, id: JoystickId) -> bool;
+
+    /// Runs the gamepad's low and high frequency motors at strengths from
+    /// 0 to 1 for `seconds`, replacing any rumble in progress. Zero
+    /// strengths stop it. Returns whether the gamepad took the request.
+    fn rumble_gamepad(&mut self, id: JoystickId, low: f32, high: f32, seconds: f32) -> bool;
+
     /// Sets the window title.
     /// The window's title.
     fn title(&self) -> String;

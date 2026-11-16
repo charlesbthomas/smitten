@@ -63,6 +63,29 @@ impl Joystick {
                 .map_or(0.0, |joystick| joystick.axes[axis.index()])
         })
     }
+
+    /// Whether the gamepad can rumble.
+    pub fn is_vibration_supported(&self) -> bool {
+        context::with(|ctx| ctx.backend.gamepad_can_rumble(self.id))
+    }
+
+    /// Makes the gamepad rumble, as LÖVE's `Joystick:setVibration`.
+    ///
+    /// `left` and `right` are the strengths of the two motors, from 0.0 to
+    /// 1.0. The left one is the heavy, low rumble and the right one the
+    /// light buzz. `seconds` is how long to keep going. This replaces any
+    /// rumble already running.
+    ///
+    /// Returns whether the gamepad took the request: `false` for one that
+    /// cannot rumble or has been unplugged.
+    pub fn set_vibration(&self, left: f32, right: f32, seconds: f32) -> bool {
+        context::with(|ctx| ctx.backend.rumble_gamepad(self.id, left, right, seconds))
+    }
+
+    /// Stops any rumble. Returns whether the gamepad took the request.
+    pub fn stop_vibration(&self) -> bool {
+        self.set_vibration(0.0, 0.0, 0.0)
+    }
 }
 
 /// The connected gamepads, in the order they were plugged in.
