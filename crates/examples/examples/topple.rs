@@ -11,6 +11,7 @@
 //!
 //! Run it with `cargo run --example topple`.
 
+use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use smitten::audio::Source;
@@ -34,11 +35,12 @@ const PLATFORM_WIDTH: f32 = 260.0;
 const PLATFORM_HEIGHT: f32 = 16.0;
 /// How far below the top of the screen the next block waits.
 const DROPPER_Y: f32 = 70.0;
-/// How hard the platform pushes back toward level, and how much it
-/// resists turning. Together with its weight they decide how far a
-/// lopsided tower tips it and how long it wobbles after a hit.
-const SPRING: f32 = 7.3e9;
-const DAMPING: f32 = 1.2e9;
+/// How hard the platform pushes back toward level, as radians per second
+/// squared for each radian of tilt, and how much it resists turning.
+/// They decide how far a lopsided tower tips it and how long it wobbles
+/// after a hit.
+const SPRING: f32 = 17.2;
+const DAMPING: f32 = 2.8;
 const PLATFORM_DENSITY: f32 = 18.0;
 /// Air resistance on a falling block, which keeps it from landing so
 /// hard that it catapults the tower.
@@ -100,9 +102,6 @@ struct Block {
     kind: usize,
     /// Seconds since it first touched something, or `None` in the air.
     landed: Option<f32>,
-    /// Its velocity before the last physics step, to judge how hard it
-    /// hit.
-    speed_before: f32,
     /// Counts down from 1.0 after a hit, for the flash.
     flash: f32,
 }
@@ -138,24 +137,13 @@ struct Sounds {
     drop: Source,
     lost: Source,
     over: Source,
-    /// Sounds still playing. Each is a copy, so they can overlap.
-    playing: Vec<Source>,
-}
-
-impl Sounds {
-    fn play(&mut self, sound: &Source, volume: f32, pitch: f32) {
-        let copy = sound.clone();
-        copy.set_volume(volume);
-        copy.set_pitch(pitch);
-        copy.play();
-        self.playing.push(copy);
-    }
 }
 
 struct Topple {
     world: World,
     platform: Body,
-    blocks: Vec<Block>,
+    /// Every block in play, found by its body when a contact names one.
+    blocks: HashMap<Body, Block>,
     /// The kind, position and quarter turns of the block waiting to be
     /// dropped, or `None` while the last one is still falling.
     next: Option<(usize, f32, u32)>,
@@ -230,15 +218,14 @@ fn make_sounds() -> Sounds {
             let fade = 1.0 - (progress * 3.0).fract() * 0.7;
             (TAU * note * time).sin() * fade * (1.0 - progress * 0.5) * 0.4
         }),
-        playing: Vec::new(),
     }
 }
 
 impl Topple {
     /// Clears the tower and starts a new run. The best height stays.
     fn restart(&mut self) {
-        for block in self.blocks.drain(..) {
-            block.body.destroy();
+        for (body, _) in self.blocks.drain() {
+            body.destroy();
         }
         self.platform.set_angle(0.0);
         self.platform.set_angular_velocity(0.0);
@@ -287,17 +274,18 @@ impl Topple {
         }
         body.set_angle(turns as f32 * FRAC_PI_2);
         body.set_linear_damping(FALL_DAMPING);
-        // The index lets a contact find the block its body belongs to.
-        body.set_user_data(self.blocks.len() as u64 + 1);
-        self.blocks.push(Block {
-            body,
-            kind,
-            landed: None,
-            speed_before: 0.0,
-            flash: 0.0,
-        });
-        let drop = self.sounds.drop.clone();
-        self.sounds.play(&drop, 0.6, math::random_range(0.9, 1.1));
+        self.blocks.insert(
+            body.clone(),
+            Block {
+                body,
+                kind,
+                landed: None,
+                flash: 0.0,
+            },
+        );
+        self.sounds
+            .drop
+            .play_once_with(0.6, math::random_range(0.9, 1.1));
     }
 
     fn turn_piece(&mut self) {
@@ -315,33 +303,32 @@ impl Topple {
         self.shake = self.shake.max(strength * 9.0);
         self.dust.set_position(x, y);
         self.dust.emit((strength * 22.0) as usize + 3);
-        let thud = self.sounds.thud.clone();
         self.sounds
-            .play(&thud, 0.25 + strength * 0.75, math::random_range(0.85, 1.2));
+            .thud
+            .play_once_with(0.25 + strength * 0.75, math::random_range(0.85, 1.2));
         if let Some(pad) = joystick::joysticks().first() {
             pad.set_vibration(strength, strength * 0.4, 0.08 + strength * 0.15);
         }
     }
 
     /// The first block that has fallen out of the world, if any.
-    fn fallen(&self) -> Option<usize> {
+    fn fallen(&self) -> Option<Body> {
         self.blocks
-            .iter()
-            .position(|block| block.body.y() > PLATFORM_Y + 420.0)
+            .keys()
+            .find(|body| body.y() > PLATFORM_Y + 420.0)
+            .cloned()
     }
 
     fn lose_heart(&mut self) {
         self.hearts = self.hearts.saturating_sub(1);
         self.shake = self.shake.max(6.0);
         if self.hearts > 0 {
-            let lost = self.sounds.lost.clone();
-            self.sounds.play(&lost, 0.7, 1.0);
+            self.sounds.lost.play_once_with(0.7, 1.0);
             return;
         }
         self.over = true;
         self.next = None;
-        let over = self.sounds.over.clone();
-        self.sounds.play(&over, 0.8, 1.0);
+        self.sounds.over.play_once_with(0.8, 1.0);
         if let Some(pad) = joystick::joysticks().first() {
             pad.set_vibration(1.0, 1.0, 0.5);
         }
@@ -430,7 +417,7 @@ impl Game for Topple {
         let mut game = Topple {
             world,
             platform,
-            blocks: Vec::new(),
+            blocks: HashMap::new(),
             next: None,
             upcoming: 0,
             hearts: HEARTS,
@@ -479,15 +466,10 @@ impl Game for Topple {
         // The platform is sprung toward level. A heavier or more lopsided
         // tower pushes it further over.
         let angle = self.platform.angle();
-        // Masses shrink with the square of the meter, so torques do too.
-        self.platform.apply_torque(
-            (-angle * SPRING - self.platform.angular_velocity() * DAMPING) / (METER * METER),
+        self.platform.apply_angular_acceleration(
+            -angle * SPRING - self.platform.angular_velocity() * DAMPING,
         );
 
-        for block in &mut self.blocks {
-            let (vx, vy) = block.body.linear_velocity();
-            block.speed_before = vx.hypot(vy);
-        }
         self.world.update(dt);
 
         // Blocks that hit something for the first time, or hard.
@@ -496,27 +478,28 @@ impl Game for Topple {
             if !contact.began {
                 continue;
             }
+            let hard = contact.speed > 40.0;
             for fixture in [&contact.a, &contact.b] {
-                let index = fixture.body().map_or(0, |body| body.user_data()) as usize;
-                let Some(block) = index.checked_sub(1).and_then(|i| self.blocks.get_mut(i)) else {
+                let Some(block) = fixture.body().and_then(|body| self.blocks.get_mut(&body)) else {
                     continue;
                 };
                 if block.landed.is_none() {
                     block.landed = Some(0.0);
                     block.body.set_linear_damping(0.0);
                 }
-                if block.speed_before > 40.0 {
+                if hard {
                     block.flash = 1.0;
-                    let (x, y) = block.body.position();
-                    impacts.push((x, y, block.speed_before));
                 }
+            }
+            if hard {
+                impacts.push((contact.x, contact.y, contact.speed));
             }
         }
         for (x, y, speed) in impacts {
             self.impact(x, y, speed);
         }
 
-        for block in &mut self.blocks {
+        for block in self.blocks.values_mut() {
             block.flash = (block.flash - dt * 4.0).max(0.0);
             if let Some(seconds) = &mut block.landed {
                 *seconds += dt;
@@ -524,13 +507,9 @@ impl Game for Topple {
         }
 
         // Blocks that went over the side.
-        while let Some(index) = self.fallen() {
-            let block = self.blocks.remove(index);
-            block.body.destroy();
-            // The blocks after it moved down one place.
-            for (place, block) in self.blocks.iter().enumerate() {
-                block.body.set_user_data(place as u64 + 1);
-            }
+        while let Some(body) = self.fallen() {
+            self.blocks.remove(&body);
+            body.destroy();
             if !self.over {
                 self.lose_heart();
             }
@@ -539,7 +518,7 @@ impl Game for Topple {
         // The tower is as tall as its highest block at rest.
         self.height = self
             .blocks
-            .iter()
+            .values()
             .filter(|block| block.is_resting())
             .map(|block| PLATFORM_Y - block.top())
             .fold(0.0, f32::max);
@@ -548,7 +527,7 @@ impl Game for Topple {
         }
 
         // The next block appears once the last one has landed.
-        let falling = self.blocks.iter().any(|block| block.landed.is_none());
+        let falling = self.blocks.values().any(|block| block.landed.is_none());
         if self.next.is_none() && !falling && !self.over {
             self.new_piece();
         }
@@ -556,7 +535,7 @@ impl Game for Topple {
         // The camera rises to keep room above the tower.
         let highest = self
             .blocks
-            .iter()
+            .values()
             .filter(|block| {
                 // Not one that is on its way over the side.
                 let (vx, vy) = block.body.linear_velocity();
@@ -569,7 +548,6 @@ impl Game for Topple {
 
         self.shake = (self.shake - dt * 30.0).max(0.0);
         self.dust.update(dt);
-        self.sounds.playing.retain(Source::is_playing);
         if let Some((_, seconds)) = &mut self.message {
             *seconds -= dt;
             if *seconds <= 0.0 {
@@ -672,11 +650,7 @@ impl Topple {
             let y = PLATFORM_Y - self.best;
             graphics::set_color(Color::rgba(1.0, 0.85, 0.3, 0.7));
             graphics::set_line_width(2.0);
-            let mut x = 0.0;
-            while x < WIDTH {
-                graphics::line(x, y, x + 14.0, y);
-                x += 24.0;
-            }
+            graphics::dashed_line(0.0, y, WIDTH, y, 14.0, 10.0);
             graphics::printf("best", 0.0, y - 22.0, WIDTH - 10.0, Align::Right);
         }
 
@@ -708,15 +682,10 @@ impl Topple {
         graphics::set_color(Color::rgb(0.45, 0.48, 0.58));
         graphics::circle(DrawMode::Fill, x, y, 5.0);
 
-        for block in &self.blocks {
+        for block in self.blocks.values() {
             let (x, y) = block.body.position();
             let color = KINDS[block.kind].color;
-            let flash = block.flash * 0.7;
-            let fill = Color::rgb(
-                color.r + (1.0 - color.r) * flash,
-                color.g + (1.0 - color.g) * flash,
-                color.b + (1.0 - color.b) * flash,
-            );
+            let fill = color.lerp(Color::WHITE, block.flash * 0.7);
             graphics::push();
             graphics::translate(x, y);
             graphics::rotate(block.body.angle());
