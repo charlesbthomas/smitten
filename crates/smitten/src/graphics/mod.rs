@@ -14,6 +14,7 @@
 mod batch;
 mod canvas;
 pub(crate) mod image;
+mod image_data;
 mod particles;
 mod screen;
 mod shader;
@@ -42,6 +43,7 @@ pub(crate) mod reloading {
 
 pub use canvas::Canvas;
 pub use image::{Image, ImageError, Quad};
+pub use image_data::ImageData;
 pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, UniformValue};
 pub use sprite_batch::SpriteBatch;
@@ -824,6 +826,21 @@ pub fn new_image(path: impl AsRef<Path>) -> Image {
 /// Loads an image file (PNG or JPEG), returning an error if it fails.
 pub fn try_new_image(path: impl AsRef<Path>) -> Result<Image, ImageError> {
     image::load(path.as_ref())
+}
+
+/// Loads an image file into memory, where its pixels can be read and
+/// changed. See [`ImageData`].
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_data`] to handle the failure instead.
+pub fn new_image_data(path: impl AsRef<Path>) -> ImageData {
+    try_new_image_data(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads an image file into memory, returning an error if it fails.
+pub fn try_new_image_data(path: impl AsRef<Path>) -> Result<ImageData, ImageError> {
+    let (width, height, rgba) = image::load_rgba(path.as_ref())?;
+    Ok(ImageData::from_rgba(width, height, rgba))
 }
 
 /// Draws an image with its top-left corner at `(x, y)`.

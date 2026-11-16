@@ -138,6 +138,10 @@ fn main() {
 | `world:setCallbacks(beginContact, endContact)` | `world.contacts()` after each update | A list to loop over instead of callbacks. |
 | `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
 | `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
+| `love.image.newImageData(w, h)` / `newImageData(path)` | `ImageData::new(w, h)` / `graphics::new_image_data(path)` | |
+| `data:getPixel(x, y)` / `setPixel` / `mapPixel` / `paste` | `data.pixel(x, y)` / `set_pixel` / `map_pixels` / `paste` | Colors are `Color`. |
+| `data:encode("png", path)` | `data.save(path)` | Or `data.encode_png()` for the bytes. |
+| `love.graphics.newImage(data)` / `image:replacePixels(data)` | `Image::from_image_data(&data)` / `image.replace_pixels(&data, x, y)` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
