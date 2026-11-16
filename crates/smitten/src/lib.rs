@@ -26,6 +26,7 @@
 //! ```
 
 mod context;
+mod error;
 mod input;
 mod reload;
 
@@ -118,6 +119,10 @@ pub trait Game: Sized + 'static {
 ///
 /// Must be called from the main thread. Panics if the platform cannot be
 /// initialized, because there is nothing a game can do without a window.
+///
+/// If the game panics, the window stays open and shows the message and
+/// where it came from until the player presses Escape, like LÖVE's error
+/// screen. The panic then continues as usual.
 pub fn run<G: Game>(config: Config) {
     let backend = match smitten_sdl::SdlBackend::new(&config) {
         Ok(backend) => backend,
@@ -136,35 +141,43 @@ pub fn run<G: Game>(config: Config) {
         window::set_icon(icon);
     }
 
-    let mut game = G::load();
-    context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
+    let outcome = error::catch(|| {
+        let mut game = G::load();
+        context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
 
-    'running: loop {
-        while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
-            dispatch(&mut game, event);
+        'running: loop {
+            while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
+                dispatch(&mut game, event);
+            }
+
+            if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
+                break 'running;
+            }
+
+            let dt = context::with(|ctx| {
+                let now = ctx.backend.ticks_ns();
+                ctx.timer.step(now)
+            });
+            reload::check();
+            game.update(dt);
+
+            context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
+            game.draw();
+            context::with(|ctx| {
+                ctx.gfx.finish_frame();
+                ctx.backend.present(&ctx.gfx.frame());
+                ctx.gfx.end_frame();
+            });
         }
+    });
 
-        if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
-            break 'running;
-        }
-
-        let dt = context::with(|ctx| {
-            let now = ctx.backend.ticks_ns();
-            ctx.timer.step(now)
-        });
-        reload::check();
-        game.update(dt);
-
-        context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
-        game.draw();
-        context::with(|ctx| {
-            ctx.gfx.finish_frame();
-            ctx.backend.present(&ctx.gfx.frame());
-            ctx.gfx.end_frame();
-        });
+    // A panic is shown in the window, as LÖVE shows its error screen, and
+    // then carries on to end the program the way it would have.
+    if let Err(panic) = outcome {
+        error::show(panic.as_ref());
+        context::uninstall();
+        std::panic::resume_unwind(panic);
     }
-
-    drop(game);
     context::uninstall();
 }
 
