@@ -1,0 +1,16 @@
+[package]
+name = "smitten-examples"
+description = "Example games for the Smitten game framework"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["sdl-from-source"]
+# Passed through to `smitten`, so `--no-default-features` links against an
+# SDL3 that is already installed.
+sdl-from-source = ["smitten/sdl-from-source"]
+
+[dependencies]
+smitten = { path = "../smitten", default-features = false }

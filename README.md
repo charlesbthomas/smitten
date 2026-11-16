@@ -43,6 +43,8 @@ Smitten is a Cargo workspace. Games depend only on `smitten`.
 | `crates/smitten` | The public API: the `Game` trait, `run`, and the LÖVE-style modules. |
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
+| `crates/examples` | Example games, including Pong, and the assets they load. |
+| `crates/examples` | Example games, including Pong, and the assets they load. |
 
 ## Running the examples
 
@@ -51,7 +53,11 @@ cargo run --example hello
 cargo run --example sprites
 cargo run --example input
 cargo run --example text
+cargo run --example pong
 ```
+
+The examples live in `crates/examples/examples`. Run these commands from
+the workspace root.
 
 SDL3 is built from source on the first build, which needs CMake and a C
 compiler.
