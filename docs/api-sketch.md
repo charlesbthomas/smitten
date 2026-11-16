@@ -165,6 +165,8 @@ fn main() {
 | `canvas:newImageData()` | `canvas.new_image_data()` | Returns a `Result`. Slow, since it waits for the GPU. |
 | `love.graphics.captureScreenshot(callback)` | `graphics::capture_screenshot(\|picture\| ...)` | The callback gets an `ImageData` at the end of the frame. |
 | `love.graphics.captureScreenshot("shot.png")` | `graphics::save_screenshot("shot.png")` | Written to the save directory. |
+| `love.graphics.setLineJoin("bevel")` | `graphics::set_line_join(LineJoin::Bevel)` | `Miter` (the default), `Bevel` or `None`. |
+| `love.graphics.setLineStyle("rough")` | `graphics::set_line_style(LineStyle::Rough)` | Lines start out `Smooth`, as in LÖVE. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
