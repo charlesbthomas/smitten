@@ -1,0 +1,556 @@
+//! Random numbers, noise and a little geometry, the equivalent of
+//! `love.math`.
+//!
+//! Unlike the other modules, everything here also works when no game is
+//! running, which makes it usable in tests and tools.
+//!
+//! ```
+//! use smitten::math;
+//!
+//! math::set_random_seed(42);
+//! let roll = math::random_int(1, 6);
+//! assert!((1..=6).contains(&roll));
+//! let height = math::noise2(0.3, 1.7);
+//! assert!((0.0..=1.0).contains(&height));
+//! ```
+
+use std::cell::RefCell;
+
+/// A source of random numbers with its own seed, the equivalent of LÖVE's
+/// `RandomGenerator`.
+///
+/// The functions in this module, such as [`random`], share one generator.
+/// Make your own when something must be repeatable no matter what else
+/// asks for random numbers, such as a level built from a seed.
+///
+/// The same seed always gives the same numbers, on every platform and in
+/// every version of Smitten. The numbers are not suitable for
+/// cryptography.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RandomGenerator {
+    seed: u64,
+    state: [u64; 4],
+}
+
+impl RandomGenerator {
+    /// Creates a generator that produces the sequence belonging to `seed`.
+    pub fn new(seed: u64) -> RandomGenerator {
+        // Spread the seed over the whole state with SplitMix64, as the
+        // authors of xoshiro recommend. It never yields an all-zero state.
+        let mut mix = seed;
+        let mut next = || {
+            mix = mix.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = mix;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        RandomGenerator {
+            seed,
+            state: [next(), next(), next(), next()],
+        }
+    }
+
+    /// The seed the generator was last given.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Starts the sequence belonging to `seed` from its beginning.
+    pub fn set_seed(&mut self, seed: u64) {
+        *self = RandomGenerator::new(seed);
+    }
+
+    /// The next 64 random bits (xoshiro256++).
+    pub fn next_u64(&mut self) -> u64 {
+        let state = &mut self.state;
+        let result = state[0]
+            .wrapping_add(state[3])
+            .rotate_left(23)
+            .wrapping_add(state[0]);
+        let shifted = state[1] << 17;
+        state[2] ^= state[0];
+        state[3] ^= state[1];
+        state[1] ^= state[2];
+        state[0] ^= state[3];
+        state[2] ^= shifted;
+        state[3] = state[3].rotate_left(45);
+        result
+    }
+
+    /// A number from 0.0 up to, but not including, 1.0.
+    pub fn random(&mut self) -> f32 {
+        // An f32 holds 24 bits exactly, so use the top 24.
+        (self.next_u64() >> 40) as f32 / (1u32 << 24) as f32
+    }
+
+    /// A number from `min` up to, but not including, `max`.
+    pub fn random_range(&mut self, min: f32, max: f32) -> f32 {
+        min + (max - min) * self.random()
+    }
+
+    /// A whole number from `min` to `max`, including both, like LÖVE's
+    /// `random(min, max)`. The two may be given in either order.
+    pub fn random_int(&mut self, min: i64, max: i64) -> i64 {
+        let (min, max) = if min <= max { (min, max) } else { (max, min) };
+        let choices = (max as i128 - min as i128 + 1) as u128;
+        let pick = (self.next_u64() as u128 * choices) >> 64;
+        (min as i128 + pick as i128) as i64
+    }
+
+    /// A number from a bell curve centered on `mean`, where about two
+    /// thirds of the results fall within `deviation` of it.
+    pub fn random_normal(&mut self, deviation: f32, mean: f32) -> f32 {
+        // Box-Muller. Flip the first number so it is never zero.
+        let a = 1.0 - self.random();
+        let b = self.random();
+        let unit = (-2.0 * a.ln()).sqrt() * (std::f32::consts::TAU * b).cos();
+        mean + deviation * unit
+    }
+
+    /// `true` with the given probability: 0.25 is one time in four.
+    pub fn chance(&mut self, probability: f32) -> bool {
+        self.random() < probability
+    }
+
+    /// One of `items`, each equally likely, or `None` if there are none.
+    pub fn choose<'a, T>(&mut self, items: &'a [T]) -> Option<&'a T> {
+        if items.is_empty() {
+            return None;
+        }
+        let index = self.random_int(0, items.len() as i64 - 1) as usize;
+        items.get(index)
+    }
+
+    /// Puts `items` in a random order.
+    pub fn shuffle<T>(&mut self, items: &mut [T]) {
+        for last in (1..items.len()).rev() {
+            let other = self.random_int(0, last as i64) as usize;
+            items.swap(last, other);
+        }
+    }
+}
+
+thread_local! {
+    static SHARED: RefCell<RandomGenerator> = RefCell::new(RandomGenerator::new(time_seed()));
+}
+
+/// A seed that differs from run to run, so games are not the same every
+/// time unless they ask to be.
+fn time_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+fn shared<R>(use_it: impl FnOnce(&mut RandomGenerator) -> R) -> R {
+    SHARED.with(|generator| use_it(&mut generator.borrow_mut()))
+}
+
+/// Restarts the shared generator with `seed`, so the numbers that follow
+/// are the same every time. Without this, each run of the game differs.
+pub fn set_random_seed(seed: u64) {
+    shared(|generator| generator.set_seed(seed));
+}
+
+/// The seed the shared generator was last given.
+pub fn random_seed() -> u64 {
+    shared(|generator| generator.seed())
+}
+
+/// A number from 0.0 up to, but not including, 1.0.
+pub fn random() -> f32 {
+    shared(RandomGenerator::random)
+}
+
+/// A number from `min` up to, but not including, `max`.
+pub fn random_range(min: f32, max: f32) -> f32 {
+    shared(|generator| generator.random_range(min, max))
+}
+
+/// A whole number from `min` to `max`, including both.
+pub fn random_int(min: i64, max: i64) -> i64 {
+    shared(|generator| generator.random_int(min, max))
+}
+
+/// A number from a bell curve centered on `mean`. See
+/// [`RandomGenerator::random_normal`].
+pub fn random_normal(deviation: f32, mean: f32) -> f32 {
+    shared(|generator| generator.random_normal(deviation, mean))
+}
+
+/// `true` with the given probability: 0.25 is one time in four.
+pub fn chance(probability: f32) -> bool {
+    shared(|generator| generator.chance(probability))
+}
+
+/// One of `items`, each equally likely, or `None` if there are none.
+pub fn choose<T>(items: &[T]) -> Option<&T> {
+    shared(|generator| generator.choose(items))
+}
+
+/// Puts `items` in a random order.
+pub fn shuffle<T>(items: &mut [T]) {
+    shared(|generator| generator.shuffle(items));
+}
+
+// ---------------------------------------------------------------------------
+// Noise
+
+/// Smooth noise along a line, from 0.0 to 1.0, like `love.math.noise(x)`.
+///
+/// Nearby inputs give nearby outputs, and the same input always gives the
+/// same output. The pattern has features about one unit across, so scale
+/// the input to taste: `noise(time * 0.5)` drifts slowly. At whole
+/// numbers the result is always 0.5.
+pub fn noise(x: f32) -> f32 {
+    noise3(x, 0.0, 0.0)
+}
+
+/// Smooth noise over a plane, from 0.0 to 1.0. See [`noise`].
+pub fn noise2(x: f32, y: f32) -> f32 {
+    noise3(x, y, 0.0)
+}
+
+/// Smooth noise through space, from 0.0 to 1.0. See [`noise`]. Using time
+/// as the third input animates a 2D pattern.
+pub fn noise3(x: f32, y: f32, z: f32) -> f32 {
+    // Ken Perlin's improved noise, with a hash in place of his table.
+    let (floor_x, floor_y, floor_z) = (x.floor(), y.floor(), z.floor());
+    let (cell_x, cell_y, cell_z) = (floor_x as i32, floor_y as i32, floor_z as i32);
+    let (x, y, z) = (x - floor_x, y - floor_y, z - floor_z);
+    let fade = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    let (u, v, w) = (fade(x), fade(y), fade(z));
+    let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let corner = |dx: i32, dy: i32, dz: i32| {
+        let hash = hash3(
+            cell_x.wrapping_add(dx),
+            cell_y.wrapping_add(dy),
+            cell_z.wrapping_add(dz),
+        );
+        gradient(hash, x - dx as f32, y - dy as f32, z - dz as f32)
+    };
+
+    let near = mix(
+        mix(corner(0, 0, 0), corner(1, 0, 0), u),
+        mix(corner(0, 1, 0), corner(1, 1, 0), u),
+        v,
+    );
+    let far = mix(
+        mix(corner(0, 0, 1), corner(1, 0, 1), u),
+        mix(corner(0, 1, 1), corner(1, 1, 1), u),
+        v,
+    );
+    (0.5 + 0.5 * mix(near, far, w)).clamp(0.0, 1.0)
+}
+
+fn hash3(x: i32, y: i32, z: i32) -> u32 {
+    let mut hash = (x as u32).wrapping_mul(0x8DA6_B343)
+        ^ (y as u32).wrapping_mul(0xD816_3841)
+        ^ (z as u32).wrapping_mul(0xCB1A_B31F);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2C1B_3C6D);
+    hash ^= hash >> 12;
+    hash = hash.wrapping_mul(0x297A_2D39);
+    hash ^ (hash >> 15)
+}
+
+/// The dot product of `(x, y, z)` with one of Perlin's twelve gradient
+/// directions, picked by `hash`.
+fn gradient(hash: u32, x: f32, y: f32, z: f32) -> f32 {
+    let pick = hash & 15;
+    let a = if pick < 8 { x } else { y };
+    let b = if pick < 4 {
+        y
+    } else if pick == 12 || pick == 14 {
+        x
+    } else {
+        z
+    };
+    let a = if pick & 1 == 0 { a } else { -a };
+    let b = if pick & 2 == 0 { b } else { -b };
+    a + b
+}
+
+// ---------------------------------------------------------------------------
+// Geometry and color
+
+/// Whether a polygon has no dents: every corner turns the same way.
+/// Polygons with fewer than three corners are not convex.
+pub fn is_convex(points: &[(f32, f32)]) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+    let mut direction = 0.0f32;
+    for index in 0..points.len() {
+        let turn = cross(
+            points[index],
+            points[(index + 1) % points.len()],
+            points[(index + 2) % points.len()],
+        );
+        if turn != 0.0 {
+            if direction != 0.0 && turn.signum() != direction {
+                return false;
+            }
+            direction = turn.signum();
+        }
+    }
+    direction != 0.0
+}
+
+/// Splits a polygon into triangles, like `love.math.triangulate`. The
+/// polygon may have dents but its edges must not cross each other.
+///
+/// Returns nothing for fewer than three corners, or if the polygon is so
+/// tangled that no triangle can be cut from it.
+pub fn triangulate(points: &[(f32, f32)]) -> Vec<[(f32, f32); 3]> {
+    if points.len() < 3 {
+        return Vec::new();
+    }
+    // Ear clipping wants the corners in one known direction.
+    let doubled_area: f32 = (0..points.len())
+        .map(|index| {
+            let (a, b) = (points[index], points[(index + 1) % points.len()]);
+            a.0 * b.1 - b.0 * a.1
+        })
+        .sum();
+    let mut remaining: Vec<(f32, f32)> = points.to_vec();
+    if doubled_area < 0.0 {
+        remaining.reverse();
+    }
+
+    let mut triangles = Vec::with_capacity(points.len() - 2);
+    while remaining.len() > 3 {
+        let count = remaining.len();
+        let ear = (0..count).find(|&index| {
+            let previous = remaining[(index + count - 1) % count];
+            let tip = remaining[index];
+            let next = remaining[(index + 1) % count];
+            // An ear is a corner that turns the polygon's way and has no
+            // other corner inside its triangle.
+            cross(previous, tip, next) > 0.0
+                && !remaining.iter().any(|&point| {
+                    point != previous
+                        && point != tip
+                        && point != next
+                        && inside_triangle(point, previous, tip, next)
+                })
+        });
+        let Some(index) = ear else {
+            // Only corners in a straight line, or crossing edges, are left.
+            return triangles;
+        };
+        triangles.push([
+            remaining[(index + count - 1) % count],
+            remaining[index],
+            remaining[(index + 1) % count],
+        ]);
+        remaining.remove(index);
+    }
+    triangles.push([remaining[0], remaining[1], remaining[2]]);
+    triangles
+}
+
+/// Positive when going from `a` to `b` to `c` turns one way, negative for
+/// the other, and zero when they are in a line.
+fn cross(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
+    (b.0 - a.0) * (c.1 - b.1) - (b.1 - a.1) * (c.0 - b.0)
+}
+
+fn inside_triangle(point: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
+    cross(a, b, point) >= 0.0 && cross(b, c, point) >= 0.0 && cross(c, a, point) >= 0.0
+}
+
+/// Converts one color component from the usual sRGB encoding to linear
+/// light, where adding and averaging behave physically.
+pub fn gamma_to_linear(component: f32) -> f32 {
+    if component <= 0.04045 {
+        component / 12.92
+    } else {
+        ((component + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Converts one color component from linear light back to sRGB.
+pub fn linear_to_gamma(component: f32) -> f32 {
+    if component <= 0.003_130_8 {
+        component * 12.92
+    } else {
+        1.055 * component.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_same_seed_gives_the_same_numbers() {
+        let mut a = RandomGenerator::new(123);
+        let mut b = RandomGenerator::new(123);
+        let mut c = RandomGenerator::new(124);
+        let from_a: Vec<u64> = (0..8).map(|_| a.next_u64()).collect();
+        let from_b: Vec<u64> = (0..8).map(|_| b.next_u64()).collect();
+        let from_c: Vec<u64> = (0..8).map(|_| c.next_u64()).collect();
+        assert_eq!(from_a, from_b);
+        assert_ne!(from_a, from_c);
+    }
+
+    #[test]
+    fn the_sequence_for_a_seed_never_changes() {
+        // Saved games and seeded levels depend on this staying put.
+        let mut generator = RandomGenerator::new(0);
+        assert_eq!(generator.next_u64(), 0x53175D61490B23DF);
+        assert_eq!(generator.next_u64(), 0x61DA6F3DC380D507);
+    }
+
+    #[test]
+    fn setting_the_seed_restarts_the_sequence() {
+        let mut generator = RandomGenerator::new(9);
+        let first = generator.next_u64();
+        generator.next_u64();
+        generator.set_seed(9);
+        assert_eq!(generator.next_u64(), first);
+        assert_eq!(generator.seed(), 9);
+    }
+
+    #[test]
+    fn random_stays_in_its_range_and_spreads_out() {
+        let mut generator = RandomGenerator::new(1);
+        let values: Vec<f32> = (0..10_000).map(|_| generator.random()).collect();
+        assert!(values.iter().all(|value| (0.0..1.0).contains(value)));
+        let mean = values.iter().sum::<f32>() / values.len() as f32;
+        assert!((mean - 0.5).abs() < 0.02, "mean was {mean}");
+
+        for _ in 0..1000 {
+            let value = generator.random_range(-3.0, 5.0);
+            assert!((-3.0..5.0).contains(&value));
+        }
+    }
+
+    #[test]
+    fn random_int_includes_both_ends_and_takes_either_order() {
+        let mut generator = RandomGenerator::new(2);
+        let mut seen = [false; 6];
+        for _ in 0..1000 {
+            let roll = generator.random_int(1, 6);
+            assert!((1..=6).contains(&roll));
+            seen[roll as usize - 1] = true;
+        }
+        assert!(seen.iter().all(|&hit| hit));
+
+        assert_eq!(generator.random_int(4, 4), 4);
+        assert!((-2..=2).contains(&generator.random_int(2, -2)));
+        // The widest range must not overflow.
+        generator.random_int(i64::MIN, i64::MAX);
+    }
+
+    #[test]
+    fn random_normal_centers_on_the_mean() {
+        let mut generator = RandomGenerator::new(3);
+        let values: Vec<f32> = (0..20_000)
+            .map(|_| generator.random_normal(2.0, 10.0))
+            .collect();
+        let mean = values.iter().sum::<f32>() / values.len() as f32;
+        let within = values
+            .iter()
+            .filter(|&&value| (value - 10.0).abs() < 2.0)
+            .count() as f32
+            / values.len() as f32;
+        assert!((mean - 10.0).abs() < 0.1, "mean was {mean}");
+        assert!(
+            (within - 0.683).abs() < 0.03,
+            "{within} within one deviation"
+        );
+    }
+
+    #[test]
+    fn shuffle_keeps_every_item_and_choose_picks_one_of_them() {
+        let mut generator = RandomGenerator::new(4);
+        let mut items: Vec<u32> = (0..50).collect();
+        generator.shuffle(&mut items);
+        assert_ne!(items, (0..50).collect::<Vec<_>>());
+        let mut sorted = items.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..50).collect::<Vec<_>>());
+
+        assert!(items.contains(generator.choose(&items).unwrap()));
+        assert_eq!(generator.choose::<u32>(&[]), None);
+    }
+
+    #[test]
+    fn the_shared_generator_repeats_after_seeding() {
+        set_random_seed(77);
+        let first = (random(), random_int(1, 100), random_range(0.0, 9.0));
+        set_random_seed(77);
+        let second = (random(), random_int(1, 100), random_range(0.0, 9.0));
+        assert_eq!(first, second);
+        assert_eq!(random_seed(), 77);
+    }
+
+    #[test]
+    fn noise_is_smooth_repeatable_and_in_range() {
+        let mut low = f32::MAX;
+        let mut high = f32::MIN;
+        let mut previous = noise2(0.0, 0.3);
+        for step in 1..4000 {
+            let x = step as f32 * 0.01;
+            let value = noise2(x, 0.3);
+            assert!((0.0..=1.0).contains(&value));
+            assert!((value - previous).abs() < 0.05, "jumped at {x}");
+            low = low.min(value);
+            high = high.max(value);
+            previous = value;
+        }
+        // It uses a good part of the range rather than hovering at 0.5.
+        assert!(low < 0.25 && high > 0.75, "only spanned {low} to {high}");
+        assert_eq!(noise3(1.3, 2.7, -4.1), noise3(1.3, 2.7, -4.1));
+        assert_eq!(noise(3.0), 0.5);
+    }
+
+    #[test]
+    fn convexity() {
+        let square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+        let arrow = [(0.0, 0.0), (2.0, 1.0), (0.0, 2.0), (0.5, 1.0)];
+        assert!(is_convex(&square));
+        assert!(!is_convex(&arrow));
+        assert!(!is_convex(&square[..2]));
+    }
+
+    fn area(triangles: &[[(f32, f32); 3]]) -> f32 {
+        triangles
+            .iter()
+            .map(|[a, b, c]| cross(*a, *b, *c).abs() / 2.0)
+            .sum()
+    }
+
+    #[test]
+    fn triangulating_covers_the_polygon_exactly() {
+        // An L shape, area 3, given in each direction.
+        let mut shape = vec![
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (2.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 2.0),
+            (0.0, 2.0),
+        ];
+        for _ in 0..2 {
+            let triangles = triangulate(&shape);
+            assert_eq!(triangles.len(), 4);
+            assert!((area(&triangles) - 3.0).abs() < 1e-5);
+            shape.reverse();
+        }
+        assert!(triangulate(&shape[..2]).is_empty());
+    }
+
+    #[test]
+    fn gamma_and_linear_undo_each_other() {
+        for step in 0..=10 {
+            let value = step as f32 / 10.0;
+            assert!((linear_to_gamma(gamma_to_linear(value)) - value).abs() < 1e-5);
+        }
+        assert!((gamma_to_linear(0.5) - 0.214).abs() < 0.001);
+    }
+}
