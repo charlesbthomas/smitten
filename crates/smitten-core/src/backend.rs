@@ -9,10 +9,10 @@
 //! Games never use this module. It is public only so backend crates can
 //! implement it.
 
-use crate::{Color, Filter, Key};
+use crate::{Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
 
 /// Something that happened on the platform since the last poll.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BackendEvent {
     /// The user or the system asked the game to close.
     Quit,
@@ -27,6 +27,53 @@ pub enum BackendEvent {
     },
     KeyUp {
         key: Key,
+    },
+    /// Text the user typed, after keyboard layout and input methods.
+    TextInput(String),
+    /// The pointer moved to `(x, y)` in pixels, by `(dx, dy)`.
+    MouseMoved {
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+    },
+    /// `presses` is 1 for a single click, 2 for a double click, and so on.
+    MousePressed {
+        x: f32,
+        y: f32,
+        button: MouseButton,
+        presses: u32,
+    },
+    MouseReleased {
+        x: f32,
+        y: f32,
+        button: MouseButton,
+        presses: u32,
+    },
+    /// The wheel moved. Positive `dy` is away from the user.
+    WheelMoved {
+        dx: f32,
+        dy: f32,
+    },
+    JoystickAdded {
+        id: JoystickId,
+        name: String,
+    },
+    JoystickRemoved {
+        id: JoystickId,
+    },
+    GamepadPressed {
+        id: JoystickId,
+        button: GamepadButton,
+    },
+    GamepadReleased {
+        id: JoystickId,
+        button: GamepadButton,
+    },
+    GamepadAxis {
+        id: JoystickId,
+        axis: GamepadAxis,
+        value: f32,
     },
 }
 
@@ -92,6 +139,9 @@ pub trait Backend {
 
     /// Drawable size in pixels.
     fn size_in_pixels(&self) -> (u32, u32);
+
+    /// Shows or hides the mouse cursor while it is over the window.
+    fn set_mouse_visible(&mut self, visible: bool);
 
     /// Sets the window title.
     fn set_title(&mut self, title: &str);

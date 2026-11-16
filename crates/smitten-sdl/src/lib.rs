@@ -7,6 +7,7 @@
 
 mod renderer;
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::mem::ManuallyDrop;
 use std::ptr;
@@ -14,7 +15,7 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{Backend, BackendEvent, Frame, TextureId};
-use smitten_core::{Config, Key};
+use smitten_core::{Config, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
 
 use renderer::Renderer;
 
@@ -24,6 +25,9 @@ pub struct SdlBackend {
     device: *mut SDL_GPUDevice,
     /// Dropped by hand in `Drop`, before the device it draws with.
     renderer: ManuallyDrop<Renderer>,
+    /// Opened gamepads by SDL joystick id. SDL only reports input from
+    /// gamepads that are open.
+    gamepads: HashMap<u32, *mut SDL_Gamepad>,
 }
 
 pub(crate) fn sdl_error() -> String {
@@ -48,7 +52,7 @@ impl SdlBackend {
         // valid for the duration of its call, and each failure path releases
         // what was created before it.
         unsafe {
-            if !SDL_Init(SDL_INIT_VIDEO) {
+            if !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD) {
                 return Err(format!("SDL_Init failed: {}", sdl_error()));
             }
 
@@ -111,10 +115,14 @@ impl SdlBackend {
                 }
             };
 
+            // Typed text is reported by default, as LÖVE does on desktop.
+            SDL_StartTextInput(window);
+
             Ok(Self {
                 window,
                 device,
                 renderer: ManuallyDrop::new(renderer),
+                gamepads: HashMap::new(),
             })
         }
     }
@@ -125,6 +133,9 @@ impl Drop for SdlBackend {
         // SAFETY: everything was created in `new` and is released once, the
         // renderer first because its resources belong to the device.
         unsafe {
+            for (_, gamepad) in self.gamepads.drain() {
+                SDL_CloseGamepad(gamepad);
+            }
             ManuallyDrop::drop(&mut self.renderer);
             SDL_ReleaseWindowFromGPUDevice(self.device, self.window);
             SDL_DestroyGPUDevice(self.device);
@@ -136,34 +147,27 @@ impl Drop for SdlBackend {
 
 impl Backend for SdlBackend {
     fn poll_event(&mut self) -> Option<BackendEvent> {
-        // SAFETY: SDL_PollEvent fills the event it is given, and the union
-        // field read in each arm is the one SDL documents for that type.
+        // SAFETY: SDL_PollEvent fills the event it is given.
         unsafe {
             let mut event: SDL_Event = std::mem::zeroed();
             while SDL_PollEvent(&mut event) {
-                let kind = SDL_EventType(event.r#type);
-                if kind == SDL_EVENT_QUIT {
-                    return Some(BackendEvent::Quit);
-                } else if kind == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED {
-                    return Some(BackendEvent::Resized {
-                        width: event.window.data1.max(0) as u32,
-                        height: event.window.data2.max(0) as u32,
-                    });
-                } else if kind == SDL_EVENT_KEY_DOWN {
-                    if let Some(key) = key_from_scancode(event.key.scancode) {
-                        return Some(BackendEvent::KeyDown {
-                            key,
-                            is_repeat: event.key.repeat,
-                        });
-                    }
-                } else if kind == SDL_EVENT_KEY_UP
-                    && let Some(key) = key_from_scancode(event.key.scancode)
-                {
-                    return Some(BackendEvent::KeyUp { key });
+                if let Some(translated) = self.translate(&event) {
+                    return Some(translated);
                 }
                 // Anything else is not surfaced yet; keep draining.
             }
             None
+        }
+    }
+
+    fn set_mouse_visible(&mut self, visible: bool) {
+        // SAFETY: no preconditions once the video subsystem is running.
+        unsafe {
+            if visible {
+                SDL_ShowCursor();
+            } else {
+                SDL_HideCursor();
+            }
         }
     }
 
@@ -201,6 +205,191 @@ impl Backend for SdlBackend {
         // SAFETY: the window is alive and SDL copies the string.
         unsafe { SDL_SetWindowTitle(self.window, title.as_ptr()) };
     }
+}
+
+impl SdlBackend {
+    /// Turns an SDL event into a Smitten one, if Smitten has an equivalent.
+    ///
+    /// # Safety
+    /// `event` must have been filled in by SDL, so that the union field
+    /// matching its type is the valid one.
+    unsafe fn translate(&mut self, event: &SDL_Event) -> Option<BackendEvent> {
+        // SAFETY: each arm reads only the union field SDL documents for
+        // that event type.
+        unsafe {
+            let kind = SDL_EventType(event.r#type);
+            if kind == SDL_EVENT_QUIT {
+                Some(BackendEvent::Quit)
+            } else if kind == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED {
+                Some(BackendEvent::Resized {
+                    width: event.window.data1.max(0) as u32,
+                    height: event.window.data2.max(0) as u32,
+                })
+            } else if kind == SDL_EVENT_KEY_DOWN {
+                let key = key_from_scancode(event.key.scancode)?;
+                Some(BackendEvent::KeyDown {
+                    key,
+                    is_repeat: event.key.repeat,
+                })
+            } else if kind == SDL_EVENT_KEY_UP {
+                let key = key_from_scancode(event.key.scancode)?;
+                Some(BackendEvent::KeyUp { key })
+            } else if kind == SDL_EVENT_TEXT_INPUT {
+                if event.text.text.is_null() {
+                    return None;
+                }
+                let text = CStr::from_ptr(event.text.text).to_string_lossy();
+                Some(BackendEvent::TextInput(text.into_owned()))
+            } else if kind == SDL_EVENT_MOUSE_MOTION {
+                // SDL reports window coordinates; Smitten works in pixels.
+                let scale = self.pixel_density();
+                Some(BackendEvent::MouseMoved {
+                    x: event.motion.x * scale,
+                    y: event.motion.y * scale,
+                    dx: event.motion.xrel * scale,
+                    dy: event.motion.yrel * scale,
+                })
+            } else if kind == SDL_EVENT_MOUSE_BUTTON_DOWN || kind == SDL_EVENT_MOUSE_BUTTON_UP {
+                let scale = self.pixel_density();
+                let button = mouse_button(event.button.button)?;
+                let (x, y) = (event.button.x * scale, event.button.y * scale);
+                let presses = u32::from(event.button.clicks);
+                Some(if event.button.down {
+                    BackendEvent::MousePressed {
+                        x,
+                        y,
+                        button,
+                        presses,
+                    }
+                } else {
+                    BackendEvent::MouseReleased {
+                        x,
+                        y,
+                        button,
+                        presses,
+                    }
+                })
+            } else if kind == SDL_EVENT_MOUSE_WHEEL {
+                // "Flipped" means the system reports natural scrolling with
+                // the signs reversed; undo that so up is always positive.
+                let sign = if event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED {
+                    -1.0
+                } else {
+                    1.0
+                };
+                Some(BackendEvent::WheelMoved {
+                    dx: event.wheel.x * sign,
+                    dy: event.wheel.y * sign,
+                })
+            } else if kind == SDL_EVENT_GAMEPAD_ADDED {
+                let which = event.gdevice.which;
+                if self.gamepads.contains_key(&which.0) {
+                    return None;
+                }
+                let gamepad = SDL_OpenGamepad(which);
+                if gamepad.is_null() {
+                    return None;
+                }
+                self.gamepads.insert(which.0, gamepad);
+                let name = SDL_GetGamepadName(gamepad);
+                let name = if name.is_null() {
+                    "Gamepad".to_string()
+                } else {
+                    CStr::from_ptr(name).to_string_lossy().into_owned()
+                };
+                Some(BackendEvent::JoystickAdded {
+                    id: JoystickId(which.0),
+                    name,
+                })
+            } else if kind == SDL_EVENT_GAMEPAD_REMOVED {
+                let which = event.gdevice.which;
+                let gamepad = self.gamepads.remove(&which.0)?;
+                SDL_CloseGamepad(gamepad);
+                Some(BackendEvent::JoystickRemoved {
+                    id: JoystickId(which.0),
+                })
+            } else if kind == SDL_EVENT_GAMEPAD_BUTTON_DOWN || kind == SDL_EVENT_GAMEPAD_BUTTON_UP {
+                let id = JoystickId(event.gbutton.which.0);
+                let button = gamepad_button(event.gbutton.button)?;
+                Some(if event.gbutton.down {
+                    BackendEvent::GamepadPressed { id, button }
+                } else {
+                    BackendEvent::GamepadReleased { id, button }
+                })
+            } else if kind == SDL_EVENT_GAMEPAD_AXIS_MOTION {
+                let axis = gamepad_axis(event.gaxis.axis)?;
+                Some(BackendEvent::GamepadAxis {
+                    id: JoystickId(event.gaxis.which.0),
+                    axis,
+                    // SDL's range is -32768 to 32767.
+                    value: (f32::from(event.gaxis.value) / 32767.0).clamp(-1.0, 1.0),
+                })
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Pixels per window coordinate, above 1.0 on high-DPI displays.
+    fn pixel_density(&self) -> f32 {
+        // SAFETY: the window is alive.
+        let density = unsafe { SDL_GetWindowPixelDensity(self.window) };
+        if density > 0.0 { density } else { 1.0 }
+    }
+}
+
+fn mouse_button(button: u8) -> Option<MouseButton> {
+    let button = i32::from(button);
+    [
+        (SDL_BUTTON_LEFT, MouseButton::Left),
+        (SDL_BUTTON_RIGHT, MouseButton::Right),
+        (SDL_BUTTON_MIDDLE, MouseButton::Middle),
+        (SDL_BUTTON_X1, MouseButton::X1),
+        (SDL_BUTTON_X2, MouseButton::X2),
+    ]
+    .iter()
+    .find(|(sdl, _)| *sdl == button)
+    .map(|&(_, button)| button)
+}
+
+fn gamepad_button(button: u8) -> Option<GamepadButton> {
+    use GamepadButton::*;
+    let button = i32::from(button);
+    [
+        (SDL_GAMEPAD_BUTTON_SOUTH, A),
+        (SDL_GAMEPAD_BUTTON_EAST, B),
+        (SDL_GAMEPAD_BUTTON_WEST, X),
+        (SDL_GAMEPAD_BUTTON_NORTH, Y),
+        (SDL_GAMEPAD_BUTTON_BACK, Back),
+        (SDL_GAMEPAD_BUTTON_GUIDE, Guide),
+        (SDL_GAMEPAD_BUTTON_START, Start),
+        (SDL_GAMEPAD_BUTTON_LEFT_STICK, LeftStick),
+        (SDL_GAMEPAD_BUTTON_RIGHT_STICK, RightStick),
+        (SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, LeftShoulder),
+        (SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, RightShoulder),
+        (SDL_GAMEPAD_BUTTON_DPAD_UP, DpadUp),
+        (SDL_GAMEPAD_BUTTON_DPAD_DOWN, DpadDown),
+        (SDL_GAMEPAD_BUTTON_DPAD_LEFT, DpadLeft),
+        (SDL_GAMEPAD_BUTTON_DPAD_RIGHT, DpadRight),
+    ]
+    .iter()
+    .find(|(sdl, _)| sdl.0 == button)
+    .map(|&(_, button)| button)
+}
+
+fn gamepad_axis(axis: u8) -> Option<GamepadAxis> {
+    let axis = i32::from(axis);
+    [
+        (SDL_GAMEPAD_AXIS_LEFTX, GamepadAxis::LeftX),
+        (SDL_GAMEPAD_AXIS_LEFTY, GamepadAxis::LeftY),
+        (SDL_GAMEPAD_AXIS_RIGHTX, GamepadAxis::RightX),
+        (SDL_GAMEPAD_AXIS_RIGHTY, GamepadAxis::RightY),
+        (SDL_GAMEPAD_AXIS_LEFT_TRIGGER, GamepadAxis::TriggerLeft),
+        (SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, GamepadAxis::TriggerRight),
+    ]
+    .iter()
+    .find(|(sdl, _)| sdl.0 == axis)
+    .map(|&(_, axis)| axis)
 }
 
 fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
@@ -242,6 +431,26 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
         (SDL_SCANCODE_RCTRL, RightCtrl),
         (SDL_SCANCODE_LALT, LeftAlt),
         (SDL_SCANCODE_RALT, RightAlt),
+        (SDL_SCANCODE_MINUS, Minus),
+        (SDL_SCANCODE_EQUALS, Equals),
+        (SDL_SCANCODE_LEFTBRACKET, LeftBracket),
+        (SDL_SCANCODE_RIGHTBRACKET, RightBracket),
+        (SDL_SCANCODE_BACKSLASH, Backslash),
+        (SDL_SCANCODE_SEMICOLON, Semicolon),
+        (SDL_SCANCODE_APOSTROPHE, Apostrophe),
+        (SDL_SCANCODE_GRAVE, Grave),
+        (SDL_SCANCODE_COMMA, Comma),
+        (SDL_SCANCODE_PERIOD, Period),
+        (SDL_SCANCODE_SLASH, Slash),
+        (SDL_SCANCODE_CAPSLOCK, CapsLock),
+        (SDL_SCANCODE_INSERT, Insert),
+        (SDL_SCANCODE_DELETE, Delete),
+        (SDL_SCANCODE_HOME, Home),
+        (SDL_SCANCODE_END, End),
+        (SDL_SCANCODE_PAGEUP, PageUp),
+        (SDL_SCANCODE_PAGEDOWN, PageDown),
+        (SDL_SCANCODE_LGUI, LeftGui),
+        (SDL_SCANCODE_RGUI, RightGui),
     ];
     named
         .iter()

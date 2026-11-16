@@ -77,6 +77,15 @@ fn main() {
 | `love.graphics.setColor(r, g, b, a)` | `graphics::set_color(Color)` | Components are 0.0 to 1.0. |
 | `love.graphics.newImage(path)` | `graphics::new_image(path)` | |
 | `love.keyboard.isDown(key)` | `keyboard::is_down(Key)` | Keys are an enum, not strings. |
+| `love.mouse.getPosition()` | `mouse::position()` | In pixels, like `graphics`. |
+| `love.mouse.isDown(1)` | `mouse::is_down(MouseButton::Left)` | Buttons are an enum, not numbers. |
+| `love.mousepressed(x, y, button, istouch, presses)` | `Game::mouse_pressed(x, y, button, presses)` | |
+| `love.wheelmoved(x, y)` | `Game::wheel_moved(dx, dy)` | |
+| `love.textinput(text)` | `Game::text_input(&str)` | |
+| `love.joystick.getJoysticks()` | `joystick::joysticks()` | Returns `Vec<Joystick>`. |
+| `joystick:isGamepadDown("a")` | `joystick.is_gamepad_down(GamepadButton::A)` | |
+| `joystick:getGamepadAxis("leftx")` | `joystick.gamepad_axis(GamepadAxis::LeftX)` | |
+| `love.gamepadpressed(joystick, button)` | `Game::gamepad_pressed(joystick, button)` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 

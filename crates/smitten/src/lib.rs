@@ -1,8 +1,8 @@
 //! Smitten is a LÖVE-style 2D game framework for Rust.
 //!
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
-//! running, the framework modules ([`graphics`], [`keyboard`], [`timer`],
-//! [`window`], [`event`]) can be called from anywhere on the main thread,
+//! running, the framework modules ([`graphics`], [`keyboard`], [`mouse`],
+//! [`joystick`], [`timer`], [`window`], [`event`]) can be called from anywhere on the main thread,
 //! the same way `love.graphics` and friends work in LÖVE.
 //!
 //! ```no_run
@@ -26,14 +26,18 @@
 //! ```
 
 mod context;
+mod input;
 
 pub mod event;
 pub mod graphics;
+pub mod joystick;
 pub mod keyboard;
+pub mod mouse;
 pub mod timer;
 pub mod window;
 
-pub use smitten_core::{Color, Config, Filter, Key};
+pub use joystick::Joystick;
+pub use smitten_core::{Color, Config, Filter, GamepadAxis, GamepadButton, Key, MouseButton};
 
 use smitten_core::backend::BackendEvent;
 
@@ -55,6 +59,41 @@ pub trait Game: Sized + 'static {
 
     /// Called when a key is released.
     fn key_released(&mut self, _key: Key) {}
+
+    /// Called with text the user typed, after the keyboard layout and any
+    /// input method have been applied. Use this for text fields, and
+    /// `key_pressed` for controls.
+    fn text_input(&mut self, _text: &str) {}
+
+    /// Called when the pointer moves to `(x, y)`, having moved `(dx, dy)`.
+    fn mouse_moved(&mut self, _x: f32, _y: f32, _dx: f32, _dy: f32) {}
+
+    /// Called when a mouse button goes down. `presses` is 2 for a double
+    /// click.
+    fn mouse_pressed(&mut self, _x: f32, _y: f32, _button: MouseButton, _presses: u32) {}
+
+    /// Called when a mouse button is released.
+    fn mouse_released(&mut self, _x: f32, _y: f32, _button: MouseButton, _presses: u32) {}
+
+    /// Called when the mouse wheel moves. Positive `dy` is away from the
+    /// user, which usually means scroll up.
+    fn wheel_moved(&mut self, _dx: f32, _dy: f32) {}
+
+    /// Called when a gamepad is plugged in, and once at startup for each
+    /// gamepad that was already connected.
+    fn joystick_added(&mut self, _joystick: Joystick) {}
+
+    /// Called when a gamepad is unplugged.
+    fn joystick_removed(&mut self, _joystick: Joystick) {}
+
+    /// Called when a gamepad button goes down.
+    fn gamepad_pressed(&mut self, _joystick: Joystick, _button: GamepadButton) {}
+
+    /// Called when a gamepad button is released.
+    fn gamepad_released(&mut self, _joystick: Joystick, _button: GamepadButton) {}
+
+    /// Called when a gamepad stick or trigger moves.
+    fn gamepad_axis(&mut self, _joystick: Joystick, _axis: GamepadAxis, _value: f32) {}
 
     /// Called when the window's drawable size changes, in pixels.
     fn resized(&mut self, _width: u32, _height: u32) {}
@@ -80,19 +119,8 @@ pub fn run<G: Game>(config: Config) {
     context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
 
     'running: loop {
-        while let Some(ev) = context::with(|ctx| ctx.backend.poll_event()) {
-            match ev {
-                BackendEvent::Quit => event::quit(),
-                BackendEvent::Resized { width, height } => game.resized(width, height),
-                BackendEvent::KeyDown { key, is_repeat } => {
-                    context::with(|ctx| ctx.keys_down.insert(key));
-                    game.key_pressed(key, is_repeat);
-                }
-                BackendEvent::KeyUp { key } => {
-                    context::with(|ctx| ctx.keys_down.remove(&key));
-                    game.key_released(key);
-                }
-            }
+        while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
+            dispatch(&mut game, event);
         }
 
         if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
@@ -112,4 +140,42 @@ pub fn run<G: Game>(config: Config) {
 
     drop(game);
     context::uninstall();
+}
+
+/// Records an event in the input state, then tells the game about it.
+fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
+    context::with(|ctx| ctx.input.apply(&event));
+
+    match event {
+        BackendEvent::Quit => event::quit(),
+        BackendEvent::Resized { width, height } => game.resized(width, height),
+        BackendEvent::KeyDown { key, is_repeat } => game.key_pressed(key, is_repeat),
+        BackendEvent::KeyUp { key } => game.key_released(key),
+        BackendEvent::TextInput(text) => game.text_input(&text),
+        BackendEvent::MouseMoved { x, y, dx, dy } => game.mouse_moved(x, y, dx, dy),
+        BackendEvent::MousePressed {
+            x,
+            y,
+            button,
+            presses,
+        } => game.mouse_pressed(x, y, button, presses),
+        BackendEvent::MouseReleased {
+            x,
+            y,
+            button,
+            presses,
+        } => game.mouse_released(x, y, button, presses),
+        BackendEvent::WheelMoved { dx, dy } => game.wheel_moved(dx, dy),
+        BackendEvent::JoystickAdded { id, .. } => game.joystick_added(Joystick::new(id)),
+        BackendEvent::JoystickRemoved { id } => game.joystick_removed(Joystick::new(id)),
+        BackendEvent::GamepadPressed { id, button } => {
+            game.gamepad_pressed(Joystick::new(id), button);
+        }
+        BackendEvent::GamepadReleased { id, button } => {
+            game.gamepad_released(Joystick::new(id), button);
+        }
+        BackendEvent::GamepadAxis { id, axis, value } => {
+            game.gamepad_axis(Joystick::new(id), axis, value);
+        }
+    }
 }
