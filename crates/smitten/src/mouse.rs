@@ -1,7 +1,8 @@
 //! Mouse state, the equivalent of `love.mouse`.
 //!
-//! Positions are in pixels from the top-left corner of the window, the
-//! same coordinates `graphics` draws in.
+//! Positions are in the same coordinates `graphics` draws to the screen
+//! in: units from the top-left corner of the window, or of the design
+//! area when the game has a design size.
 
 use crate::MouseButton;
 use crate::context;

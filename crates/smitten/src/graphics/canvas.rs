@@ -1,6 +1,9 @@
 use std::fmt;
 use std::ops::Deref;
 
+use smitten_core::Filter;
+use smitten_core::backend::Backend;
+
 use super::Image;
 use crate::context;
 
@@ -22,18 +25,70 @@ use crate::context;
 /// Cloning is cheap and gives another handle to the same canvas.
 #[derive(Clone)]
 pub struct Canvas {
+    /// Sized in units, so drawing the canvas covers the area it was
+    /// created for whatever its sharpness.
     image: Image,
+    pixels: (u32, u32),
+    scale: f32,
 }
 
 impl Canvas {
-    /// Creates a transparent canvas of `width` by `height` pixels.
+    /// Creates a transparent canvas of `width` by `height` units.
+    ///
+    /// It is made as sharp as the screen, so on a high-DPI display it
+    /// holds more pixels than units, as in LÖVE. Use
+    /// [`Canvas::with_dpi_scale`] to choose the sharpness instead.
     pub fn new(width: u32, height: u32) -> Result<Canvas, String> {
+        let scale = context::with(|ctx| ctx.gfx.screen.draw_scale());
+        Canvas::with_dpi_scale(width, height, scale)
+    }
+
+    /// Creates a transparent canvas of `width` by `height` units that
+    /// holds `dpi_scale` pixels for each unit in each direction. A scale
+    /// of 1.0 gives exactly `width` by `height` pixels.
+    pub fn with_dpi_scale(width: u32, height: u32, dpi_scale: f32) -> Result<Canvas, String> {
+        if !(dpi_scale.is_finite() && dpi_scale > 0.0) {
+            return Err(format!("the DPI scale must be positive, got {dpi_scale}"));
+        }
         context::with(|ctx| {
-            let texture = ctx.backend.create_render_target(width, height)?;
-            Ok(Canvas {
-                image: Image::from_texture(texture, width, height, ctx.gfx.default_filter),
-            })
+            Canvas::create(
+                &mut *ctx.backend,
+                width,
+                height,
+                dpi_scale,
+                ctx.gfx.default_filter,
+            )
         })
+    }
+
+    pub(crate) fn create(
+        backend: &mut dyn Backend,
+        width: u32,
+        height: u32,
+        scale: f32,
+        filter: Filter,
+    ) -> Result<Canvas, String> {
+        let pixels = (
+            (width as f32 * scale).ceil() as u32,
+            (height as f32 * scale).ceil() as u32,
+        );
+        let texture = backend.create_render_target(pixels.0, pixels.1)?;
+        Ok(Canvas {
+            image: Image::from_texture(texture, width, height, filter),
+            pixels,
+            scale,
+        })
+    }
+
+    /// How many pixels the canvas holds for each unit in each direction.
+    pub fn dpi_scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// The canvas's size in pixels as `(width, height)`.
+    /// [`Image::dimensions`] gives its size in units.
+    pub fn pixel_dimensions(&self) -> (u32, u32) {
+        self.pixels
     }
 
     /// Runs `draw` with this canvas as the target, then goes back to
@@ -59,6 +114,7 @@ impl fmt::Debug for Canvas {
         f.debug_struct("Canvas")
             .field("width", &self.image.width())
             .field("height", &self.image.height())
+            .field("dpi_scale", &self.scale)
             .field("filter", &self.image.filter())
             .finish()
     }

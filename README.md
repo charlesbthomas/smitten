@@ -60,6 +60,7 @@ cargo run --example shader
 cargo run --example stencil
 cargo run --example particles
 cargo run --example pong
+cargo run --example design
 cargo run --release --example benchmark
 ```
 
@@ -83,6 +84,34 @@ compiler.
 
 To link against an SDL3 that is already installed, build with
 `--no-default-features`.
+
+## Screen sizes and high-DPI displays
+
+Sizes and positions are measured in units, as in LÖVE. On an ordinary
+display a unit is one pixel. On a high-DPI display (a Retina screen, or
+Windows set to 150%) a unit covers more pixels, so an 800 by 600 game looks
+the same size everywhere and is simply drawn sharper. Text and canvases are
+made as sharp as the screen automatically. `graphics::pixel_dimensions()`
+and `window::dpi_scale()` give the real numbers when you need them, and
+`Config { dpi_scaling: false, .. }` switches to raw pixels.
+
+A game laid out for one fixed size can set a design size instead:
+
+```rust
+smitten::run::<MyGame>(Config {
+    resizable: true,
+    design_size: Some((320, 180)),
+    design_scaling: Scaling::PixelPerfect,
+    ..Config::default()
+});
+```
+
+The game then always draws in a 320 by 180 space and Smitten scales the
+picture to the window, with black bars where the shapes differ. The mouse
+position arrives in the same space. `Scaling::PixelPerfect` draws at
+exactly that many pixels and enlarges by whole numbers, for pixel art.
+`Scaling::Fit`, the default, scales smoothly and draws at the window's full
+resolution, for high-resolution art.
 
 ## Hot reload
 

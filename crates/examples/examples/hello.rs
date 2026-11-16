@@ -21,8 +21,10 @@ impl Game for Hello {
             self.hue_shift -= dt;
         }
         let (width, height) = graphics::dimensions();
+        let (pixel_width, pixel_height) = graphics::pixel_dimensions();
         window::set_title(&format!(
-            "Hello, Smitten ({width} x {height} pixels, display scale {}, {} FPS)",
+            "Hello, Smitten ({width} x {height} units, {pixel_width} x {pixel_height} pixels, \
+             display scale {}, {} FPS)",
             window::dpi_scale(),
             timer::fps()
         ));

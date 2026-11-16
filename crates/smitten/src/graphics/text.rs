@@ -63,19 +63,35 @@ impl Drop for Inner {
 
 impl Font {
     /// Creates a font from the bytes of a TrueType or OpenType file.
-    /// `size` is the height of the font in pixels.
+    /// `size` is the height of the font in units.
+    ///
+    /// Its glyphs are drawn as sharp as the screen, so text stays crisp on
+    /// a high-DPI display.
     pub fn from_bytes(bytes: &[u8], size: f32) -> Result<Font, FontError> {
+        let (filter, scale) =
+            context::with(|ctx| (ctx.gfx.default_filter, ctx.gfx.screen.draw_scale()));
+        Font::with_filter(bytes, size, filter, scale)
+    }
+
+    /// As [`Font::from_bytes`], with glyphs drawn at `dpi_scale` pixels
+    /// for each unit. Use a higher scale for text that will be enlarged.
+    pub fn with_dpi_scale(bytes: &[u8], size: f32, dpi_scale: f32) -> Result<Font, FontError> {
         let filter = context::with(|ctx| ctx.gfx.default_filter);
-        Font::with_filter(bytes, size, filter)
+        Font::with_filter(bytes, size, filter, dpi_scale)
     }
 
     /// As [`Font::from_bytes`], for use where the framework state is
-    /// already borrowed and the default filter is at hand.
-    pub(crate) fn with_filter(bytes: &[u8], size: f32, filter: Filter) -> Result<Font, FontError> {
-        let face = Face::new(bytes, size).map_err(FontError::Parse)?;
+    /// already borrowed and its settings are at hand.
+    pub(crate) fn with_filter(
+        bytes: &[u8],
+        size: f32,
+        filter: Filter,
+        scale: f32,
+    ) -> Result<Font, FontError> {
+        let face = Face::new(bytes, size, scale).map_err(FontError::Parse)?;
         Ok(Font {
             inner: Rc::new(Inner {
-                atlas: RefCell::new(Atlas::new(face.size)),
+                atlas: RefCell::new(Atlas::new(face.size * face.scale)),
                 face,
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
@@ -83,24 +99,29 @@ impl Font {
         })
     }
 
-    /// Creates the built-in font, Bitstream Vera Sans, at `size` pixels.
+    /// Creates the built-in font, Bitstream Vera Sans, at `size` units.
     pub fn default_at(size: f32) -> Font {
         Font::from_bytes(DEFAULT_FONT, size).expect("the built-in font is valid")
     }
 
     /// The built-in font at its default size, used when the game draws
     /// text without choosing a font.
-    pub(crate) fn fallback(filter: Filter) -> Font {
-        Font::with_filter(DEFAULT_FONT, DEFAULT_FONT_SIZE, filter)
+    pub(crate) fn fallback(filter: Filter, scale: f32) -> Font {
+        Font::with_filter(DEFAULT_FONT, DEFAULT_FONT_SIZE, filter, scale)
             .expect("the built-in font is valid")
     }
 
-    /// The size the font was created with, in pixels.
+    /// The size the font was created with, in units.
     pub fn size(&self) -> f32 {
         self.inner.face.size
     }
 
-    /// The height of one line of text in pixels, before line height scaling.
+    /// How many pixels the font's glyphs hold for each unit.
+    pub fn dpi_scale(&self) -> f32 {
+        self.inner.face.scale
+    }
+
+    /// The height of one line of text in units, before line height scaling.
     pub fn height(&self) -> f32 {
         self.inner.face.height
     }
@@ -126,14 +147,14 @@ impl Font {
         self.inner.line_height.set(line_height);
     }
 
-    /// The width in pixels of `text`. For several lines, the widest one.
+    /// The width in units of `text`. For several lines, the widest one.
     pub fn width(&self, text: &str) -> f32 {
         text.split('\n')
             .map(|line| self.inner.face.line_width(line))
             .fold(0.0, f32::max)
     }
 
-    /// Breaks `text` into lines no wider than `limit` pixels.
+    /// Breaks `text` into lines no wider than `limit` units.
     ///
     /// Returns the width of the widest line and the lines themselves.
     pub fn wrap(&self, text: &str, limit: f32) -> (f32, Vec<String>) {
@@ -171,15 +192,17 @@ impl Font {
             Some((limit, _)) => face.wrap(text, limit),
             None => text.split('\n').map(str::to_string).collect(),
         };
-        let line_advance = (face.height * self.inner.line_height.get()).round();
+        // Snapping to whole pixels keeps unscaled text sharp.
+        let snap = |value: f32| (value * face.scale).round() / face.scale;
+        let line_advance = snap(face.height * self.inner.line_height.get());
 
         for (index, line) in lines.iter().enumerate() {
             let start_x = match wrap {
-                Some((limit, Align::Center)) => ((limit - face.line_width(line)) / 2.0).round(),
-                Some((limit, Align::Right)) => (limit - face.line_width(line)).round(),
+                Some((limit, Align::Center)) => snap((limit - face.line_width(line)) / 2.0),
+                Some((limit, Align::Right)) => snap(limit - face.line_width(line)),
                 _ => 0.0,
             };
-            let baseline = index as f32 * line_advance + face.ascent.round();
+            let baseline = index as f32 * line_advance + snap(face.ascent);
 
             let mut pen = start_x;
             let mut previous = None;
@@ -188,8 +211,7 @@ impl Font {
                     pen += face.kerning(previous, character);
                 }
                 if let Some(glyph) = atlas.glyph(face, backend, character) {
-                    // Snapping to whole pixels keeps unscaled text sharp.
-                    let left = (pen + glyph.left).round();
+                    let left = snap(pen + glyph.left);
                     let top = baseline + glyph.top;
                     emit(
                         atlas.pages[glyph.page].texture,
@@ -257,16 +279,22 @@ impl std::error::Error for FontError {
 /// The measuring half of a font: metrics and line breaking, no GPU.
 struct Face {
     font: fontdue::Font,
+    /// In units. All the metrics here are in units too.
     size: f32,
+    /// Pixels per unit that glyphs are drawn at.
+    scale: f32,
     ascent: f32,
     descent: f32,
     height: f32,
 }
 
 impl Face {
-    fn new(bytes: &[u8], size: f32) -> Result<Self, String> {
+    fn new(bytes: &[u8], size: f32, scale: f32) -> Result<Self, String> {
         if !(size.is_finite() && size > 0.0) {
             return Err(format!("the font size must be positive, got {size}"));
+        }
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(format!("the DPI scale must be positive, got {scale}"));
         }
         let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
             .map_err(str::to_string)?;
@@ -278,6 +306,7 @@ impl Face {
         Ok(Self {
             font,
             size,
+            scale,
             ascent,
             descent,
             height: (ascent + descent).ceil(),
@@ -412,7 +441,7 @@ impl Atlas {
         if character.is_control() {
             return None;
         }
-        let (metrics, coverage) = face.font.rasterize(character, face.size);
+        let (metrics, coverage) = face.font.rasterize(character, face.size * face.scale);
         let (width, height) = (metrics.width as u32, metrics.height as u32);
         if width == 0 || height == 0 {
             return None;
@@ -438,11 +467,12 @@ impl Atlas {
                 (x + width) as f32 / size,
                 (y + height) as f32 / size,
             ],
-            width: width as f32,
-            height: height as f32,
-            left: metrics.xmin as f32,
+            // The bitmap is in pixels; the layout works in units.
+            width: width as f32 / face.scale,
+            height: height as f32 / face.scale,
+            left: metrics.xmin as f32 / face.scale,
             // fontdue measures up from the baseline to the bitmap's bottom.
-            top: -(metrics.ymin as f32 + height as f32),
+            top: -(metrics.ymin as f32 + height as f32) / face.scale,
         })
     }
 
@@ -494,7 +524,7 @@ mod tests {
     use super::*;
 
     fn face() -> Face {
-        Face::new(DEFAULT_FONT, 16.0).expect("the built-in font is valid")
+        Face::new(DEFAULT_FONT, 16.0, 1.0).expect("the built-in font is valid")
     }
 
     #[test]
@@ -508,9 +538,9 @@ mod tests {
 
     #[test]
     fn a_bad_size_or_bad_data_is_an_error() {
-        assert!(Face::new(DEFAULT_FONT, 0.0).is_err());
-        assert!(Face::new(DEFAULT_FONT, f32::NAN).is_err());
-        assert!(Face::new(b"not a font", 16.0).is_err());
+        assert!(Face::new(DEFAULT_FONT, 0.0, 1.0).is_err());
+        assert!(Face::new(DEFAULT_FONT, f32::NAN, 1.0).is_err());
+        assert!(Face::new(b"not a font", 16.0, 1.0).is_err());
     }
 
     #[test]
