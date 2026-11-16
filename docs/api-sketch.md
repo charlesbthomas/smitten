@@ -118,6 +118,10 @@ fn main() {
 | `joystick:isGamepadDown("a")` | `joystick.is_gamepad_down(GamepadButton::A)` | |
 | `joystick:getGamepadAxis("leftx")` | `joystick.gamepad_axis(GamepadAxis::LeftX)` | |
 | `love.gamepadpressed(joystick, button)` | `Game::gamepad_pressed(joystick, button)` | |
+| `love.math.random()` / `random(1, 6)` | `math::random()` / `math::random_int(1, 6)` | `random_range(min, max)` gives a fraction. Also `random_normal`, `chance`, `choose`, `shuffle`. |
+| `love.math.setRandomSeed(seed)` / `newRandomGenerator(seed)` | `math::set_random_seed(seed)` / `RandomGenerator::new(seed)` | A seed gives the same numbers on every platform. |
+| `love.math.noise(x, y)` | `math::noise2(x, y)` | `noise`, `noise2`, `noise3` by number of inputs. |
+| `love.math.triangulate(points)` / `isConvex(points)` | `math::triangulate(&points)` / `math::is_convex(&points)` | |
 | `love.window.setFullscreen(true)` / `getFullscreen()` | `window::set_fullscreen(true)` / `window::fullscreen()` | Desktop fullscreen. `Config::fullscreen` starts that way. |
 | `love.window.setIcon(imagedata)` | `window::set_icon("icon.png")` | Or `Config::icon`. `set_icon_rgba` takes raw pixels. |
 | `love.window.getDPIScale()` | `window::dpi_scale()` | Smitten measures everything in pixels, so multiply sizes by this yourself. |
