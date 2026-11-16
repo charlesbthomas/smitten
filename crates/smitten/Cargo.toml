@@ -25,3 +25,4 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 fontdue = "0.9"
 symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "mp3", "flac"] }
 rapier2d = { version = "0.36.1", optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }

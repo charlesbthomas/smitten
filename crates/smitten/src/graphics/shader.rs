@@ -85,12 +85,12 @@ impl Shader {
     /// which normally means inside the game's `assets` folder.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Shader, ShaderError> {
         let path = path.as_ref();
-        let file = crate::filesystem::resolve(path);
-        let source = std::fs::read_to_string(&file).map_err(|source| ShaderError::Read {
+        let source = crate::filesystem::read_string(path).map_err(|source| ShaderError::Read {
             path: path.to_path_buf(),
             source,
         })?;
         let shader = Shader::new(&source)?;
+        let file = crate::filesystem::resolve(path);
         context::with(|ctx| {
             ctx.reload
                 .watch(file, Asset::Shader(Rc::downgrade(&shader.inner)));

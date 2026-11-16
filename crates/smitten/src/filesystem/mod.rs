@@ -11,8 +11,14 @@
 //!
 //! Relative paths are looked up in the save directory first and then in
 //! the asset directory, as in LÖVE, so a saved file can override a shipped
-//! one. Writing always goes to the save directory. Image and font loading
-//! use the same lookup.
+//! one. Writing always goes to the save directory. Image, font, shader and
+//! sound loading use the same lookup.
+//!
+//! A game can also [`mount`] a zip archive or a directory, such as a
+//! downloaded level pack, so that the files inside it can be read like
+//! any others. Mounted files cannot be written.
+
+mod search;
 
 use std::collections::BTreeSet;
 use std::io::{self, Write};
@@ -22,11 +28,14 @@ use std::time::SystemTime;
 use crate::Config;
 use crate::context::{self, Context};
 
+use search::SearchPath;
+
 pub(crate) struct FilesystemState {
     asset_directory: PathBuf,
     identity: String,
     /// Looked up from the backend the first time it is needed.
     save_directory: Option<PathBuf>,
+    mounts: SearchPath,
 }
 
 impl FilesystemState {
@@ -35,6 +44,7 @@ impl FilesystemState {
             asset_directory: default_asset_directory(),
             identity: config.identity.clone().unwrap_or_else(default_identity),
             save_directory: None,
+            mounts: SearchPath::default(),
         }
     }
 }
@@ -84,20 +94,6 @@ fn confined(path: &Path) -> io::Result<&Path> {
     }
 }
 
-/// Picks the file a read of `path` refers to. Absolute paths are used as
-/// they are; relative ones prefer the save directory over the assets.
-fn locate(asset_directory: &Path, save_directory: Option<&Path>, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    if let Some(saved) = save_directory.map(|directory| directory.join(path))
-        && saved.exists()
-    {
-        return saved;
-    }
-    asset_directory.join(path)
-}
-
 fn save_directory_in(ctx: &mut Context) -> io::Result<PathBuf> {
     if let Some(directory) = &ctx.fs.save_directory {
         return Ok(directory.clone());
@@ -110,15 +106,65 @@ fn save_directory_in(ctx: &mut Context) -> io::Result<PathBuf> {
     Ok(directory)
 }
 
-/// The file a read of `path` refers to.
-pub(crate) fn resolve(path: &Path) -> PathBuf {
+/// The names in a relative path, or `None` if it could leave the
+/// directory it is looked up in. The top level, spelled as an empty path
+/// or a dot, has no names.
+fn names(path: &Path) -> Option<Vec<String>> {
+    path.components()
+        .filter(|part| !matches!(part, Component::CurDir))
+        .map(|part| match part {
+            Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How a path given to a read is looked up.
+enum Lookup {
+    /// An absolute path, or one that could escape: used on disk as it is,
+    /// the second joined to the asset directory.
+    Disk(PathBuf),
+    /// A relative path, looked up along the search path.
+    Search(Vec<String>),
+}
+
+fn lookup(ctx: &Context, path: &Path) -> Lookup {
+    if path.is_absolute() {
+        Lookup::Disk(path.to_path_buf())
+    } else if let Some(names) = names(path) {
+        Lookup::Search(names)
+    } else {
+        Lookup::Disk(ctx.fs.asset_directory.join(path))
+    }
+}
+
+/// Runs `f` with the search path, the save directory if there is one,
+/// and the asset directory.
+fn with_search<R>(f: impl FnOnce(&mut SearchPath, Option<&Path>, &Path) -> R) -> R {
     context::with(|ctx| {
-        // A relative path that could escape the save directory is only
-        // looked up among the assets.
-        let save_directory = confined(path)
-            .ok()
-            .and_then(|_| save_directory_in(ctx).ok());
-        locate(&ctx.fs.asset_directory, save_directory.as_deref(), path)
+        let save_directory = save_directory_in(ctx).ok();
+        let fs = &mut ctx.fs;
+        f(
+            &mut fs.mounts,
+            save_directory.as_deref(),
+            &fs.asset_directory,
+        )
+    })
+}
+
+/// The file on disk a read of `path` refers to, for watching it. A file
+/// inside a mounted archive gets a path that does not exist, and a file
+/// that is nowhere gets one in the asset directory.
+pub(crate) fn resolve(path: &Path) -> PathBuf {
+    let names = match context::with(|ctx| lookup(ctx, path)) {
+        Lookup::Disk(file) => return file,
+        Lookup::Search(names) => names,
+    };
+    with_search(|search, save, assets| {
+        search
+            .find(save, assets, &names)
+            .and_then(|found| search.disk_path(&found, &names))
+            .unwrap_or_else(|| assets.join(path))
     })
 }
 
@@ -159,17 +205,31 @@ pub fn save_directory() -> io::Result<PathBuf> {
 
 /// Reads a whole file.
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
-    std::fs::read(resolve(path.as_ref()))
+    let path = path.as_ref();
+    let names = match context::with(|ctx| lookup(ctx, path)) {
+        Lookup::Disk(file) => return std::fs::read(file),
+        Lookup::Search(names) => names,
+    };
+    with_search(
+        |search, save, assets| match search.find(save, assets, &names) {
+            Some(found) => search.read(&found),
+            None => Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} was not found", path.display()),
+            )),
+        },
+    )
 }
 
 /// Reads a whole file as UTF-8 text.
 pub fn read_string(path: impl AsRef<Path>) -> io::Result<String> {
-    std::fs::read_to_string(resolve(path.as_ref()))
+    String::from_utf8(read(path)?)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 /// Returns whether a file or directory exists at `path`.
 pub fn exists(path: impl AsRef<Path>) -> bool {
-    resolve(path.as_ref()).exists()
+    info(path).is_some()
 }
 
 /// What kind of thing a path names.
@@ -212,9 +272,14 @@ fn info_of(file: &Path) -> Option<FileInfo> {
     })
 }
 
-/// Returns what is at `path`, or `None` if nothing is.
+/// Returns what is at `path`, or `None` if nothing is. A file inside a
+/// mounted zip archive has no modification time.
 pub fn info(path: impl AsRef<Path>) -> Option<FileInfo> {
-    info_of(&resolve(path.as_ref()))
+    let names = match context::with(|ctx| lookup(ctx, path.as_ref())) {
+        Lookup::Disk(file) => return info_of(&file),
+        Lookup::Search(names) => names,
+    };
+    with_search(|search, save, assets| Some(search.find(save, assets, &names)?.info))
 }
 
 /// Returns whether `path` names a file.
@@ -227,47 +292,85 @@ pub fn is_directory(path: impl AsRef<Path>) -> bool {
     info(path).is_some_and(|info| info.kind == FileType::Directory)
 }
 
-/// The names in `path` under each of `roots`, merged and sorted. A root
-/// without that directory adds nothing.
-fn list_in<'a>(roots: impl IntoIterator<Item = &'a Path>, path: &Path) -> Vec<String> {
-    let mut names = BTreeSet::new();
-    for root in roots {
-        let Ok(entries) = std::fs::read_dir(root.join(path)) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            names.insert(entry.file_name().to_string_lossy().into_owned());
-        }
-    }
-    names.into_iter().collect()
-}
-
 /// Lists the files and directories inside `path`, by name and sorted.
 ///
-/// As in LÖVE, the save directory and the asset directory are looked at
-/// together, so the list has what the game shipped with and what it has
-/// saved. An empty path lists the top level. A directory that does not
-/// exist gives an empty list.
+/// As in LÖVE, the save directory, the asset directory and anything
+/// mounted are looked at together, so the list has what the game shipped
+/// with and what it has saved. An empty path lists the top level. A
+/// directory that does not exist gives an empty list.
 pub fn directory_items(path: impl AsRef<Path>) -> Vec<String> {
     let path = path.as_ref();
     if path.is_absolute() {
-        return list_in([Path::new("")], path);
+        let mut names = BTreeSet::new();
+        search::list_directory(path, &mut names);
+        return names.into_iter().collect();
     }
-    // The top level is spelled as an empty path or a dot.
-    let top_level = path
-        .components()
-        .all(|part| matches!(part, Component::CurDir));
-    if !top_level && confined(path).is_err() {
+    let Some(names) = names(path) else {
         return Vec::new();
+    };
+    with_search(|search, save, assets| search.list(save, assets, &names))
+}
+
+/// Makes the files in a zip archive, or a directory, readable as if they
+/// were the game's own, the equivalent of `love.filesystem.mount`.
+///
+/// `archive` is looked up in the save directory and then the asset
+/// directory, or used as it is if absolute. Its contents appear under
+/// `mount_point`, or at the top level if that is empty. They are looked
+/// at before the game's other files, so an archive can replace a file the
+/// game shipped with; [`mount_after`] puts them after instead. Mounting
+/// an archive that is already mounted moves it.
+///
+/// ```no_run
+/// use smitten::filesystem;
+///
+/// filesystem::mount("level-pack.zip", "levels").expect("the pack is there");
+/// let first = filesystem::read_string("levels/1.txt").expect("it has a first level");
+/// ```
+pub fn mount(archive: impl AsRef<Path>, mount_point: impl AsRef<Path>) -> io::Result<()> {
+    add_mount(archive.as_ref(), mount_point.as_ref(), false)
+}
+
+/// Like [`mount`], but the archive is looked at after the game's other
+/// files, so it only adds files and never replaces one.
+pub fn mount_after(archive: impl AsRef<Path>, mount_point: impl AsRef<Path>) -> io::Result<()> {
+    add_mount(archive.as_ref(), mount_point.as_ref(), true)
+}
+
+/// The archive or directory on disk that `archive` names.
+fn mounted_file(archive: &Path) -> io::Result<PathBuf> {
+    if archive.is_absolute() {
+        return Ok(archive.to_path_buf());
     }
+    confined(archive)?;
     context::with(|ctx| {
-        let save_directory = save_directory_in(ctx).ok();
-        let roots = save_directory
-            .as_deref()
-            .into_iter()
-            .chain([ctx.fs.asset_directory.as_path()]);
-        list_in(roots, path)
+        if let Ok(saves) = save_directory_in(ctx)
+            && saves.join(archive).exists()
+        {
+            return Ok(saves.join(archive));
+        }
+        Ok(ctx.fs.asset_directory.join(archive))
     })
+}
+
+fn add_mount(archive: &Path, mount_point: &Path, last: bool) -> io::Result<()> {
+    let point = names(mount_point).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a relative mount point", mount_point.display()),
+        )
+    })?;
+    let file = mounted_file(archive)?;
+    context::with(|ctx| ctx.fs.mounts.add(file, point, last))
+}
+
+/// Stops reading from an archive given to [`mount`], the equivalent of
+/// `love.filesystem.unmount`. Returns whether it was mounted.
+pub fn unmount(archive: impl AsRef<Path>) -> bool {
+    let Ok(file) = mounted_file(archive.as_ref()) else {
+        return false;
+    };
+    context::with(|ctx| ctx.fs.mounts.remove(&file))
 }
 
 /// Reads a text file as a list of its lines, without the line endings.
@@ -319,10 +422,10 @@ mod tests {
     use super::*;
 
     /// A fresh directory under the system temp folder, removed on drop.
-    struct TempDir(PathBuf);
+    pub(crate) struct TempDir(pub PathBuf);
 
     impl TempDir {
-        fn new(name: &str) -> Self {
+        pub(crate) fn new(name: &str) -> Self {
             let path =
                 std::env::temp_dir().join(format!("smitten-test-{}-{name}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
@@ -353,14 +456,22 @@ mod tests {
         assert!(confined(Path::new(".")).is_err());
     }
 
+    fn find(assets: &Path, saves: &Path, path: &str) -> Option<search::Found> {
+        let names = names(Path::new(path)).expect("a relative path");
+        SearchPath::default().find(Some(saves), assets, &names)
+    }
+
     #[test]
     fn a_file_only_in_assets_is_read_from_assets() {
         let assets = TempDir::new("assets-only");
         let saves = TempDir::new("assets-only-saves");
         std::fs::write(assets.0.join("level.txt"), "shipped").unwrap();
 
-        let found = locate(&assets.0, Some(&saves.0), Path::new("level.txt"));
-        assert_eq!(found, assets.0.join("level.txt"));
+        let found = find(&assets.0, &saves.0, "level.txt").unwrap();
+        assert_eq!(
+            found.location,
+            search::Location::Disk(assets.0.join("level.txt"))
+        );
     }
 
     #[test]
@@ -370,15 +481,25 @@ mod tests {
         std::fs::write(assets.0.join("level.txt"), "shipped").unwrap();
         std::fs::write(saves.0.join("level.txt"), "edited").unwrap();
 
-        let found = locate(&assets.0, Some(&saves.0), Path::new("level.txt"));
-        assert_eq!(std::fs::read_to_string(found).unwrap(), "edited");
+        let found = find(&assets.0, &saves.0, "./level.txt").unwrap();
+        let bytes = SearchPath::default().read(&found).unwrap();
+        assert_eq!(bytes, b"edited");
     }
 
     #[test]
-    fn a_missing_file_points_into_assets() {
+    fn a_missing_file_is_not_found() {
         let assets = TempDir::new("missing");
-        let found = locate(&assets.0, None, Path::new("nope.png"));
-        assert_eq!(found, assets.0.join("nope.png"));
+        let saves = TempDir::new("missing-saves");
+        assert!(find(&assets.0, &saves.0, "nope.png").is_none());
+    }
+
+    #[test]
+    fn names_reject_paths_that_could_escape() {
+        assert_eq!(names(Path::new("a/./b")).unwrap(), ["a", "b"]);
+        assert!(names(Path::new("")).unwrap().is_empty());
+        assert!(names(Path::new(".")).unwrap().is_empty());
+        assert!(names(Path::new("a/../b")).is_none());
+        assert!(names(&std::env::temp_dir()).is_none());
     }
 
     #[test]
@@ -392,13 +513,12 @@ mod tests {
         std::fs::write(saves.0.join("levels/a.txt"), "").unwrap();
         std::fs::write(saves.0.join("levels/custom.txt"), "").unwrap();
 
-        let roots = [saves.0.as_path(), assets.0.as_path()];
-        assert_eq!(
-            list_in(roots, Path::new("levels")),
-            ["a.txt", "b.txt", "custom.txt"]
-        );
-        assert_eq!(list_in(roots, Path::new("")), ["levels"]);
-        assert!(list_in(roots, Path::new("nowhere")).is_empty());
+        let search = SearchPath::default();
+        let list =
+            |path: &str| search.list(Some(&saves.0), &assets.0, &names(Path::new(path)).unwrap());
+        assert_eq!(list("levels"), ["a.txt", "b.txt", "custom.txt"]);
+        assert_eq!(list(""), ["levels"]);
+        assert!(list("nowhere").is_empty());
     }
 
     #[test]
@@ -414,12 +534,5 @@ mod tests {
         assert_eq!((folder.kind, folder.size), (FileType::Directory, 0));
 
         assert!(info_of(&directory.0.join("missing.txt")).is_none());
-    }
-
-    #[test]
-    fn absolute_paths_are_used_as_given() {
-        let assets = TempDir::new("absolute");
-        let elsewhere = std::env::temp_dir().join("somewhere-else.png");
-        assert_eq!(locate(&assets.0, None, &elsewhere), elsewhere);
     }
 }
