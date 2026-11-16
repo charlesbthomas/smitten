@@ -2,7 +2,7 @@
 //! the draw order allows.
 
 use smitten_core::backend::{DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex};
-use smitten_core::{BlendMode, Color, Filter};
+use smitten_core::{BlendMode, Color, Filter, StencilMode};
 
 #[derive(Default)]
 pub(crate) struct Batch {
@@ -14,6 +14,8 @@ pub(crate) struct Batch {
     /// Applied to everything queued from now on.
     pub blend: BlendMode,
     pub scissor: Option<Scissor>,
+    pub stencil: StencilMode,
+    pub stencil_value: u8,
     /// Uniform data for the queued calls that use a custom shader.
     pub uniforms: Vec<u8>,
     shader: Option<ShaderId>,
@@ -67,6 +69,19 @@ impl Batch {
         self.passes.push(Pass {
             target: self.target,
             clear: Some(color),
+            clear_stencil: true,
+            first_call: self.calls.len() as u32,
+            call_count: 0,
+        });
+    }
+
+    /// Resets the current target's stencil values to zero, keeping its
+    /// picture.
+    pub fn clear_stencil(&mut self) {
+        self.passes.push(Pass {
+            target: self.target,
+            clear: None,
+            clear_stencil: true,
             first_call: self.calls.len() as u32,
             call_count: 0,
         });
@@ -99,6 +114,7 @@ impl Batch {
             self.passes.push(Pass {
                 target: self.target,
                 clear: None,
+                clear_stencil: false,
                 first_call: self.calls.len() as u32,
                 call_count: 0,
             });
@@ -127,6 +143,8 @@ impl Batch {
                     && last.filter == filter
                     && last.blend == self.blend
                     && last.scissor == self.scissor
+                    && last.stencil == self.stencil
+                    && last.stencil_value == self.stencil_value
                     && last.shader == self.shader
                     && last.uniform_offset == uniform_offset =>
             {
@@ -138,6 +156,8 @@ impl Batch {
                     filter,
                     blend: self.blend,
                     scissor: self.scissor,
+                    stencil: self.stencil,
+                    stencil_value: self.stencil_value,
                     shader: self.shader,
                     uniform_offset,
                     first_vertex,
@@ -360,6 +380,34 @@ mod tests {
         assert_eq!(batch.calls[0].shader, Some(ShaderId(3)));
         assert_eq!(batch.calls[0].uniform_offset, 0);
         assert_eq!(batch.uniforms, [1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn stencil_state_starts_a_new_call_and_clearing_it_a_new_pass() {
+        use smitten_core::{CompareMode, StencilAction};
+
+        let mut batch = Batch::default();
+        batch.clear_target(Color::BLACK);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.clear_stencil();
+        batch.stencil = StencilMode::Write(StencilAction::Replace);
+        batch.stencil_value = 1;
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.stencil = StencilMode::Test(CompareMode::Equal);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.stencil_value = 2;
+        batch.push(None, Filter::Linear, &TRIANGLE);
+
+        let passes: Vec<_> = batch
+            .passes
+            .iter()
+            .map(|pass| (pass.clear.is_some(), pass.clear_stencil, pass.call_count))
+            .collect();
+        // Clearing the stencil keeps the picture drawn so far.
+        assert_eq!(passes, [(true, true, 1), (false, true, 3)]);
+        let counts: Vec<_> = batch.calls.iter().map(|call| call.vertex_count).collect();
+        assert_eq!(counts, [3, 3, 6, 3]);
     }
 
     #[test]

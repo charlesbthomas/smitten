@@ -11,7 +11,9 @@
 
 use std::path::PathBuf;
 
-use crate::{BlendMode, Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
+use crate::{
+    BlendMode, Color, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, StencilMode,
+};
 
 /// Something that happened on the platform since the last poll.
 #[derive(Debug, Clone, PartialEq)]
@@ -169,6 +171,10 @@ pub struct DrawCall {
     /// Pixels outside this rectangle are left untouched. `None` draws
     /// anywhere on the target.
     pub scissor: Option<Scissor>,
+    pub stencil: StencilMode,
+    /// The value written by [`StencilMode::Write`] with a replace action,
+    /// or compared against by [`StencilMode::Test`].
+    pub stencil_value: u8,
     /// The custom shader to draw with, or `None` for the built-in one.
     pub shader: Option<ShaderId>,
     /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its
@@ -189,6 +195,9 @@ pub struct Pass {
     /// The color to fill the target with first. `None` keeps what the
     /// target already holds and draws on top of it.
     pub clear: Option<Color>,
+    /// Whether to reset the target's stencil values to zero first. Each
+    /// target has its own stencil values, kept until cleared.
+    pub clear_stencil: bool,
     /// Index into [`Frame::calls`] of the first call.
     pub first_call: u32,
     pub call_count: u32,
