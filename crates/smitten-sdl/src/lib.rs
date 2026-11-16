@@ -389,6 +389,14 @@ impl Backend for SdlBackend {
         self.renderer.present(self.window, frame);
     }
 
+    fn render_offscreen(&mut self, frame: &Frame) {
+        self.renderer.render_offscreen(frame);
+    }
+
+    fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String> {
+        self.renderer.read_texture(texture)
+    }
+
     fn ticks_ns(&self) -> u64 {
         // SAFETY: no preconditions once SDL is initialized.
         unsafe { SDL_GetTicksNS() }

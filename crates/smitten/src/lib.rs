@@ -164,11 +164,16 @@ pub fn run<G: Game>(config: Config) {
 
             context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
             game.draw();
-            context::with(|ctx| {
+            let screenshots = context::with(|ctx| {
                 ctx.gfx.finish_frame();
+                let screenshots = ctx.gfx.take_screenshots(&mut *ctx.backend);
                 ctx.backend.present(&ctx.gfx.frame());
                 ctx.gfx.end_frame();
+                screenshots
             });
+            for (callback, picture) in screenshots {
+                callback(picture);
+            }
         }
     });
 

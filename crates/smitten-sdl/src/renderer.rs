@@ -550,7 +550,90 @@ impl Renderer {
         true
     }
 
+    /// Draws `frame` and shows it in `window`.
     pub fn present(&mut self, window: *mut SDL_Window, frame: &Frame) {
+        self.render(Some(window), frame);
+    }
+
+    /// Draws the passes of `frame` that go to render targets. Passes that
+    /// go to the screen are left out.
+    pub fn render_offscreen(&mut self, frame: &Frame) {
+        self.render(None, frame);
+    }
+
+    /// Copies a texture's pixels back from the GPU: four bytes each (red,
+    /// green, blue, alpha), in rows from the top. Waits for the GPU to
+    /// finish what it was given first.
+    pub fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String> {
+        let Some(&source) = self.textures.get(&texture.0) else {
+            return Err("the texture no longer exists".to_string());
+        };
+        let length = source.width as usize * source.height as usize * 4;
+        let size = u32::try_from(length).map_err(|_| "the image is too large".to_string())?;
+        // SAFETY: the transfer buffer is `size` bytes, exactly what the
+        // texture holds, it is only read once the GPU has filled it, and it
+        // is released on every path.
+        unsafe {
+            let transfer = SDL_CreateGPUTransferBuffer(
+                self.device,
+                &SDL_GPUTransferBufferCreateInfo {
+                    usage: SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+                    size,
+                    ..Default::default()
+                },
+            );
+            let commands = if transfer.is_null() {
+                ptr::null_mut()
+            } else {
+                SDL_AcquireGPUCommandBuffer(self.device)
+            };
+            if commands.is_null() {
+                let message = format!("could not read a texture: {}", sdl_error());
+                SDL_ReleaseGPUTransferBuffer(self.device, transfer);
+                return Err(message);
+            }
+            let pass = SDL_BeginGPUCopyPass(commands);
+            SDL_DownloadFromGPUTexture(
+                pass,
+                &SDL_GPUTextureRegion {
+                    texture: source.handle,
+                    w: source.width,
+                    h: source.height,
+                    d: 1,
+                    ..Default::default()
+                },
+                &SDL_GPUTextureTransferInfo {
+                    transfer_buffer: transfer,
+                    offset: 0,
+                    pixels_per_row: source.width,
+                    rows_per_layer: source.height,
+                },
+            );
+            SDL_EndGPUCopyPass(pass);
+            let fence = SDL_SubmitGPUCommandBufferAndAcquireFence(commands);
+            let waited = !fence.is_null() && SDL_WaitForGPUFences(self.device, true, &fence, 1);
+            SDL_ReleaseGPUFence(self.device, fence);
+            let mapped = if waited {
+                SDL_MapGPUTransferBuffer(self.device, transfer, false)
+            } else {
+                ptr::null_mut()
+            };
+            if mapped.is_null() {
+                let message = format!("could not read a texture: {}", sdl_error());
+                SDL_ReleaseGPUTransferBuffer(self.device, transfer);
+                return Err(message);
+            }
+            let mut pixels = vec![0u8; length];
+            ptr::copy_nonoverlapping(mapped.cast::<u8>(), pixels.as_mut_ptr(), length);
+            SDL_UnmapGPUTransferBuffer(self.device, transfer);
+            SDL_ReleaseGPUTransferBuffer(self.device, transfer);
+            Ok((source.width, source.height, pixels))
+        }
+    }
+
+    /// Draws `frame`, to `window` and to render targets, or with no window
+    /// to render targets only.
+    fn render(&mut self, window: Option<*mut SDL_Window>, frame: &Frame) {
         // SAFETY: passes are begun and ended in the order SDL requires, and
         // the command buffer is always submitted.
         unsafe {
@@ -567,16 +650,18 @@ impl Renderer {
 
             let mut swapchain: *mut SDL_GPUTexture = ptr::null_mut();
             let (mut screen_width, mut screen_height) = (0u32, 0u32);
-            let acquired = SDL_WaitAndAcquireGPUSwapchainTexture(
-                commands,
-                window,
-                &mut swapchain,
-                &mut screen_width,
-                &mut screen_height,
-            );
-            // The texture is null while the window is minimized.
-            if !acquired {
-                swapchain = ptr::null_mut();
+            if let Some(window) = window {
+                let acquired = SDL_WaitAndAcquireGPUSwapchainTexture(
+                    commands,
+                    window,
+                    &mut swapchain,
+                    &mut screen_width,
+                    &mut screen_height,
+                );
+                // The texture is null while the window is minimized.
+                if !acquired {
+                    swapchain = ptr::null_mut();
+                }
             }
             if !swapchain.is_null() && screen_width > 0 && screen_height > 0 {
                 self.resize_screen_stencil(screen_width, screen_height);
@@ -588,6 +673,7 @@ impl Renderer {
                 // New stencil memory holds garbage, so its first pass
                 // clears it whatever the pass asked for.
                 let (texture, stencil, fresh, width, height) = match pass.target {
+                    None if window.is_none() => continue,
                     None => (
                         swapchain,
                         self.screen_stencil,

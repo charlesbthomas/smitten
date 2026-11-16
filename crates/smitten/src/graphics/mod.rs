@@ -26,7 +26,7 @@ mod transform;
 
 use std::path::Path;
 
-use smitten_core::backend::{Backend, Frame, Scissor, TextureId, Vertex};
+use smitten_core::backend::{Backend, Frame, Pass, Scissor, TextureId, Vertex};
 
 use crate::context;
 use smitten_core::StencilMode;
@@ -96,7 +96,12 @@ pub(crate) struct GraphicsState {
     surface: Option<Canvas>,
     /// The scissor the game asked for, in units of the current target.
     scissor: Option<(i32, i32, u32, u32)>,
+    /// Who wants a copy of the frame being drawn.
+    screenshots: Vec<ScreenshotCallback>,
 }
+
+/// Called with the finished frame by [`capture_screenshot`].
+pub(crate) type ScreenshotCallback = Box<dyn FnOnce(ImageData)>;
 
 impl Default for GraphicsState {
     fn default() -> Self {
@@ -116,6 +121,7 @@ impl Default for GraphicsState {
             screen: Screen::default(),
             surface: None,
             scissor: None,
+            screenshots: Vec::new(),
         }
     }
 }
@@ -241,6 +247,81 @@ impl GraphicsState {
     ) {
         let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
         self.push_text(backend, text, wrap, &local);
+    }
+
+    /// Draws what is queued for canvases now, ahead of the rest of the
+    /// frame, so that their pixels are up to date.
+    fn flush_canvases(&mut self, backend: &mut dyn Backend) {
+        if self.batch.passes.iter().any(|pass| pass.target.is_some()) {
+            backend.render_offscreen(&self.frame());
+            self.batch.forget_canvas_passes();
+        }
+    }
+
+    /// Copies a canvas's pixels back from the GPU.
+    pub(crate) fn read_canvas(
+        &mut self,
+        backend: &mut dyn Backend,
+        canvas: &Canvas,
+    ) -> Result<ImageData, String> {
+        self.flush_canvases(backend);
+        let (width, height, pixels) = backend.read_texture(canvas.texture())?;
+        Ok(ImageData::from_rgba(width, height, pixels))
+    }
+
+    /// Called after `finish_frame`: hands a copy of the frame to everyone
+    /// who asked for a screenshot. Returns the callbacks to call, each
+    /// with its copy, once the framework state is no longer borrowed.
+    pub(crate) fn take_screenshots(
+        &mut self,
+        backend: &mut dyn Backend,
+    ) -> Vec<(ScreenshotCallback, ImageData)> {
+        if self.screenshots.is_empty() {
+            return Vec::new();
+        }
+        let callbacks = std::mem::take(&mut self.screenshots);
+        match self.read_screen(backend) {
+            Ok(data) => callbacks
+                .into_iter()
+                .map(|callback| (callback, data.clone()))
+                .collect(),
+            Err(message) => {
+                eprintln!("smitten: could not take a screenshot: {message}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Draws the queued frame into a texture instead of the window and
+    /// copies it back. The window's own pixels cannot be read, and this
+    /// way the picture is the same whatever is covering the window.
+    fn read_screen(&mut self, backend: &mut dyn Backend) -> Result<ImageData, String> {
+        let (width, height) = backend.size_in_pixels();
+        let target = backend.create_render_target(width, height)?;
+        let passes: Vec<Pass> = self
+            .batch
+            .passes
+            .iter()
+            .map(|pass| Pass {
+                target: pass.target.or(Some(target)),
+                ..*pass
+            })
+            .collect();
+        backend.render_offscreen(&Frame {
+            passes: &passes,
+            ..self.frame()
+        });
+        let result = backend.read_texture(target);
+        backend.destroy_texture(target);
+        // The canvases have had their draws; only the screen's are left
+        // for the window.
+        self.batch.forget_canvas_passes();
+        let (width, height, mut pixels) = result?;
+        // The window is opaque whatever was drawn to it.
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        Ok(ImageData::from_rgba(width, height, pixels))
     }
 
     /// Called once the frame has been handed to the backend.
@@ -576,6 +657,43 @@ pub fn set_canvas(canvas: Option<&Canvas>) {
 /// Returns the canvas being drawn to, or `None` for the screen.
 pub fn canvas() -> Option<Canvas> {
     context::with(|ctx| ctx.gfx.canvas.clone())
+}
+
+/// Takes a picture of the window once the current frame has been drawn,
+/// and calls `callback` with it, as LÖVE's `captureScreenshot` does.
+///
+/// The picture is the whole window in pixels, including any bars around a
+/// design size, and is fully opaque. `callback` runs at the end of the
+/// frame, after `draw` returns. Called outside `draw`, the picture is of
+/// the next frame.
+///
+/// Reading pixels back waits for the GPU, so this is too slow to do
+/// every frame.
+///
+/// ```no_run
+/// use smitten::graphics;
+///
+/// graphics::capture_screenshot(|picture| {
+///     picture.save("screenshot.png").expect("could not save the screenshot");
+/// });
+/// ```
+pub fn capture_screenshot(callback: impl FnOnce(ImageData) + 'static) {
+    context::with(|ctx| ctx.gfx.screenshots.push(Box::new(callback)));
+}
+
+/// Takes a picture of the window once the current frame has been drawn
+/// and writes it as a PNG file in the save directory. A failure to write
+/// the file is reported on the terminal. See [`capture_screenshot`].
+pub fn save_screenshot(path: impl AsRef<Path>) {
+    let path = path.as_ref().to_path_buf();
+    capture_screenshot(move |picture| {
+        if let Err(error) = picture.save(&path) {
+            eprintln!(
+                "smitten: could not save the screenshot {}: {error}",
+                path.display()
+            );
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
