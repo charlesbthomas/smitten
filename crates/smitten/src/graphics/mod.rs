@@ -13,7 +13,7 @@
 
 mod batch;
 mod canvas;
-mod image;
+pub(crate) mod image;
 mod particles;
 mod shader;
 mod shapes;

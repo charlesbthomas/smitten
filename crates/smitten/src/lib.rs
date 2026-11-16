@@ -120,6 +120,9 @@ pub fn run<G: Game>(config: Config) {
         Err(message) => panic!("smitten: could not start: {message}"),
     };
     context::install(Box::new(backend), &config);
+    if let Some(icon) = &config.icon {
+        window::set_icon(icon);
+    }
 
     let mut game = G::load();
     context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));

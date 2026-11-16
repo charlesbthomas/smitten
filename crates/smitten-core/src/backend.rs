@@ -299,4 +299,19 @@ pub trait Backend {
 
     /// Sets the window title.
     fn set_title(&mut self, title: &str);
+
+    /// Makes the window fill the whole screen, or puts it back. A
+    /// [`BackendEvent::Resized`] follows if the drawable size changed.
+    fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String>;
+
+    /// Whether the window currently fills the whole screen.
+    fn is_fullscreen(&self) -> bool;
+
+    /// Sets the window's icon. `rgba` is laid out as in `create_texture`.
+    fn set_icon(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), String>;
+
+    /// How much larger than normal the user's display settings ask things
+    /// to be drawn: 1.0 on an ordinary display, 2.0 on one with twice the
+    /// pixels in each direction.
+    fn dpi_scale(&self) -> f32;
 }

@@ -28,7 +28,7 @@ fn main() {
 
 ## Status
 
-Early. A window, the game loop, keyboard, mouse and gamepad input, timing,
+Early. A window (with fullscreen and an icon), the game loop, keyboard, mouse and gamepad input, timing,
 shapes, images, text, the transform stack, canvases, blend modes, the
 scissor, the stencil, particle systems, sprite batches, save files and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
 streamed) work, as do custom shaders written in WGSL. Rendering currently

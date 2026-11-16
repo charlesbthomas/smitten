@@ -154,6 +154,20 @@ fn decode(bytes: &[u8]) -> Result<::image::RgbaImage, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Reads an image file into raw pixels: width, height, and four bytes
+/// (red, green, blue, alpha) for each pixel.
+pub(crate) fn load_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), ImageError> {
+    let bytes = crate::filesystem::read(path).map_err(|source| ImageError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let decoded = decode(&bytes).map_err(|message| ImageError::Decode {
+        path: path.to_path_buf(),
+        message,
+    })?;
+    Ok((decoded.width(), decoded.height(), decoded.into_raw()))
+}
+
 pub(crate) fn load(path: &Path) -> Result<Image, ImageError> {
     let file = crate::filesystem::resolve(path);
     let bytes = std::fs::read(&file).map_err(|source| ImageError::Read {
