@@ -76,6 +76,16 @@ compiler.
 To link against an SDL3 that is already installed, build with
 `--no-default-features`.
 
+## Hot reload
+
+Under `cargo run`, an image loaded with `graphics::new_image` or a shader
+loaded with `Shader::from_file` is loaded again when its file is saved, so
+edits show up in the running game. A shader with a mistake in it prints
+the error and the game keeps using the last version that worked.
+
+This is on in debug builds and off in release builds. Set
+`Config::hot_reload` to choose. Fonts and sounds are not reloaded yet.
+
 ## Releasing a game
 
 `cargo smitten package` builds a game in release mode and gathers what a
