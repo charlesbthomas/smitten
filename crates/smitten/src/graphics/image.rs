@@ -96,6 +96,32 @@ impl Image {
         self.inner.filter.set(filter);
     }
 
+    /// Copies pixels from memory over part of the image, with their
+    /// top-left corner at `(x, y)`. The equivalent of
+    /// `Image:replacePixels`. Every handle to the image changes.
+    ///
+    /// The pixels must fit inside the image.
+    pub fn replace_pixels(
+        &self,
+        data: &super::ImageData,
+        x: u32,
+        y: u32,
+    ) -> Result<(), ImageError> {
+        let (width, height) = data.dimensions();
+        if x + width > self.width() || y + height > self.height() {
+            return Err(ImageError::Invalid(format!(
+                "{width} by {height} pixels at ({x}, {y}) do not fit in a {} by {} image",
+                self.width(),
+                self.height()
+            )));
+        }
+        context::with(|ctx| {
+            ctx.backend
+                .update_texture(self.texture(), x, y, width, height, data.as_bytes())
+                .map_err(ImageError::Upload)
+        })
+    }
+
     pub(crate) fn texture(&self) -> TextureId {
         self.inner.texture.get()
     }
@@ -123,6 +149,8 @@ pub enum ImageError {
     Decode { path: PathBuf, message: String },
     /// The pixels could not be sent to the GPU.
     Upload(String),
+    /// Data that did not come from a file could not be decoded or encoded.
+    Invalid(String),
 }
 
 impl fmt::Display for ImageError {
@@ -135,6 +163,7 @@ impl fmt::Display for ImageError {
                 write!(f, "could not decode image {}: {message}", path.display())
             }
             ImageError::Upload(message) => write!(f, "could not create image: {message}"),
+            ImageError::Invalid(message) => write!(f, "could not use image data: {message}"),
         }
     }
 }

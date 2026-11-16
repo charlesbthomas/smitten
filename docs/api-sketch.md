@@ -154,6 +154,10 @@ fn main() {
 | `love.filesystem.getDirectoryItems(dir)` | `filesystem::directory_items(dir)` | Sorted. Saved and shipped files together, as in LÖVE. |
 | `love.filesystem.getInfo(path)` | `filesystem::info(path)` | `Option<FileInfo>`. Also `is_file` and `is_directory`. |
 | `love.filesystem.lines(path)` | `filesystem::lines(path)` | |
+| `love.image.newImageData(w, h)` / `newImageData(path)` | `ImageData::new(w, h)` / `graphics::new_image_data(path)` | |
+| `data:getPixel(x, y)` / `setPixel` / `mapPixel` / `paste` | `data.pixel(x, y)` / `set_pixel` / `map_pixels` / `paste` | Colors are `Color`. |
+| `data:encode("png", path)` | `data.save(path)` | Or `data.encode_png()` for the bytes. |
+| `love.graphics.newImage(data)` / `image:replacePixels(data)` | `Image::from_image_data(&data)` / `image.replace_pixels(&data, x, y)` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
