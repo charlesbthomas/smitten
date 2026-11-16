@@ -67,6 +67,9 @@ impl SdlBackend {
             if config.resizable {
                 flags |= SDL_WINDOW_RESIZABLE;
             }
+            if config.fullscreen {
+                flags |= SDL_WINDOW_FULLSCREEN;
+            }
             let title = c_string(&config.title);
             let window = SDL_CreateWindow(
                 title.as_ptr(),
@@ -264,6 +267,61 @@ impl Backend for SdlBackend {
         let title = c_string(title);
         // SAFETY: the window is alive and SDL copies the string.
         unsafe { SDL_SetWindowTitle(self.window, title.as_ptr()) };
+    }
+
+    fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String> {
+        // SAFETY: the window is alive. With no fullscreen mode chosen, SDL
+        // uses the desktop's own resolution, without changing video mode.
+        unsafe {
+            if !SDL_SetWindowFullscreen(self.window, fullscreen) {
+                return Err(sdl_error());
+            }
+            // The change may be applied later by the window system. Wait
+            // for it so the new size can be read straight away.
+            SDL_SyncWindow(self.window);
+        }
+        Ok(())
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        // SAFETY: the window is alive.
+        let flags = unsafe { SDL_GetWindowFlags(self.window) };
+        flags & SDL_WINDOW_FULLSCREEN != 0
+    }
+
+    fn set_icon(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+        if width == 0 || height == 0 || rgba.len() != width as usize * height as usize * 4 {
+            return Err(format!(
+                "an icon of {width} by {height} pixels needs {} bytes, got {}",
+                width as usize * height as usize * 4,
+                rgba.len()
+            ));
+        }
+        // SAFETY: the surface borrows `rgba`, which holds `height` rows of
+        // `width * 4` bytes as checked above and outlives the surface. SDL
+        // copies the pixels when the icon is set and never writes to them.
+        unsafe {
+            let surface = SDL_CreateSurfaceFrom(
+                width as i32,
+                height as i32,
+                SDL_PIXELFORMAT_RGBA32,
+                rgba.as_ptr().cast_mut().cast(),
+                width as i32 * 4,
+            );
+            if surface.is_null() {
+                return Err(sdl_error());
+            }
+            let done = SDL_SetWindowIcon(self.window, surface);
+            let message = if done { String::new() } else { sdl_error() };
+            SDL_DestroySurface(surface);
+            if done { Ok(()) } else { Err(message) }
+        }
+    }
+
+    fn dpi_scale(&self) -> f32 {
+        // SAFETY: the window is alive.
+        let scale = unsafe { SDL_GetWindowDisplayScale(self.window) };
+        if scale > 0.0 { scale } else { 1.0 }
     }
 }
 

@@ -14,6 +14,7 @@ use crate::audio::AudioState;
 use crate::filesystem::FilesystemState;
 use crate::graphics::GraphicsState;
 use crate::input::InputState;
+use crate::reload::ReloadState;
 use crate::timer::TimerState;
 
 pub(crate) struct Context {
@@ -23,6 +24,7 @@ pub(crate) struct Context {
     pub gfx: GraphicsState,
     pub fs: FilesystemState,
     pub audio: AudioState,
+    pub reload: ReloadState,
     pub quit_requested: bool,
 }
 
@@ -44,6 +46,7 @@ pub(crate) fn install(backend: Box<dyn Backend>, config: &Config) {
             gfx: GraphicsState::default(),
             fs: FilesystemState::new(config),
             audio: AudioState::default(),
+            reload: ReloadState::new(config.hot_reload),
             quit_requested: false,
         });
     });

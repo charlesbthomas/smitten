@@ -28,9 +28,9 @@ fn main() {
 
 ## Status
 
-Early. A window, the game loop, keyboard, mouse and gamepad input, timing,
+Early. A window (with fullscreen and an icon), the game loop, keyboard, mouse and gamepad input, timing,
 shapes, images, text, the transform stack, canvases, blend modes, the
-scissor, the stencil, particle systems, save files, random numbers and noise, and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
+scissor, the stencil, particle systems, sprite batches, save files, random numbers and noise, and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
 streamed) work, as do custom shaders written in WGSL. Rendering currently
 uses Vulkan only, so macOS is not supported yet. See
 [docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
@@ -60,10 +60,15 @@ cargo run --example shader
 cargo run --example stencil
 cargo run --example particles
 cargo run --example pong
+cargo run --release --example benchmark
 ```
 
 The examples live in `crates/examples/examples`. Run these commands from
 the workspace root.
+
+The `benchmark` example measures how many sprites fit in a frame. Smitten's
+own work for 10,000 moving, turning, tinted sprites is under a millisecond
+a frame, so the graphics card sets the limit.
 
 SDL3 is built from source on the first build, which needs CMake and a C
 compiler.
@@ -75,6 +80,16 @@ compiler.
 
 To link against an SDL3 that is already installed, build with
 `--no-default-features`.
+
+## Hot reload
+
+Under `cargo run`, an image loaded with `graphics::new_image` or a shader
+loaded with `Shader::from_file` is loaded again when its file is saved, so
+edits show up in the running game. A shader with a mistake in it prints
+the error and the game keeps using the last version that worked.
+
+This is on in debug builds and off in release builds. Set
+`Config::hot_reload` to choose. Fonts and sounds are not reloaded yet.
 
 ## Releasing a game
 
