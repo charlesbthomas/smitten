@@ -141,9 +141,10 @@ impl GraphicsState {
         wrap: Option<(f32, Align)>,
         local: &Transform,
     ) {
+        let default_filter = self.default_filter;
         let font = self
             .font
-            .get_or_insert_with(|| Font::default_at(text::DEFAULT_FONT_SIZE))
+            .get_or_insert_with(|| Font::fallback(default_filter))
             .clone();
         let transform = self.transform.then_inner(local);
         let color = color_array(self.color);
@@ -448,9 +449,10 @@ pub fn set_font(font: &Font) {
 /// at 12 pixels, as in LÖVE.
 pub fn font() -> Font {
     context::with(|ctx| {
+        let default_filter = ctx.gfx.default_filter;
         ctx.gfx
             .font
-            .get_or_insert_with(|| Font::default_at(text::DEFAULT_FONT_SIZE))
+            .get_or_insert_with(|| Font::fallback(default_filter))
             .clone()
     })
 }

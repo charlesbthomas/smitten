@@ -1,0 +1,245 @@
+//! Turns encoded audio files into stereo samples, using symphonia.
+
+use std::io::Cursor;
+use std::sync::Arc;
+
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder as CodecDecoder, DecoderOptions};
+use symphonia::core::errors::Error;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+
+/// One moment of stereo sound: left and right, each from -1.0 to 1.0.
+pub(crate) type Frame = [f32; 2];
+
+/// A whole sound decoded into memory.
+pub(crate) struct SoundData {
+    pub frames: Vec<Frame>,
+    /// Frames per second.
+    pub rate: u32,
+}
+
+/// Decodes a file a little at a time.
+pub(crate) struct Decoder {
+    format: Box<dyn FormatReader>,
+    codec: Box<dyn CodecDecoder>,
+    track_id: u32,
+    rate: u32,
+    total_frames: Option<u64>,
+    /// Frames still to throw away after a seek that landed early.
+    skip: u64,
+}
+
+impl Decoder {
+    /// Starts decoding an audio file held in memory. The format is detected
+    /// from its contents.
+    pub fn open(bytes: Arc<[u8]>) -> Result<Self, String> {
+        let stream = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let probed = symphonia::default::get_probe()
+            .format(
+                &Hint::new(),
+                stream,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
+            .map_err(|error| format!("unrecognized audio format ({error})"))?;
+        let format = probed.format;
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or("the file contains no audio")?;
+        let rate = track
+            .codec_params
+            .sample_rate
+            .filter(|&rate| rate > 0)
+            .ok_or("the file does not say its sample rate")?;
+        let codec = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|error| format!("unsupported audio codec ({error})"))?;
+
+        Ok(Self {
+            track_id: track.id,
+            total_frames: track.codec_params.n_frames,
+            rate,
+            format,
+            codec,
+            skip: 0,
+        })
+    }
+
+    /// Frames per second.
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// The length of the sound, when the file states it.
+    pub fn total_frames(&self) -> Option<u64> {
+        self.total_frames
+    }
+
+    /// Decodes the next piece of the file onto the end of `out`.
+    /// Returns `false` once the file has ended.
+    pub fn decode_next(&mut self, out: &mut Vec<Frame>) -> bool {
+        loop {
+            // Any error from the container, including a clean end of file,
+            // means there is nothing more to read.
+            let Ok(packet) = self.format.next_packet() else {
+                return false;
+            };
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+            let decoded = match self.codec.decode(&packet) {
+                Ok(decoded) => decoded,
+                // A damaged packet is skipped; the rest may still play.
+                Err(Error::DecodeError(_)) => continue,
+                Err(_) => return false,
+            };
+
+            let spec = *decoded.spec();
+            let channels = spec.channels.count();
+            if channels == 0 {
+                continue;
+            }
+            let mut samples = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+            samples.copy_interleaved_ref(decoded);
+
+            let before = out.len();
+            for frame in samples.samples().chunks_exact(channels) {
+                if self.skip > 0 {
+                    self.skip -= 1;
+                    continue;
+                }
+                // Mono plays from both speakers. Beyond stereo, only the
+                // front left and right channels are kept.
+                let right = if channels > 1 { frame[1] } else { frame[0] };
+                out.push([frame[0], right]);
+            }
+            if out.len() > before {
+                return true;
+            }
+        }
+    }
+
+    /// Moves to `frame`, so the next decoded frame is that one.
+    /// Returns `false` if the file cannot seek.
+    pub fn seek(&mut self, frame: u64) -> bool {
+        let target = SeekTo::TimeStamp {
+            ts: frame,
+            track_id: self.track_id,
+        };
+        match self.format.seek(SeekMode::Accurate, target) {
+            Ok(landed) => {
+                self.codec.reset();
+                // Formats may only be able to land on an earlier packet.
+                self.skip = landed.required_ts.saturating_sub(landed.actual_ts);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Decodes everything that is left.
+    pub fn decode_all(mut self) -> SoundData {
+        let mut frames = Vec::with_capacity(self.total_frames.unwrap_or(0) as usize);
+        while self.decode_next(&mut frames) {}
+        SoundData {
+            frames,
+            rate: self.rate,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// Builds a 16-bit PCM WAV file from interleaved samples.
+    pub(crate) fn wav(rate: u32, channels: u16, samples: &[i16]) -> Arc<[u8]> {
+        let data_bytes = samples.len() as u32 * 2;
+        let mut file = Vec::new();
+        file.extend_from_slice(b"RIFF");
+        file.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        file.extend_from_slice(b"WAVEfmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&channels.to_le_bytes());
+        file.extend_from_slice(&rate.to_le_bytes());
+        file.extend_from_slice(&(rate * u32::from(channels) * 2).to_le_bytes());
+        file.extend_from_slice(&(channels * 2).to_le_bytes());
+        file.extend_from_slice(&16u16.to_le_bytes());
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&data_bytes.to_le_bytes());
+        for sample in samples {
+            file.extend_from_slice(&sample.to_le_bytes());
+        }
+        file.into()
+    }
+
+    /// A mono ramp long enough to span several packets.
+    pub(crate) fn ramp(frames: usize) -> Vec<i16> {
+        (0..frames).map(|i| (i % 30_000) as i16).collect()
+    }
+
+    #[test]
+    fn mono_is_decoded_to_both_channels() {
+        let decoder = Decoder::open(wav(8_000, 1, &[0, 16_384, -16_384])).unwrap();
+        assert_eq!(decoder.rate(), 8_000);
+        assert_eq!(decoder.total_frames(), Some(3));
+
+        let sound = decoder.decode_all();
+        assert_eq!(sound.frames.len(), 3);
+        assert_eq!(sound.frames[0], [0.0, 0.0]);
+        assert!((sound.frames[1][0] - 0.5).abs() < 1e-3);
+        assert_eq!(sound.frames[1][0], sound.frames[1][1]);
+        assert!((sound.frames[2][0] + 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn stereo_keeps_left_and_right_apart() {
+        let sound = Decoder::open(wav(44_100, 2, &[16_384, -16_384, 0, 8_192]))
+            .unwrap()
+            .decode_all();
+        assert_eq!(sound.rate, 44_100);
+        assert_eq!(sound.frames.len(), 2);
+        assert!(sound.frames[0][0] > 0.4 && sound.frames[0][1] < -0.4);
+        assert!(sound.frames[1][0].abs() < 1e-3 && sound.frames[1][1] > 0.2);
+    }
+
+    #[test]
+    fn decoding_in_pieces_gives_the_same_frames_as_all_at_once() {
+        let file = wav(22_050, 1, &ramp(10_000));
+        let whole = Decoder::open(file.clone()).unwrap().decode_all();
+
+        let mut pieces = Vec::new();
+        let mut decoder = Decoder::open(file).unwrap();
+        let mut calls = 0;
+        while decoder.decode_next(&mut pieces) {
+            calls += 1;
+        }
+        assert!(calls > 1, "the file should span several packets");
+        assert_eq!(pieces, whole.frames);
+        assert_eq!(pieces.len(), 10_000);
+    }
+
+    #[test]
+    fn seeking_continues_from_the_requested_frame() {
+        let file = wav(22_050, 1, &ramp(10_000));
+        let whole = Decoder::open(file.clone()).unwrap().decode_all();
+
+        let mut decoder = Decoder::open(file).unwrap();
+        assert!(decoder.seek(6_000));
+        let mut rest = Vec::new();
+        while decoder.decode_next(&mut rest) {}
+        assert_eq!(rest, whole.frames[6_000..]);
+    }
+
+    #[test]
+    fn data_that_is_not_audio_is_an_error() {
+        assert!(Decoder::open(Arc::from(&b"definitely not audio"[..])).is_err());
+    }
+}

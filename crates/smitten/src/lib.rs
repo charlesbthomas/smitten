@@ -1,7 +1,7 @@
 //! Smitten is a LÖVE-style 2D game framework for Rust.
 //!
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
-//! running, the framework modules ([`graphics`], [`keyboard`], [`mouse`],
+//! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`],
 //! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`]) can be called from anywhere on the main thread,
 //! the same way `love.graphics` and friends work in LÖVE.
 //!
@@ -28,6 +28,7 @@
 mod context;
 mod input;
 
+pub mod audio;
 pub mod event;
 pub mod filesystem;
 pub mod graphics;

@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use smitten_core::Config;
 use smitten_core::backend::Backend;
 
+use crate::audio::AudioState;
 use crate::filesystem::FilesystemState;
 use crate::graphics::GraphicsState;
 use crate::input::InputState;
@@ -21,6 +22,7 @@ pub(crate) struct Context {
     pub input: InputState,
     pub gfx: GraphicsState,
     pub fs: FilesystemState,
+    pub audio: AudioState,
     pub quit_requested: bool,
 }
 
@@ -41,6 +43,7 @@ pub(crate) fn install(backend: Box<dyn Backend>, config: &Config) {
             input: InputState::default(),
             gfx: GraphicsState::default(),
             fs: FilesystemState::new(config),
+            audio: AudioState::default(),
             quit_requested: false,
         });
     });

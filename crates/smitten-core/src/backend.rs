@@ -118,6 +118,16 @@ pub struct Frame<'a> {
     pub calls: &'a [DrawCall],
 }
 
+/// The sample rate Smitten mixes audio at. Backends convert from this to
+/// whatever the output device wants.
+pub const AUDIO_SAMPLE_RATE: u32 = 48_000;
+
+/// Fills a buffer with the next audio to play: interleaved stereo samples
+/// (left, right, left, right...) from -1.0 to 1.0 at [`AUDIO_SAMPLE_RATE`].
+///
+/// Backends call this from an audio thread, so it must not block for long.
+pub type AudioFill = Box<dyn FnMut(&mut [f32]) + Send>;
+
 /// What a platform must provide for Smitten to run on it.
 pub trait Backend {
     /// Returns the next pending event, if any, without blocking.
@@ -153,6 +163,12 @@ pub trait Backend {
 
     /// Drawable size in pixels.
     fn size_in_pixels(&self) -> (u32, u32);
+
+    /// Opens the default audio output and starts calling `fill` whenever
+    /// it needs more audio. Called at most once.
+    ///
+    /// An error means the game runs without sound, which is not fatal.
+    fn start_audio(&mut self, fill: AudioFill) -> Result<(), String>;
 
     /// Returns a directory the game may write to, creating it if needed.
     ///

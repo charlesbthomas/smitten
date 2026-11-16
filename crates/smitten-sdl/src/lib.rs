@@ -5,6 +5,7 @@
 //! This is the only Smitten crate that contains `unsafe` code or links a
 //! native library.
 
+mod audio;
 mod renderer;
 
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 
-use smitten_core::backend::{Backend, BackendEvent, Frame, TextureId};
+use smitten_core::backend::{AudioFill, Backend, BackendEvent, Frame, TextureId};
 use smitten_core::{Config, GamepadAxis, GamepadButton, JoystickId, Key, MouseButton};
 
 use renderer::Renderer;
@@ -29,6 +30,8 @@ pub struct SdlBackend {
     /// Opened gamepads by SDL joystick id. SDL only reports input from
     /// gamepads that are open.
     gamepads: HashMap<u32, *mut SDL_Gamepad>,
+    /// Present once `start_audio` has succeeded. Dropping it stops playback.
+    audio: Option<audio::AudioOutput>,
 }
 
 pub(crate) fn sdl_error() -> String {
@@ -124,6 +127,7 @@ impl SdlBackend {
                 device,
                 renderer: ManuallyDrop::new(renderer),
                 gamepads: HashMap::new(),
+                audio: None,
             })
         }
     }
@@ -134,6 +138,8 @@ impl Drop for SdlBackend {
         // SAFETY: everything was created in `new` and is released once, the
         // renderer first because its resources belong to the device.
         unsafe {
+            // Stop the audio thread before tearing anything else down.
+            self.audio = None;
             for (_, gamepad) in self.gamepads.drain() {
                 SDL_CloseGamepad(gamepad);
             }
@@ -159,6 +165,14 @@ impl Backend for SdlBackend {
             }
             None
         }
+    }
+
+    fn start_audio(&mut self, fill: AudioFill) -> Result<(), String> {
+        if self.audio.is_some() {
+            return Err("audio is already running".to_string());
+        }
+        self.audio = Some(audio::AudioOutput::open(fill)?);
+        Ok(())
     }
 
     fn save_directory(&mut self, identity: &str) -> Result<PathBuf, String> {
