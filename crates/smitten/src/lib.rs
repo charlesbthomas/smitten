@@ -2,7 +2,7 @@
 //!
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
 //! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
-//! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`system`]) can be called from anywhere on the main thread,
+//! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
 //! the same way `love.graphics` and friends work in LÖVE.
 //!
 //! ```no_run
@@ -40,6 +40,7 @@ pub mod math;
 pub mod mouse;
 #[cfg(feature = "physics")]
 pub mod physics;
+pub mod sound;
 pub mod system;
 pub mod timer;
 pub mod touch;

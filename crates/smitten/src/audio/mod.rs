@@ -5,9 +5,35 @@
 //! should be [`SourceType::Stream`].
 //!
 //! WAV, Ogg Vorbis, MP3 and FLAC files are supported.
+//!
+//! # Positional sound
+//!
+//! A mono source can be placed with [`Source::set_position`] and heard by
+//! a listener placed with [`set_position`]. It pans toward the side it is
+//! on, gets quieter with distance as [`DistanceModel`] describes, and
+//! changes pitch when it moves if it has a velocity. Stereo sources are
+//! not positioned, as in LÖVE, so music is unaffected by where the
+//! listener is.
+//!
+//! Distances are in whatever unit the game likes. With pixels, give
+//! sources a larger reference distance with
+//! [`Source::set_attenuation_distances`], since the default of 1.0 makes a
+//! sound half as loud two pixels away.
+//!
+//! A sound level with the listener in a 2D game is panned fully to one
+//! side. To soften that, place the listener a little in front of the
+//! screen, such as `audio::set_position(x, y, 100.0)`.
+//!
+//! # Filters and effects
+//!
+//! [`Source::set_filter`] muffles or thins a source. [`set_effect`] defines
+//! a named effect, such as a [`Reverb`] or an [`Echo`], and
+//! [`Source::set_effect`] sends a source through it.
 
-mod decode;
+pub(crate) mod decode;
+mod effects;
 mod mixer;
+mod spatial;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -16,6 +42,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::context;
 use decode::Decoder;
 use mixer::{Data, Mixer, Stream, Voice};
+
+pub use effects::{
+    Chorus, Compressor, Distortion, Echo, Effect, Equalizer, Filter, FilterType, Flanger, Reverb,
+    RingModulator, Waveform,
+};
+pub use spatial::DistanceModel;
 
 /// How a sound is held in memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -90,8 +122,32 @@ impl Source {
         Ok(Source { mixer, id, kind })
     }
 
+    /// Creates a source that plays samples from a [`SoundData`]. The
+    /// samples are copied, so changing the sound data afterwards does not
+    /// change the source.
+    ///
+    /// [`SoundData`]: crate::sound::SoundData
+    pub fn from_sound_data(data: &crate::sound::SoundData) -> Source {
+        let data = Data::Static(Arc::new(data.to_decoded()));
+        let mixer = shared_mixer();
+        let id = lock(&mixer).add(Voice::new(data));
+        Source {
+            mixer,
+            id,
+            kind: SourceType::Static,
+        }
+    }
+
     fn mixer(&self) -> MutexGuard<'_, Mixer> {
         lock(&self.mixer)
+    }
+
+    fn placement(&self) -> spatial::Placement {
+        self.mixer().placement(self.id)
+    }
+
+    fn change_placement(&self, change: impl FnOnce(&mut spatial::Placement)) {
+        self.mixer().change_placement(self.id, change);
     }
 
     /// Whether the sound is held in memory or decoded as it plays.
@@ -166,11 +222,164 @@ impl Source {
     pub fn duration(&self) -> Option<f64> {
         self.mixer().duration(self.id)
     }
+
+    /// Returns 1 for a mono sound or 2 for stereo. Only mono sounds can be
+    /// positioned.
+    pub fn channel_count(&self) -> u16 {
+        self.mixer().channels(self.id)
+    }
+
+    /// Places the sound. It starts at the origin, which is also where the
+    /// listener starts, so a sound that is never placed is heard as it is.
+    ///
+    /// Only mono sounds are positioned; stereo ones ignore this.
+    pub fn set_position(&self, x: f32, y: f32, z: f32) {
+        self.change_placement(|placement| placement.position = [x, y, z]);
+    }
+
+    /// Returns where the sound is.
+    pub fn position(&self) -> (f32, f32, f32) {
+        let [x, y, z] = self.placement().position;
+        (x, y, z)
+    }
+
+    /// Sets how fast the sound is moving, in distance units per second.
+    /// This does not move it; it only shifts its pitch, as a passing car
+    /// sounds higher coming and lower going.
+    pub fn set_velocity(&self, x: f32, y: f32, z: f32) {
+        self.change_placement(|placement| placement.velocity = [x, y, z]);
+    }
+
+    /// Returns the velocity.
+    pub fn velocity(&self) -> (f32, f32, f32) {
+        let [x, y, z] = self.placement().velocity;
+        (x, y, z)
+    }
+
+    /// Points the sound in a direction, for use with [`Source::set_cone`].
+    /// A direction of zero, the default, sounds the same all round.
+    pub fn set_direction(&self, x: f32, y: f32, z: f32) {
+        self.change_placement(|placement| placement.direction = [x, y, z]);
+    }
+
+    /// Returns the direction.
+    pub fn direction(&self) -> (f32, f32, f32) {
+        let [x, y, z] = self.placement().direction;
+        (x, y, z)
+    }
+
+    /// Makes a directed sound quieter off to the side. Inside a cone
+    /// `inner` radians wide it is at full volume; outside one `outer`
+    /// radians wide it is at `outer_volume`; between the two it fades.
+    pub fn set_cone(&self, inner: f32, outer: f32, outer_volume: f32) {
+        self.change_placement(|placement| {
+            placement.cone_inner = inner;
+            placement.cone_outer = outer;
+            placement.cone_outer_volume = outer_volume.clamp(0.0, 1.0);
+        });
+    }
+
+    /// Returns the inner angle, outer angle and outer volume of the cone.
+    pub fn cone(&self) -> (f32, f32, f32) {
+        let placement = self.placement();
+        (
+            placement.cone_inner,
+            placement.cone_outer,
+            placement.cone_outer_volume,
+        )
+    }
+
+    /// Sets whether the position is measured from the listener instead of
+    /// from the origin, so the sound moves with the listener. With a
+    /// relative position, positive x is always to the listener's right.
+    pub fn set_relative(&self, relative: bool) {
+        self.change_placement(|placement| placement.relative = relative);
+    }
+
+    /// Returns whether the position is measured from the listener.
+    pub fn is_relative(&self) -> bool {
+        self.placement().relative
+    }
+
+    /// Sets the distance at which the sound starts getting quieter and the
+    /// distance beyond which it gets no quieter, as [`DistanceModel`]
+    /// describes. They start at 1.0 and the largest `f32`.
+    pub fn set_attenuation_distances(&self, reference: f32, max: f32) {
+        self.change_placement(|placement| {
+            placement.reference_distance = reference.max(0.0);
+            placement.max_distance = max.max(0.0);
+        });
+    }
+
+    /// Returns the reference and maximum distances.
+    pub fn attenuation_distances(&self) -> (f32, f32) {
+        let placement = self.placement();
+        (placement.reference_distance, placement.max_distance)
+    }
+
+    /// Sets how quickly the sound gets quieter with distance, where 1.0 is
+    /// normal and 0.0 means not at all.
+    pub fn set_rolloff(&self, rolloff: f32) {
+        self.change_placement(|placement| placement.rolloff = rolloff.max(0.0));
+    }
+
+    /// Returns the rolloff.
+    pub fn rolloff(&self) -> f32 {
+        self.placement().rolloff
+    }
+
+    /// Keeps the sound's final volume, after distance and the cone, between
+    /// `min` and `max`. The minimum starts at 0.0. Unlike LÖVE, the maximum
+    /// starts unlimited, so a volume above 1.0 still makes a sound louder.
+    pub fn set_volume_limits(&self, min: f32, max: f32) {
+        self.change_placement(|placement| {
+            placement.min_volume = min.max(0.0);
+            placement.max_volume = max.max(placement.min_volume);
+        });
+    }
+
+    /// Returns the minimum and maximum volume.
+    pub fn volume_limits(&self) -> (f32, f32) {
+        let placement = self.placement();
+        (placement.min_volume, placement.max_volume)
+    }
+
+    /// Filters the sound, or with `None` removes the filter. The filter
+    /// affects what goes straight to the speakers, not what is sent to
+    /// effects.
+    pub fn set_filter(&self, filter: Option<Filter>) {
+        self.mixer().set_filter(self.id, filter);
+    }
+
+    /// Returns the filter, if there is one.
+    pub fn filter(&self) -> Option<Filter> {
+        self.mixer().filter(self.id)
+    }
+
+    /// Sends the sound through the effect called `name`, defined with
+    /// [`set_effect`]. `filter` filters what reaches the effect. Calling
+    /// this again for the same effect changes the filter.
+    ///
+    /// Returns `false`, and does nothing, if there is no such effect.
+    pub fn set_effect(&self, name: &str, filter: Option<Filter>) -> bool {
+        self.mixer().set_send(self.id, name, filter)
+    }
+
+    /// Stops sending the sound through the effect called `name`.
+    pub fn remove_effect(&self, name: &str) {
+        self.mixer().remove_send(self.id, name);
+    }
+
+    /// Returns the names of the effects the sound is sent through.
+    pub fn active_effects(&self) -> Vec<String> {
+        self.mixer().sends(self.id)
+    }
 }
 
 impl Clone for Source {
     /// Makes an independent source for the same sound, stopped at the
-    /// start, with the same volume, pitch and looping.
+    /// start, with the same settings, such as volume, pitch, looping,
+    /// position, filter and effects.
     fn clone(&self) -> Self {
         let id = self
             .mixer()
@@ -290,7 +499,7 @@ impl Sound {
         // Decoding can take a while, so it is done without holding up the
         // audio thread, and nothing changes unless all of it succeeds.
         let voices = lock(&self.mixer).group(self.group);
-        let mut decoded: Option<Arc<decode::SoundData>> = None;
+        let mut decoded: Option<Arc<decode::Decoded>> = None;
         let mut replacements = Vec::with_capacity(voices.len());
         for (id, streamed) in voices {
             let data = if streamed {
@@ -339,4 +548,107 @@ pub fn stop() {
 /// Returns how many sources are playing right now.
 pub fn active_source_count() -> usize {
     lock(&shared_mixer()).playing_count()
+}
+
+fn change_listener(change: impl FnOnce(&mut spatial::Listener)) {
+    lock(&shared_mixer()).change_listener(change);
+}
+
+fn listener() -> spatial::Listener {
+    lock(&shared_mixer()).listener()
+}
+
+/// Places the listener, who hears every positioned source. The listener
+/// starts at the origin.
+pub fn set_position(x: f32, y: f32, z: f32) {
+    change_listener(|listener| listener.position = [x, y, z]);
+}
+
+/// Returns where the listener is.
+pub fn position() -> (f32, f32, f32) {
+    let [x, y, z] = listener().position;
+    (x, y, z)
+}
+
+/// Sets how fast the listener is moving, which shifts the pitch of sounds
+/// as [`Source::set_velocity`] describes. It does not move the listener.
+pub fn set_velocity(x: f32, y: f32, z: f32) {
+    change_listener(|listener| listener.velocity = [x, y, z]);
+}
+
+/// Returns the listener's velocity.
+pub fn velocity() -> (f32, f32, f32) {
+    let [x, y, z] = listener().velocity;
+    (x, y, z)
+}
+
+/// Turns the listener to face `forward`, with the top of their head
+/// toward `up`. They start facing negative z with positive y up, which
+/// puts positive x on their right.
+pub fn set_orientation(forward: (f32, f32, f32), up: (f32, f32, f32)) {
+    change_listener(|listener| {
+        listener.forward = [forward.0, forward.1, forward.2];
+        listener.up = [up.0, up.1, up.2];
+    });
+}
+
+/// Returns the directions the listener faces and their head points.
+pub fn orientation() -> ((f32, f32, f32), (f32, f32, f32)) {
+    let listener = listener();
+    let [fx, fy, fz] = listener.forward;
+    let [ux, uy, uz] = listener.up;
+    ((fx, fy, fz), (ux, uy, uz))
+}
+
+/// Chooses how sounds get quieter with distance.
+pub fn set_distance_model(model: DistanceModel) {
+    change_listener(|listener| listener.model = model);
+}
+
+/// Returns how sounds get quieter with distance.
+pub fn distance_model() -> DistanceModel {
+    listener().model
+}
+
+/// Scales how much moving sounds change pitch, where 1.0 is real life and
+/// 0.0 turns the effect off. The speed of sound is taken to be 343.3
+/// distance units per second, so a game measuring in pixels may want a
+/// much larger value.
+pub fn set_doppler_scale(scale: f32) {
+    change_listener(|listener| listener.doppler_scale = scale.max(0.0));
+}
+
+/// Returns the Doppler scale.
+pub fn doppler_scale() -> f32 {
+    listener().doppler_scale
+}
+
+/// Defines an effect that sources can be sent through with
+/// [`Source::set_effect`], or changes one already defined. Changing the
+/// settings of an effect keeps it going, so a reverb's tail is not cut
+/// off.
+///
+/// ```no_run
+/// use smitten::audio::{self, Reverb};
+///
+/// audio::set_effect("cave", Reverb { decay_time: 4.0, ..Reverb::default() });
+/// ```
+pub fn set_effect(name: &str, effect: impl Into<Effect>) {
+    lock(&shared_mixer()).set_effect(name, effect.into());
+}
+
+/// Returns the settings of the effect called `name`.
+pub fn effect(name: &str) -> Option<Effect> {
+    lock(&shared_mixer()).effect(name)
+}
+
+/// Removes the effect called `name`, and stops every source sending to it.
+/// Returns `false` if there was no such effect.
+pub fn remove_effect(name: &str) -> bool {
+    lock(&shared_mixer()).remove_effect(name)
+}
+
+/// Returns the names of every effect defined, in alphabetical order.
+pub fn active_effects() -> Vec<String> {
+    lock(&shared_mixer()).effect_names()
 }

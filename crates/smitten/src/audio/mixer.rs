@@ -9,12 +9,14 @@ use std::sync::Arc;
 
 use smitten_core::backend::AUDIO_SAMPLE_RATE;
 
-use super::decode::{Decoder, Frame, SoundData};
+use super::decode::{Decoded, Decoder, Frame};
+use super::effects::{Effect, EffectState, Filter, FilterState};
+use super::spatial::{Heard, Listener, Placement};
 
 /// Where a voice gets its frames from.
 pub(crate) enum Data {
     /// Fully decoded up front. Cheap to play many times at once.
-    Static(Arc<SoundData>),
+    Static(Arc<Decoded>),
     /// Decoded while it plays. Uses little memory however long it is.
     Stream(Stream),
 }
@@ -94,6 +96,14 @@ impl Data {
         }
     }
 
+    /// 1 for mono or 2 for stereo.
+    fn channels(&self) -> u16 {
+        match self {
+            Data::Static(sound) => sound.channels,
+            Data::Stream(stream) => stream.decoder.channels(),
+        }
+    }
+
     fn frame(&mut self, index: u64) -> Option<Frame> {
         match self {
             Data::Static(sound) => sound.frames.get(usize::try_from(index).ok()?).copied(),
@@ -132,6 +142,41 @@ pub(crate) struct Voice {
     /// them can be given a newer version of the file. Zero until the voice
     /// joins the mixer.
     group: u64,
+    placement: Placement,
+    /// The filter on what the source sends straight to the speakers.
+    filter: Option<Filter>,
+    filter_state: FilterState,
+    /// The effects the source is sent through.
+    sends: Vec<EffectSend>,
+    /// The speaker volumes used last time, which the next buffer fades
+    /// from so that a moving sound does not click.
+    last_gains: Option<[f32; 2]>,
+}
+
+/// A source's connection to an effect.
+struct EffectSend {
+    effect: String,
+    /// A filter on what reaches the effect, separate from the source's own.
+    filter: Option<Filter>,
+    state: FilterState,
+}
+
+impl EffectSend {
+    fn new(effect: String, filter: Option<Filter>) -> Self {
+        Self {
+            effect,
+            filter,
+            state: FilterState::default(),
+        }
+    }
+}
+
+/// An effect defined with `audio::set_effect`.
+struct EffectSlot {
+    effect: Effect,
+    state: EffectState,
+    /// What the sources sent to it in the current buffer.
+    input: Vec<f32>,
 }
 
 impl Voice {
@@ -145,14 +190,36 @@ impl Voice {
             pitch: 1.0,
             orphaned: false,
             group: 0,
+            placement: Placement::default(),
+            filter: None,
+            filter_state: FilterState::default(),
+            sends: Vec::new(),
+            last_gains: None,
         }
     }
 
-    /// Adds this voice's sound to `out` and advances it.
-    fn mix_into(&mut self, out: &mut [f32], master: f32) {
+    /// What the listener hears of this voice right now. Only mono sounds
+    /// are positioned, as in LÖVE; stereo ones are heard as they are.
+    fn heard(&self, listener: &Listener) -> Heard {
+        if self.data.channels() == 1 {
+            self.placement.heard(listener, self.volume)
+        } else {
+            let gain = self
+                .volume
+                .clamp(self.placement.min_volume, self.placement.max_volume);
+            Heard {
+                gains: [gain, gain],
+                pitch: 1.0,
+            }
+        }
+    }
+
+    /// Adds this voice's sound to `out`, at its own loudness, and advances
+    /// it. `pitch` is a change in speed on top of the voice's own pitch.
+    fn render(&mut self, out: &mut [f32], pitch: f32) {
         let step = f64::from(self.data.rate()) / f64::from(AUDIO_SAMPLE_RATE)
-            * f64::from(self.pitch.max(0.0));
-        let gain = self.volume * master;
+            * f64::from(self.pitch.max(0.0))
+            * f64::from(pitch);
 
         for output in out.chunks_exact_mut(2) {
             let mut index = self.position as u64;
@@ -177,10 +244,28 @@ impl Voice {
             // position falls between two frames.
             let next = self.data.frame(index + 1).unwrap_or(current);
             let blend = (self.position - index as f64) as f32;
-            output[0] += (current[0] + (next[0] - current[0]) * blend) * gain;
-            output[1] += (current[1] + (next[1] - current[1]) * blend) * gain;
+            output[0] += current[0] + (next[0] - current[0]) * blend;
+            output[1] += current[1] + (next[1] - current[1]) * blend;
             self.position += step;
         }
+    }
+}
+
+/// Scales interleaved stereo by speaker volumes that move from `from` to
+/// `to` over the length of the buffer.
+fn apply_gains(samples: &mut [f32], from: [f32; 2], to: [f32; 2]) {
+    let frames = (samples.len() / 2).max(1) as f32;
+    for (i, frame) in samples.chunks_exact_mut(2).enumerate() {
+        let through = (i + 1) as f32 / frames;
+        for channel in 0..2 {
+            frame[channel] *= from[channel] + (to[channel] - from[channel]) * through;
+        }
+    }
+}
+
+fn add_into(out: &mut [f32], samples: &[f32]) {
+    for (output, sample) in out.iter_mut().zip(samples) {
+        *output += sample;
     }
 }
 
@@ -188,6 +273,12 @@ pub(crate) struct Mixer {
     voices: HashMap<u64, Voice>,
     next_id: u64,
     master: f32,
+    listener: Listener,
+    effects: HashMap<String, EffectSlot>,
+    /// Room for one voice's sound while it is placed and filtered, kept so
+    /// the audio thread does not allocate on every buffer.
+    voice_buffer: Vec<f32>,
+    send_buffer: Vec<f32>,
 }
 
 impl Default for Mixer {
@@ -196,6 +287,10 @@ impl Default for Mixer {
             voices: HashMap::new(),
             next_id: 1,
             master: 1.0,
+            listener: Listener::default(),
+            effects: HashMap::new(),
+            voice_buffer: Vec::new(),
+            send_buffer: Vec::new(),
         }
     }
 }
@@ -204,14 +299,47 @@ impl Mixer {
     /// Fills `out` with interleaved stereo at [`AUDIO_SAMPLE_RATE`].
     pub fn mix(&mut self, out: &mut [f32]) {
         out.fill(0.0);
-        for voice in self.voices.values_mut().filter(|voice| voice.playing) {
-            voice.mix_into(out, self.master);
+        self.voice_buffer.resize(out.len(), 0.0);
+        self.send_buffer.resize(out.len(), 0.0);
+        for slot in self.effects.values_mut() {
+            slot.input.clear();
+            slot.input.resize(out.len(), 0.0);
         }
+
+        for voice in self.voices.values_mut().filter(|voice| voice.playing) {
+            let heard = voice.heard(&self.listener);
+            let buffer = &mut self.voice_buffer;
+            buffer.fill(0.0);
+            voice.render(buffer, heard.pitch);
+            apply_gains(buffer, voice.last_gains.unwrap_or(heard.gains), heard.gains);
+            voice.last_gains = Some(heard.gains);
+
+            for send in &mut voice.sends {
+                let Some(slot) = self.effects.get_mut(&send.effect) else {
+                    continue;
+                };
+                self.send_buffer.copy_from_slice(buffer);
+                if let Some(filter) = &send.filter {
+                    send.state.process(filter, &mut self.send_buffer);
+                }
+                add_into(&mut slot.input, &self.send_buffer);
+            }
+            if let Some(filter) = &voice.filter {
+                voice.filter_state.process(filter, buffer);
+            }
+            add_into(out, buffer);
+        }
+        // Effects run even with nothing sent to them, so that a reverb's
+        // tail carries on after its sound has finished.
+        for slot in self.effects.values_mut() {
+            slot.state.process(&slot.input, out);
+        }
+
         self.voices
             .retain(|_, voice| voice.playing || !voice.orphaned);
-        // Loud sounds added together can exceed what the device accepts.
         for sample in out {
-            *sample = sample.clamp(-1.0, 1.0);
+            // Loud sounds added together can exceed what the device accepts.
+            *sample = (*sample * self.master).clamp(-1.0, 1.0);
         }
     }
 
@@ -249,6 +377,13 @@ impl Mixer {
             volume: original.volume,
             pitch: original.pitch,
             group: original.group,
+            placement: original.placement,
+            filter: original.filter,
+            sends: original
+                .sends
+                .iter()
+                .map(|send| EffectSend::new(send.effect.clone(), send.filter))
+                .collect(),
             ..Voice::new(data)
         };
         Ok(self.add(copy))
@@ -275,6 +410,11 @@ impl Mixer {
 
     pub fn play(&mut self, id: u64) {
         if let Some(voice) = self.voices.get_mut(&id) {
+            if !voice.playing {
+                // Start at the right volume rather than fading from the
+                // last time the sound played.
+                voice.last_gains = None;
+            }
             voice.playing = true;
         }
     }
@@ -368,6 +508,108 @@ impl Mixer {
         Some(voice.data.len()? as f64 / f64::from(voice.data.rate()))
     }
 
+    /// 1 for a mono sound, which can be positioned, or 2 for stereo.
+    pub fn channels(&self, id: u64) -> u16 {
+        self.voices
+            .get(&id)
+            .map_or(2, |voice| voice.data.channels())
+    }
+
+    pub fn placement(&self, id: u64) -> Placement {
+        self.voices
+            .get(&id)
+            .map_or_else(Placement::default, |voice| voice.placement)
+    }
+
+    pub fn change_placement(&mut self, id: u64, change: impl FnOnce(&mut Placement)) {
+        if let Some(voice) = self.voices.get_mut(&id) {
+            change(&mut voice.placement);
+        }
+    }
+
+    pub fn set_filter(&mut self, id: u64, filter: Option<Filter>) {
+        if let Some(voice) = self.voices.get_mut(&id) {
+            voice.filter = filter.map(Filter::clamped);
+        }
+    }
+
+    pub fn filter(&self, id: u64) -> Option<Filter> {
+        self.voices.get(&id).and_then(|voice| voice.filter)
+    }
+
+    /// Sends a voice through an effect, or changes the filter on an
+    /// existing send. Returns `false` if there is no such effect.
+    pub fn set_send(&mut self, id: u64, effect: &str, filter: Option<Filter>) -> bool {
+        if !self.effects.contains_key(effect) {
+            return false;
+        }
+        let Some(voice) = self.voices.get_mut(&id) else {
+            return false;
+        };
+        let filter = filter.map(Filter::clamped);
+        match voice.sends.iter_mut().find(|send| send.effect == effect) {
+            Some(send) => send.filter = filter,
+            None => voice.sends.push(EffectSend::new(effect.to_owned(), filter)),
+        }
+        true
+    }
+
+    pub fn remove_send(&mut self, id: u64, effect: &str) {
+        if let Some(voice) = self.voices.get_mut(&id) {
+            voice.sends.retain(|send| send.effect != effect);
+        }
+    }
+
+    pub fn sends(&self, id: u64) -> Vec<String> {
+        self.voices.get(&id).map_or_else(Vec::new, |voice| {
+            voice.sends.iter().map(|send| send.effect.clone()).collect()
+        })
+    }
+
+    pub fn listener(&self) -> Listener {
+        self.listener
+    }
+
+    pub fn change_listener(&mut self, change: impl FnOnce(&mut Listener)) {
+        change(&mut self.listener);
+    }
+
+    /// Defines an effect, or changes the settings of one already defined.
+    pub fn set_effect(&mut self, name: &str, effect: Effect) {
+        match self.effects.get_mut(name) {
+            Some(slot) => {
+                slot.state.configure(&effect);
+                slot.effect = effect;
+            }
+            None => {
+                let slot = EffectSlot {
+                    state: EffectState::new(&effect),
+                    effect,
+                    input: Vec::new(),
+                };
+                self.effects.insert(name.to_owned(), slot);
+            }
+        }
+    }
+
+    pub fn effect(&self, name: &str) -> Option<Effect> {
+        self.effects.get(name).map(|slot| slot.effect)
+    }
+
+    /// Removes an effect, and every source's send to it.
+    pub fn remove_effect(&mut self, name: &str) -> bool {
+        for voice in self.voices.values_mut() {
+            voice.sends.retain(|send| send.effect != name);
+        }
+        self.effects.remove(name).is_some()
+    }
+
+    pub fn effect_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.effects.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master = volume.max(0.0);
     }
@@ -386,9 +628,10 @@ mod tests {
 
     /// A sound at the output rate whose every sample is `level`.
     fn constant(frames: usize, level: f32) -> Data {
-        Data::Static(Arc::new(SoundData {
+        Data::Static(Arc::new(Decoded {
             frames: vec![[level, level]; frames],
             rate: RATE,
+            channels: 2,
         }))
     }
 
@@ -454,9 +697,10 @@ mod tests {
     #[test]
     fn a_looping_sound_keeps_going() {
         let mut mixer = Mixer::default();
-        let id = mixer.add(Voice::new(Data::Static(Arc::new(SoundData {
+        let id = mixer.add(Voice::new(Data::Static(Arc::new(Decoded {
             frames: vec![[0.1; 2], [0.2; 2], [0.3; 2]],
             rate: RATE,
+            channels: 2,
         }))));
         mixer.set_looping(id, true);
         mixer.play(id);
@@ -520,9 +764,10 @@ mod tests {
         // Half the output rate, so each source frame covers two outputs
         // and the values in between are blended.
         let mut mixer = Mixer::default();
-        let id = mixer.add(Voice::new(Data::Static(Arc::new(SoundData {
+        let id = mixer.add(Voice::new(Data::Static(Arc::new(Decoded {
             frames: vec![[0.0; 2], [1.0; 2]],
             rate: RATE / 2,
+            channels: 2,
         }))));
         mixer.play(id);
 
@@ -629,5 +874,144 @@ mod tests {
             .map(|frame| frame[0])
             .collect();
         assert_eq!(heard, expected);
+    }
+
+    /// A mono sound at the output rate whose every sample is `level`.
+    fn mono(frames: usize, level: f32) -> Data {
+        Data::Static(Arc::new(Decoded {
+            frames: vec![[level, level]; frames],
+            rate: RATE,
+            channels: 1,
+        }))
+    }
+
+    /// Mixes `frames` frames and returns both channels of the last one.
+    fn last_frame(mixer: &mut Mixer, frames: usize) -> [f32; 2] {
+        let mut out = vec![0.0; frames * 2];
+        mixer.mix(&mut out);
+        [out[out.len() - 2], out[out.len() - 1]]
+    }
+
+    #[test]
+    fn a_mono_sound_to_the_right_plays_from_the_right_speaker() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(mono(1_000, 0.5)));
+        mixer.change_placement(id, |placement| placement.position = [0.5, 0.0, 0.0]);
+        mixer.play(id);
+        let [left, right] = last_frame(&mut mixer, 100);
+        assert!(left.abs() < 1e-4);
+        assert!((right - 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_far_away_sound_is_quieter_and_follows_the_listener() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(mono(1_000, 0.5)));
+        mixer.change_placement(id, |placement| placement.position = [0.0, 0.0, -2.0]);
+        mixer.play(id);
+        let [left, _] = last_frame(&mut mixer, 100);
+        assert!((left - 0.25).abs() < 1e-4);
+
+        // Moving the listener onto the sound brings it back to full volume,
+        // fading over the next buffer rather than jumping.
+        mixer.change_listener(|listener| listener.position = [0.0, 0.0, -2.0]);
+        let mut out = vec![0.0; 200];
+        mixer.mix(&mut out);
+        assert!(out[0] > 0.25 && out[0] < 0.5);
+        assert!((out[198] - 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_stereo_sound_ignores_its_position() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(constant(1_000, 0.5)));
+        mixer.change_placement(id, |placement| placement.position = [100.0, 0.0, 0.0]);
+        mixer.play(id);
+        assert_eq!(last_frame(&mut mixer, 10), [0.5, 0.5]);
+        assert_eq!(mixer.channels(id), 2);
+    }
+
+    #[test]
+    fn a_filter_changes_only_what_goes_to_the_speakers() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(constant(1_000, 0.5)));
+        mixer.set_filter(
+            id,
+            Some(Filter {
+                volume: 0.5,
+                ..Filter::low_pass(1.0)
+            }),
+        );
+        mixer.play(id);
+        let [left, right] = last_frame(&mut mixer, 10);
+        assert!((left - 0.25).abs() < 1e-5 && (right - 0.25).abs() < 1e-5);
+
+        mixer.set_filter(id, None);
+        assert_eq!(mixer.filter(id), None);
+        assert_eq!(last_frame(&mut mixer, 10), [0.5, 0.5]);
+    }
+
+    #[test]
+    fn a_source_sent_to_an_echo_is_heard_again_after_it_stops() {
+        use super::super::effects::Echo;
+        let mut mixer = Mixer::default();
+        // A send to an effect that does not exist yet is refused.
+        let id = mixer.add(Voice::new(constant(10, 0.5)));
+        assert!(!mixer.set_send(id, "echo", None));
+
+        let echo = Echo {
+            delay: 0.01,
+            tap_delay: 0.0,
+            feedback: 0.0,
+            spread: 0.0,
+            ..Echo::default()
+        };
+        mixer.set_effect("echo", echo.into());
+        assert!(mixer.set_send(id, "echo", None));
+        assert_eq!(mixer.sends(id), ["echo"]);
+        mixer.play(id);
+
+        let heard = left(&mut mixer, 1_000);
+        assert_eq!(heard[0], 0.5);
+        assert!(heard[10..480].iter().all(|&sample| sample == 0.0));
+        // The repeat arrives 10 ms (480 frames) later. With no time between
+        // the echo's two taps, both land at once, each at half volume.
+        assert!((heard[480] - 0.5).abs() < 1e-5);
+        assert_eq!(heard[490], 0.0);
+
+        assert!(mixer.remove_effect("echo"));
+        assert!(mixer.sends(id).is_empty());
+        assert!(mixer.effect_names().is_empty());
+    }
+
+    #[test]
+    fn a_duplicate_keeps_the_position_filter_and_effects() {
+        use super::super::effects::Reverb;
+        let mut mixer = Mixer::default();
+        mixer.set_effect("room", Reverb::default().into());
+        let id = mixer.add(Voice::new(mono(10, 0.5)));
+        mixer.change_placement(id, |placement| placement.position = [3.0, 0.0, 0.0]);
+        mixer.set_filter(id, Some(Filter::low_pass(0.5)));
+        mixer.set_send(id, "room", None);
+
+        let copy = mixer.duplicate(id).unwrap();
+        assert_eq!(mixer.placement(copy).position, [3.0, 0.0, 0.0]);
+        assert_eq!(mixer.filter(copy), Some(Filter::low_pass(0.5)));
+        assert_eq!(mixer.sends(copy), ["room"]);
+    }
+
+    #[test]
+    fn a_moving_sound_changes_pitch() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(mono(RATE as usize, 0.5)));
+        mixer.change_placement(id, |placement| {
+            placement.position = [0.0, 0.0, -10.0];
+            // Coming closer at a tenth of the speed of sound.
+            placement.velocity = [0.0, 0.0, 34.33];
+        });
+        mixer.play(id);
+        left(&mut mixer, 900);
+        // 900 frames at a pitch of 1 / 0.9 cover 1000 frames of the sound.
+        assert!((mixer.tell(id) * f64::from(RATE) - 1_000.0).abs() < 1.0);
     }
 }
