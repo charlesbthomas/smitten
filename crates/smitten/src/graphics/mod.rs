@@ -903,6 +903,29 @@ pub fn try_new_font(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError
     Font::from_bytes(&bytes, size)
 }
 
+/// Loads a bitmap font: an image holding the characters of `glyphs` in a
+/// row, separated by columns in the color of its top-left pixel. The
+/// equivalent of `love.graphics.newImageFont`. See [`Font::from_image`].
+///
+/// Pixel fonts usually want `font.set_filter(Filter::Nearest)` so they
+/// stay crisp when enlarged.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_font`] to handle the failure instead.
+pub fn new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Font {
+    try_new_image_font(path, glyphs).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a bitmap font, returning an error if it fails.
+pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
+    let path = path.as_ref();
+    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+    Font::from_image(&bytes, glyphs, 0.0).map_err(|error| match error {
+        FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
+        other => other,
+    })
+}
+
 /// Creates the built-in font at `size` pixels.
 pub fn new_default_font(size: f32) -> Font {
     Font::default_at(size)

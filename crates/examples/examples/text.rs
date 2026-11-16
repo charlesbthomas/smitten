@@ -1,12 +1,12 @@
 //! Text and saved files.
 //!
 //! Shows the built-in font at several sizes, wrapping and alignment,
-//! rotated and tinted text, and a counter that is saved to the game's save
+//! rotated and tinted text, a bitmap font, and a counter that is saved to the game's save
 //! directory so it survives restarts. Press Space to count and Escape to
 //! quit.
 
 use smitten::graphics::{Align, DrawMode, Font};
-use smitten::{Color, Config, Game, Key, event, filesystem, graphics, timer};
+use smitten::{Color, Config, Filter, Game, Key, event, filesystem, graphics, timer};
 
 const SAVE_FILE: &str = "presses.txt";
 const PARAGRAPH: &str = "Smitten wraps long text to the width you give it, \
@@ -15,6 +15,7 @@ breaking lines at spaces. Each column below uses a different alignment.";
 struct Text {
     title: Font,
     body: Font,
+    pixel: Font,
     presses: u32,
 }
 
@@ -26,7 +27,14 @@ impl Game for Text {
             .ok()
             .and_then(|text| text.trim().parse().ok())
             .unwrap_or(0);
+        // A bitmap font: an image with its characters in a row.
+        let pixel = graphics::new_image_font(
+            "pixel-font.png",
+            " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?:-",
+        );
+        pixel.set_filter(Filter::Nearest);
         Text {
+            pixel,
             title: graphics::new_default_font(48.0),
             body: graphics::new_default_font(18.0),
             presses,
@@ -59,6 +67,20 @@ impl Game for Text {
             20.0,
             340.0,
         );
+
+        graphics::set_font(&self.pixel);
+        graphics::set_color(Color::rgb(0.55, 0.8, 1.0));
+        graphics::print_ex(
+            "A BITMAP FONT, 5 PIXELS TALL: 0123456789!?",
+            20.0,
+            385.0,
+            0.0,
+            4.0,
+            4.0,
+            0.0,
+            0.0,
+        );
+        graphics::set_font(&self.body);
 
         // Spun around its own center.
         let spinning = "rotated text";
