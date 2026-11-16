@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use rapier2d::prelude::*;
@@ -33,6 +34,22 @@ pub struct Body {
 impl PartialEq for Body {
     fn eq(&self, other: &Body) -> bool {
         self.handle == other.handle && Rc::ptr_eq(&self.world, &other.world)
+    }
+}
+
+impl Eq for Body {}
+
+/// Lets a body be a key in a `HashMap` or `HashSet`, so a game can keep
+/// what it knows about each body in a map.
+///
+/// Clippy's `mutable_key_type` lint complains about such a map, wrongly:
+/// a body hashes by which body it is, never by where it is. List
+/// `smitten::physics::Body` under `ignore-interior-mutability` in your
+/// `clippy.toml` to quiet it.
+impl Hash for Body {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.handle.hash(state);
+        Rc::as_ptr(&self.world).hash(state);
     }
 }
 
@@ -140,6 +157,11 @@ impl Body {
 
     /// Pushes the body's center with a force for the next update only.
     /// Call it every frame for a steady push, such as a thruster.
+    ///
+    /// How much a force moves a body depends on its mass, which depends
+    /// on [`World::set_meter`](super::World::set_meter), as in LÖVE. To
+    /// say how fast the body should speed up instead, whatever it weighs,
+    /// use [`Body::apply_acceleration`].
     pub fn apply_force(&self, x: f32, y: f32) {
         self.change(|body| body.add_force(Vector::new(x, y), true));
     }
@@ -152,9 +174,40 @@ impl Body {
         });
     }
 
-    /// Twists the body for the next update only.
+    /// Twists the body for the next update only. Like a force, how much
+    /// it turns the body depends on the body's mass and size; see
+    /// [`Body::apply_angular_acceleration`].
     pub fn apply_torque(&self, torque: f32) {
         self.change(|body| body.add_torque(torque, true));
+    }
+
+    /// Speeds the body up by `(x, y)` units per second, every second, for
+    /// the next update only, whatever its mass. Gravity is an acceleration
+    /// of this kind. Call it every frame for a steady pull.
+    pub fn apply_acceleration(&self, x: f32, y: f32) {
+        self.change(|body| {
+            let mass = body.mass();
+            body.add_force(Vector::new(x, y) * mass, true);
+        });
+    }
+
+    /// Speeds the body's spin up by `acceleration` radians per second,
+    /// every second, for the next update only, whatever its mass and
+    /// size. Good for springs and motors that should feel the same on
+    /// any body.
+    pub fn apply_angular_acceleration(&self, acceleration: f32) {
+        self.change(|body| {
+            let inertia = body.mass_properties().local_mprops.principal_inertia();
+            body.add_torque(acceleration * inertia, true);
+        });
+    }
+
+    /// How hard the body is to spin, the turning equivalent of
+    /// [`Body::mass`]. It comes from the size, shape and density of its
+    /// fixtures. A torque divided by this is the angular acceleration it
+    /// gives.
+    pub fn inertia(&self) -> f32 {
+        self.read(|body| body.mass_properties().local_mprops.principal_inertia())
     }
 
     /// Changes the body's velocity at once, as a kick or a jump does. The

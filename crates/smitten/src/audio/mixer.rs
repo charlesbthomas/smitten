@@ -364,6 +364,20 @@ impl Mixer {
         }
     }
 
+    /// Plays a copy of a sound from its start, at `volume` and `pitch`
+    /// times the original's, and forgets the copy when it ends.
+    pub fn play_once(&mut self, id: u64, volume: f32, pitch: f32) -> Result<(), String> {
+        let (base_volume, base_pitch) = (self.volume(id), self.pitch(id));
+        let copy = self.duplicate(id)?;
+        self.set_volume(copy, base_volume * volume);
+        self.set_pitch(copy, base_pitch * pitch);
+        // A copy that looped would never end, with nothing left to stop it.
+        self.set_looping(copy, false);
+        self.play(copy);
+        self.release(copy);
+        Ok(())
+    }
+
     /// Creates an independent voice that plays the same sound with the
     /// same settings, stopped at the beginning.
     pub fn duplicate(&mut self, id: u64) -> Result<u64, String> {
@@ -671,6 +685,23 @@ mod tests {
         mixer.replace_data(id, constant(3, 1.0));
         assert!(mixer.is_playing(id));
         assert_eq!(left(&mut mixer, 4), [0.5, 0.5, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn a_sound_played_once_overlaps_itself_and_cleans_up() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(constant(3, 0.5)));
+        mixer.set_volume(id, 0.5);
+        mixer.play_once(id, 1.0, 1.0).unwrap();
+        mixer.play_once(id, 0.5, 1.0).unwrap();
+
+        // The original is untouched and the copies sound together.
+        assert!(!mixer.is_playing(id));
+        assert_eq!(mixer.playing_count(), 2);
+        assert_eq!(left(&mut mixer, 4), [0.375, 0.375, 0.375, 0.0]);
+        // Once they have ended, only the original is left.
+        assert_eq!(mixer.playing_count(), 0);
+        assert_eq!(mixer.voices.len(), 1);
     }
 
     #[test]
