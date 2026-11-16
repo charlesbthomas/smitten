@@ -1,4 +1,5 @@
-//! Reloads images and shaders when their files change on disk.
+//! Reloads images, shaders, fonts and sounds when their files change on
+//! disk.
 //!
 //! While a game is being developed, saving an image in a paint program or
 //! a shader in an editor should show up in the running game. Assets loaded
@@ -9,8 +10,11 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::SystemTime;
 
+use crate::audio::Sound;
 use crate::context;
-use crate::graphics::reloading::{ImageInner, ShaderInner, reload_image, reload_shader};
+use crate::graphics::reloading::{
+    FontInner, ImageInner, ShaderInner, reload_font, reload_image, reload_shader,
+};
 
 /// Seconds between looks at the files. Often enough to feel immediate,
 /// rarely enough to cost nothing.
@@ -21,12 +25,16 @@ const CHECK_INTERVAL: f64 = 0.25;
 pub(crate) enum Asset {
     Image(Weak<ImageInner>),
     Shader(Weak<ShaderInner>),
+    Font(Weak<FontInner>),
+    Sound(Sound),
 }
 
 /// A strong handle held while an asset is reloaded.
 enum Live {
     Image(Rc<ImageInner>),
     Shader(Rc<ShaderInner>),
+    Font(Rc<FontInner>),
+    Sound(Sound),
 }
 
 impl Asset {
@@ -34,6 +42,8 @@ impl Asset {
         match self {
             Asset::Image(weak) => weak.upgrade().map(Live::Image),
             Asset::Shader(weak) => weak.upgrade().map(Live::Shader),
+            Asset::Font(weak) => weak.upgrade().map(Live::Font),
+            Asset::Sound(sound) => sound.in_use().then(|| Live::Sound(sound.clone())),
         }
     }
 }
@@ -121,6 +131,8 @@ pub(crate) fn check() {
                         Live::Shader(shader) => {
                             reload_shader(shader, backend.as_mut(), gfx, &bytes)
                         }
+                        Live::Font(font) => reload_font(font, backend.as_mut(), &bytes),
+                        Live::Sound(sound) => sound.reload(bytes),
                     });
                 // A file caught half-saved, or a shader with a mistake in
                 // it, keeps the version that was working.

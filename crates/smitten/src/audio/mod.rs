@@ -255,7 +255,64 @@ pub fn try_new_source(path: impl AsRef<Path>, kind: SourceType) -> Result<Source
         path: path.to_path_buf(),
         source,
     })?;
-    Source::from_bytes(bytes, kind)
+    let source = Source::from_bytes(bytes, kind)?;
+    let file = crate::filesystem::resolve(path);
+    context::with(|ctx| {
+        ctx.reload.watch(
+            file,
+            crate::reload::Asset::Sound(Sound {
+                mixer: source.mixer.clone(),
+                group: source.id,
+            }),
+        );
+    });
+    Ok(source)
+}
+
+/// A sound loaded from a file, with every copy made of it, for
+/// [`crate::reload`].
+#[derive(Clone)]
+pub(crate) struct Sound {
+    mixer: Arc<Mutex<Mixer>>,
+    group: u64,
+}
+
+impl Sound {
+    /// Whether the game still holds a source playing this sound.
+    pub(crate) fn in_use(&self) -> bool {
+        !lock(&self.mixer).group(self.group).is_empty()
+    }
+
+    /// Gives every source of this sound a newer version of its file. A
+    /// source that is playing carries on from the start of the new sound.
+    pub(crate) fn reload(&self, bytes: Vec<u8>) -> Result<(), String> {
+        let bytes: Arc<[u8]> = bytes.into();
+        // Decoding can take a while, so it is done without holding up the
+        // audio thread, and nothing changes unless all of it succeeds.
+        let voices = lock(&self.mixer).group(self.group);
+        let mut decoded: Option<Arc<decode::SoundData>> = None;
+        let mut replacements = Vec::with_capacity(voices.len());
+        for (id, streamed) in voices {
+            let data = if streamed {
+                Data::Stream(Stream::new(bytes.clone())?)
+            } else {
+                let sound = match &decoded {
+                    Some(sound) => sound.clone(),
+                    None => {
+                        let sound = Arc::new(Decoder::open(bytes.clone())?.decode_all());
+                        decoded.insert(sound).clone()
+                    }
+                };
+                Data::Static(sound)
+            };
+            replacements.push((id, data));
+        }
+        let mut mixer = lock(&self.mixer);
+        for (id, data) in replacements {
+            mixer.replace_data(id, data);
+        }
+        Ok(())
+    }
 }
 
 /// Sets the volume of everything, where 1.0 is normal and 0.0 is silent.

@@ -14,6 +14,7 @@ use smitten_core::Filter;
 use smitten_core::backend::{Backend, TextureId};
 
 use crate::context;
+use crate::reload::Asset;
 
 /// The typeface LÖVE also uses by default.
 static DEFAULT_FONT: &[u8] = include_bytes!("fonts/Vera.ttf");
@@ -45,9 +46,12 @@ pub struct Font {
     inner: Rc<Inner>,
 }
 
-struct Inner {
-    face: Face,
+pub(crate) struct Inner {
+    // In cells so a changed file can be loaded into every handle at once.
+    face: RefCell<Face>,
     atlas: RefCell<Atlas>,
+    /// What a bitmap font needs besides its image to be built again.
+    image_layout: Option<(String, f32)>,
     filter: Cell<Filter>,
     line_height: Cell<f32>,
 }
@@ -95,7 +99,8 @@ impl Font {
         Ok(Font {
             inner: Rc::new(Inner {
                 atlas: RefCell::new(Atlas::new(face.size * face.scale)),
-                face,
+                face: RefCell::new(face),
+                image_layout: None,
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
             }),
@@ -113,64 +118,31 @@ impl Font {
     /// `extra_spacing` is added after each character, in units, and may be
     /// negative. One pixel of the image is one unit.
     pub fn from_image(bytes: &[u8], glyphs: &str, extra_spacing: f32) -> Result<Font, FontError> {
-        let decoded = super::image::decode(bytes).map_err(FontError::Parse)?;
-        let (width, height) = (decoded.width(), decoded.height());
-        let rgba = decoded.into_raw();
-        let cells = slice_glyphs(width, height, &rgba, glyphs).map_err(FontError::Parse)?;
-
-        let (filter, texture) = context::with(|ctx| {
+        let (filter, built) = context::with(|ctx| {
             (
                 ctx.gfx.default_filter,
-                ctx.backend.create_texture(width, height, &rgba),
+                build_image_font(ctx.backend.as_mut(), bytes, glyphs, extra_spacing),
             )
         });
-        let texture = texture.map_err(|error| FontError::Parse(error.to_string()))?;
-
-        let mut advances = HashMap::new();
-        let mut known = HashMap::new();
-        for cell in cells {
-            advances.insert(cell.character, cell.width as f32 + extra_spacing);
-            known.insert(
-                cell.character,
-                Some(Glyph {
-                    page: 0,
-                    uv: [
-                        cell.x as f32 / width as f32,
-                        0.0,
-                        (cell.x + cell.width) as f32 / width as f32,
-                        1.0,
-                    ],
-                    width: cell.width as f32,
-                    height: height as f32,
-                    left: 0.0,
-                    top: -(height as f32),
-                }),
-            );
-        }
+        let (face, atlas) = built.map_err(FontError::Parse)?;
         Ok(Font {
             inner: Rc::new(Inner {
-                face: Face {
-                    source: Source::Image(advances),
-                    size: height as f32,
-                    scale: 1.0,
-                    ascent: height as f32,
-                    descent: 0.0,
-                    height: height as f32,
-                },
-                atlas: RefCell::new(Atlas {
-                    page_size: width.max(height),
-                    pages: vec![Page {
-                        texture,
-                        cursor_x: width,
-                        cursor_y: height,
-                        row_height: 0,
-                    }],
-                    glyphs: known,
-                }),
+                face: RefCell::new(face),
+                atlas: RefCell::new(atlas),
+                image_layout: Some((glyphs.to_string(), extra_spacing)),
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
             }),
         })
+    }
+
+    /// Has `asset` loaded again when the file at `path` changes.
+    pub(crate) fn watch(&self, path: &Path) {
+        let file = crate::filesystem::resolve(path);
+        context::with(|ctx| {
+            ctx.reload
+                .watch(file, Asset::Font(Rc::downgrade(&self.inner)));
+        });
     }
 
     /// Creates the built-in font, Bitstream Vera Sans, at `size` units.
@@ -192,27 +164,27 @@ impl Font {
 
     /// The size the font was created with, in units.
     pub fn size(&self) -> f32 {
-        self.inner.face.size
+        self.inner.face.borrow().size
     }
 
     /// How many pixels the font's glyphs hold for each unit.
     pub fn dpi_scale(&self) -> f32 {
-        self.inner.face.scale
+        self.inner.face.borrow().scale
     }
 
     /// The height of one line of text in units, before line height scaling.
     pub fn height(&self) -> f32 {
-        self.inner.face.height
+        self.inner.face.borrow().height
     }
 
     /// The distance from the top of a line to its baseline.
     pub fn ascent(&self) -> f32 {
-        self.inner.face.ascent
+        self.inner.face.borrow().ascent
     }
 
     /// The distance from the baseline to the bottom of a line.
     pub fn descent(&self) -> f32 {
-        self.inner.face.descent
+        self.inner.face.borrow().descent
     }
 
     /// The spacing between lines as a multiple of [`Font::height`].
@@ -229,7 +201,7 @@ impl Font {
     /// The width in units of `text`. For several lines, the widest one.
     pub fn width(&self, text: &str) -> f32 {
         text.split('\n')
-            .map(|line| self.inner.face.line_width(line))
+            .map(|line| self.inner.face.borrow().line_width(line))
             .fold(0.0, f32::max)
     }
 
@@ -237,10 +209,10 @@ impl Font {
     ///
     /// Returns the width of the widest line and the lines themselves.
     pub fn wrap(&self, text: &str, limit: f32) -> (f32, Vec<String>) {
-        let lines = self.inner.face.wrap(text, limit);
+        let lines = self.inner.face.borrow().wrap(text, limit);
         let width = lines
             .iter()
-            .map(|line| self.inner.face.line_width(line))
+            .map(|line| self.inner.face.borrow().line_width(line))
             .fold(0.0, f32::max);
         (width, lines)
     }
@@ -265,7 +237,7 @@ impl Font {
         wrap: Option<(f32, Align)>,
         mut emit: impl FnMut(TextureId, [f32; 4], [f32; 4]),
     ) {
-        let face = &self.inner.face;
+        let face = &*self.inner.face.borrow();
         let mut atlas = self.inner.atlas.borrow_mut();
         let lines = match wrap {
             Some((limit, _)) => face.wrap(text, limit),
@@ -308,8 +280,8 @@ impl Font {
 impl fmt::Debug for Font {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Font")
-            .field("size", &self.inner.face.size)
-            .field("height", &self.inner.face.height)
+            .field("size", &self.inner.face.borrow().size)
+            .field("height", &self.inner.face.borrow().height)
             .finish()
     }
 }
@@ -353,6 +325,85 @@ impl std::error::Error for FontError {
             FontError::Parse(_) => None,
         }
     }
+}
+
+/// Builds a bitmap font from its image: the measurements, and an atlas
+/// whose one page is the image itself.
+fn build_image_font(
+    backend: &mut dyn Backend,
+    bytes: &[u8],
+    glyphs: &str,
+    extra_spacing: f32,
+) -> Result<(Face, Atlas), String> {
+    let decoded = super::image::decode(bytes)?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let rgba = decoded.into_raw();
+    let cells = slice_glyphs(width, height, &rgba, glyphs)?;
+    let texture = backend.create_texture(width, height, &rgba)?;
+
+    let mut advances = HashMap::new();
+    let mut known = HashMap::new();
+    for cell in cells {
+        advances.insert(cell.character, cell.width as f32 + extra_spacing);
+        known.insert(
+            cell.character,
+            Some(Glyph {
+                page: 0,
+                uv: [
+                    cell.x as f32 / width as f32,
+                    0.0,
+                    (cell.x + cell.width) as f32 / width as f32,
+                    1.0,
+                ],
+                width: cell.width as f32,
+                height: height as f32,
+                left: 0.0,
+                top: -(height as f32),
+            }),
+        );
+    }
+    let face = Face {
+        source: Source::Image(advances),
+        size: height as f32,
+        scale: 1.0,
+        ascent: height as f32,
+        descent: 0.0,
+        height: height as f32,
+    };
+    let atlas = Atlas {
+        page_size: width.max(height),
+        pages: vec![Page {
+            texture,
+            cursor_x: width,
+            cursor_y: height,
+            row_height: 0,
+        }],
+        glyphs: known,
+    };
+    Ok((face, atlas))
+}
+
+/// Replaces a font's glyphs with a newer version of its file, keeping its
+/// size. Every handle to the font changes at once.
+pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> Result<(), String> {
+    let (face, atlas) = match &inner.image_layout {
+        Some((glyphs, extra_spacing)) => build_image_font(backend, bytes, glyphs, *extra_spacing)?,
+        None => {
+            let (size, scale) = {
+                let face = inner.face.borrow();
+                (face.size, face.scale)
+            };
+            let face = Face::new(bytes, size, scale)?;
+            let atlas = Atlas::new(face.size * face.scale);
+            (face, atlas)
+        }
+    };
+    *inner.face.borrow_mut() = face;
+    let old = inner.atlas.replace(atlas);
+    for page in &old.pages {
+        backend.destroy_texture(page.texture);
+    }
+    Ok(())
 }
 
 /// The measuring half of a font: metrics and line breaking, no GPU.

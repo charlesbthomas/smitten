@@ -139,13 +139,14 @@ printed to the terminal, and the program still ends with the panic.
 
 ## Hot reload
 
-Under `cargo run`, an image loaded with `graphics::new_image` or a shader
-loaded with `Shader::from_file` is loaded again when its file is saved, so
-edits show up in the running game. A shader with a mistake in it prints
-the error and the game keeps using the last version that worked.
+Under `cargo run`, an image, shader, font or sound loaded from a file is
+loaded again when that file is saved, so edits show up in the running
+game. A file with a mistake in it prints the error and the game keeps
+using the last version that worked. A sound that is playing starts over
+with the new version.
 
 This is on in debug builds and off in release builds. Set
-`Config::hot_reload` to choose. Fonts and sounds are not reloaded yet.
+`Config::hot_reload` to choose.
 
 ## Releasing a game
 
