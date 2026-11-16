@@ -6,18 +6,17 @@
 //! [`crate::run`], which keeps this safe without locks.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 
-use smitten_core::Key;
 use smitten_core::backend::Backend;
 
 use crate::graphics::GraphicsState;
+use crate::input::InputState;
 use crate::timer::TimerState;
 
 pub(crate) struct Context {
     pub backend: Box<dyn Backend>,
     pub timer: TimerState,
-    pub keys_down: HashSet<Key>,
+    pub input: InputState,
     pub gfx: GraphicsState,
     pub quit_requested: bool,
 }
@@ -36,7 +35,7 @@ pub(crate) fn install(backend: Box<dyn Backend>) {
         *slot = Some(Context {
             backend,
             timer: TimerState::default(),
-            keys_down: HashSet::new(),
+            input: InputState::default(),
             gfx: GraphicsState::default(),
             quit_requested: false,
         });
