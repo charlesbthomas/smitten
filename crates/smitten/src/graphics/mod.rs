@@ -596,7 +596,7 @@ impl GraphicsState {
     /// Queues a laid-out [`Text`], placed by `local`.
     fn push_text_object(&mut self, backend: &mut dyn Backend, text: &Text, local: &Transform) {
         let transform = self.device().then_inner(local);
-        let color = color_array(self.color);
+        let tint = color_array(self.color);
         let filter = text.font().filter();
         let mut vertices = std::mem::take(&mut self.scratch);
         let batch = &mut self.batch;
@@ -604,10 +604,11 @@ impl GraphicsState {
             vertices.clear();
             vertices.extend(run.iter().map(|vertex| {
                 let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
+                let [r, g, b, a] = vertex.color;
                 Vertex {
                     position: [x, y],
                     uv: vertex.uv,
-                    color,
+                    color: [r * tint[0], g * tint[1], b * tint[2], a * tint[3]],
                 }
             }));
             batch.push(Some(texture), filter, &vertices);
@@ -623,13 +624,27 @@ impl GraphicsState {
         wrap: Option<(f32, Align)>,
         local: &Transform,
     ) {
+        self.push_colored_text(backend, &[(Color::WHITE, text)], wrap, local);
+    }
+
+    /// Queues text made of `segments`, each tinted by its color as well as
+    /// the current one, in the current font, placed by `local`.
+    fn push_colored_text(
+        &mut self,
+        backend: &mut dyn Backend,
+        segments: &[(Color, &str)],
+        wrap: Option<(f32, Align)>,
+        local: &Transform,
+    ) {
+        let text = text::joined(segments);
+        let mut colors = text::GlyphColors::new(segments);
         let (default_filter, scale) = (self.default_filter, self.screen.draw_scale());
         let font = self
             .font
             .get_or_insert_with(|| Font::fallback(default_filter, scale))
             .clone();
         let transform = self.device().then_inner(local);
-        let color = color_array(self.color);
+        let tint = self.color;
         let filter = font.filter();
 
         // Glyphs usually share one atlas page, so collect each run of
@@ -637,7 +652,8 @@ impl GraphicsState {
         let mut run: Vec<Vertex> = Vec::with_capacity(text.len() * 6);
         let mut run_texture: Option<TextureId> = None;
         let batch = &mut self.batch;
-        font.layout(backend, text, wrap, |texture, rect, uv| {
+        font.layout(backend, &text, wrap, |character, texture, rect, uv| {
+            let color = color_array(multiply(tint, colors.color(character)));
             if run_texture != Some(texture) {
                 batch.push(run_texture, filter, &run);
                 run.clear();
@@ -666,6 +682,10 @@ impl GraphicsState {
         });
         batch.push(run_texture, filter, &run);
     }
+}
+
+fn multiply(a: Color, b: Color) -> Color {
+    Color::rgba(a.r * b.r, a.g * b.g, a.b * b.b, a.a * b.a)
 }
 
 fn color_array(color: Color) -> [f32; 4] {
@@ -1749,4 +1769,51 @@ pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
 /// [`CubeImage::from_layout_file`] to handle the failure instead.
 pub fn new_cube_image_from_layout(path: impl AsRef<Path>) -> CubeImage {
     CubeImage::from_layout_file(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Draws text made of colored parts, the equivalent of
+/// `love.graphics.print(coloredtext, x, y)`: each part is tinted by its
+/// color as well as the current one.
+///
+/// ```no_run
+/// use smitten::{Color, graphics};
+///
+/// graphics::print_colored(&[(Color::WHITE, "Score: "), (Color::rgb(1.0, 0.8, 0.2), "120")], 10.0, 10.0);
+/// ```
+pub fn print_colored(segments: &[(Color, &str)], x: f32, y: f32) {
+    let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    print_colored_with(segments, &local);
+}
+
+/// Draws colored text placed by `transform`.
+pub fn print_colored_with(segments: &[(Color, &str)], transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_colored_text(ctx.backend.as_mut(), segments, None, transform);
+    });
+}
+
+/// Draws text made of colored parts, wrapped to `limit` units and aligned
+/// within that width, the equivalent of `love.graphics.printf(coloredtext,
+/// ...)`.
+pub fn printf_colored(segments: &[(Color, &str)], x: f32, y: f32, limit: f32, align: Align) {
+    let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    printf_colored_with(segments, limit, align, &local);
+}
+
+/// Draws wrapped colored text placed by `transform`.
+pub fn printf_colored_with(
+    segments: &[(Color, &str)],
+    limit: f32,
+    align: Align,
+    transform: &Transform,
+) {
+    context::with(|ctx| {
+        ctx.gfx.push_colored_text(
+            ctx.backend.as_mut(),
+            segments,
+            Some((limit, align)),
+            transform,
+        );
+    });
 }

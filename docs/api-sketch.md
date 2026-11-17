@@ -212,7 +212,7 @@ fn main() {
 | `love.graphics.transformPoint(x, y)` / `inverseTransformPoint(x, y)` | `graphics::transform_point(x, y)` / `inverse_transform_point(x, y)` | In units, under the current transform. |
 | `love.graphics.draw(image, transform)` / `print(text, transform)` | `graphics::draw_with(&image, &transform)` / `print_with(text, &transform)` | Also `draw_quad_with` and `printf_with`. |
 | `love.graphics.newText(font, text)` | `graphics::new_text(&font, text)` | Laid out once, the first time it is drawn after a change. |
-| `text:set(s)` / `setf(s, limit, align)` / `add(s, x, y)` / `addf(s, limit, align, x, y)` / `clear()` | `text.set(s)` / `set_f(s, limit, align)` / `add(s, x, y)` / `add_f(s, limit, align, x, y)` / `clear()` | `add` returns the index from 0. `add_ex` takes the full `draw` arguments. Colored text tables are not supported yet. |
+| `text:set(s)` / `setf(s, limit, align)` / `add(s, x, y)` / `addf(s, limit, align, x, y)` / `clear()` | `text.set(s)` / `set_f(s, limit, align)` / `add(s, x, y)` / `add_f(s, limit, align, x, y)` / `clear()` | `add` returns the index from 0. `add_ex` takes the full `draw` arguments. |
 | `text:getDimensions()` / `getWidth()` / `getHeight()` / `setFont(font)` | `text.dimensions()` / `width()` / `height()` / `set_font(&font)` | `text.bounds(index)` gives one piece's box. |
 | `love.graphics.draw(text, x, y)` | `graphics::draw_text(&text, x, y)` | `draw_text_ex` and `draw_text_with` take the other forms. |
 | `love.graphics.setColorMask(r, g, b, a)` / `getColorMask()` | `graphics::set_color_mask(r, g, b, a)` / `graphics::color_mask()` | Booleans. Clearing ignores the mask. |
@@ -227,6 +227,7 @@ fn main() {
 | `shader:send("sky", cubeimage)` | `shader.send_texture("sky", &cube)` | The shader declares `var sky: texture_cube<f32>;` with no binding and samples it with `sky_sampler`. Also `texture_2d<f32>` for an `Image` or `Canvas`, and `texture_2d_array<f32>` for an `ArrayImage`. One not sent reads as white. |
 | `love.image.newCompressedData(path)` / `love.graphics.newImage(compresseddata)` | `graphics::new_compressed_data(path)` / `Image::from_compressed_data(&data)` | DDS files in BC1 to BC5 and BC7 (DXT1, DXT3, DXT5 and the rest), with their mipmaps. `new_image` loads a `.dds` file too, and reloads it when it changes like any image. KTX, ASTC and ETC files are not supported yet. |
 | `love.graphics.getImageFormats()` | `graphics::is_compressed_format_supported(CompressedFormat::Bc7)` | One format at a time. |
+| `love.graphics.print({color1, "a", color2, "b"}, x, y)` / `printf(coloredtext, ...)` | `graphics::print_colored(&[(color1, "a"), (color2, "b")], x, y)` / `printf_colored(...)` | Each part is tinted by its color and the current one. `Text` has `add_colored`, `add_f_colored`, `set_colored` and `set_f_colored`. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

@@ -5,7 +5,9 @@ use std::cell::RefCell;
 
 use smitten_core::backend::{Backend, TextureId, Vertex};
 
+use super::text::{GlyphColors, joined};
 use super::{Align, Font, Transform};
+use crate::Color;
 
 /// Text laid out ahead of time, so drawing it costs no more than drawing
 /// an image: the equivalent of LÖVE's `Text`, made with
@@ -31,7 +33,10 @@ pub struct Text {
 
 #[derive(Debug, Clone)]
 struct Entry {
+    /// All the text, for measuring.
     text: String,
+    /// The text in parts, each with its color.
+    segments: Vec<(Color, String)>,
     wrap: Option<(f32, Align)>,
     transform: Transform,
 }
@@ -125,9 +130,62 @@ impl Text {
         self.push(text, Some((limit, align)), transform)
     }
 
+    /// Replaces everything with text made of colored parts at the top-left
+    /// corner, the equivalent of `text:set(coloredtext)`. Each part is
+    /// tinted by its color as well as the one the text is drawn in.
+    pub fn set_colored(&mut self, segments: &[(Color, &str)]) {
+        self.clear();
+        self.add_colored(segments, 0.0, 0.0);
+    }
+
+    /// Replaces everything with colored text wrapped to `limit` units.
+    pub fn set_f_colored(&mut self, segments: &[(Color, &str)], limit: f32, align: Align) {
+        self.clear();
+        self.add_f_colored(segments, limit, align, 0.0, 0.0);
+    }
+
+    /// Adds text made of colored parts with its top-left corner at
+    /// `(x, y)`. Returns its index.
+    pub fn add_colored(&mut self, segments: &[(Color, &str)], x: f32, y: f32) -> usize {
+        let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+        self.add_colored_with(segments, &transform)
+    }
+
+    /// Adds colored text placed by `transform`.
+    pub fn add_colored_with(&mut self, segments: &[(Color, &str)], transform: &Transform) -> usize {
+        self.push_segments(segments, None, transform)
+    }
+
+    /// Adds colored text wrapped to `limit` units with its top-left corner
+    /// at `(x, y)`.
+    pub fn add_f_colored(
+        &mut self,
+        segments: &[(Color, &str)],
+        limit: f32,
+        align: Align,
+        x: f32,
+        y: f32,
+    ) -> usize {
+        let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+        self.push_segments(segments, Some((limit, align)), &transform)
+    }
+
     fn push(&mut self, text: &str, wrap: Option<(f32, Align)>, transform: &Transform) -> usize {
+        self.push_segments(&[(Color::WHITE, text)], wrap, transform)
+    }
+
+    fn push_segments(
+        &mut self,
+        segments: &[(Color, &str)],
+        wrap: Option<(f32, Align)>,
+        transform: &Transform,
+    ) -> usize {
         self.entries.push(Entry {
-            text: text.to_string(),
+            text: joined(segments),
+            segments: segments
+                .iter()
+                .map(|&(color, text)| (color, text.to_string()))
+                .collect(),
             wrap,
             transform: *transform,
         });
@@ -227,8 +285,8 @@ impl Text {
         ))
     }
 
-    /// Calls `emit` with each run of glyphs in white, in the text's own
-    /// coordinates, laying the text out first if it changed.
+    /// Calls `emit` with each run of glyphs in their own colors, in the
+    /// text's own coordinates, laying the text out first if it changed.
     pub(crate) fn with_runs(
         &self,
         backend: &mut dyn Backend,
@@ -250,8 +308,19 @@ impl Text {
     fn layout(&self, backend: &mut dyn Backend) -> Vec<(TextureId, Vec<Vertex>)> {
         let mut runs: Vec<(TextureId, Vec<Vertex>)> = Vec::new();
         for entry in &self.entries {
-            self.font
-                .layout(backend, &entry.text, entry.wrap, |texture, rect, uv| {
+            let segments: Vec<(Color, &str)> = entry
+                .segments
+                .iter()
+                .map(|(color, text)| (*color, text.as_str()))
+                .collect();
+            let mut colors = GlyphColors::new(&segments);
+            self.font.layout(
+                backend,
+                &entry.text,
+                entry.wrap,
+                |character, texture, rect, uv| {
+                    let color = colors.color(character);
+                    let color = [color.r, color.g, color.b, color.a];
                     if runs.last().is_none_or(|(last, _)| *last != texture) {
                         runs.push((texture, Vec::new()));
                     }
@@ -260,7 +329,7 @@ impl Text {
                         Vertex {
                             position: [x, y],
                             uv: [u, v],
-                            color: [1.0; 4],
+                            color,
                         }
                     };
                     let top_left = corner(rect[0], rect[1], uv[0], uv[1]);
@@ -276,7 +345,8 @@ impl Text {
                         bottom_right,
                         bottom_left,
                     ]);
-                });
+                },
+            );
         }
         runs
     }
