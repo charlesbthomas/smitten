@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use rapier2d::prelude::*;
 
-use super::Fixture;
 use super::world::Shared;
+use super::{Fixture, Joint};
 
 /// How a body takes part in the simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -357,6 +357,17 @@ impl Body {
             .collect()
     }
 
+    /// The joints attached to the body.
+    pub fn joints(&self) -> Vec<Joint> {
+        let inner = self.world.borrow();
+        inner
+            .world
+            .impulse_joints
+            .attached_joints(self.handle)
+            .map(|(_, _, handle, _)| Joint::new(&self.world, handle))
+            .collect()
+    }
+
     /// Whether any of this body's fixtures is touching one of `other`'s.
     /// Sensors do not count.
     pub fn is_touching(&self, other: &Body) -> bool {
@@ -392,7 +403,9 @@ impl Body {
             .restitution(0.0)
             // As in Box2D: the bouncier of two fixtures decides the bounce.
             .restitution_combine_rule(CoefficientCombineRule::Max)
-            .active_events(ActiveEvents::COLLISION_EVENTS);
+            .active_events(ActiveEvents::COLLISION_EVENTS)
+            // So that a pre-solve callback hears about it.
+            .active_hooks(ActiveHooks::MODIFY_SOLVER_CONTACTS);
         let handle = inner.world.insert_collider(collider, Some(self.handle));
         Fixture::new(&self.world, handle)
     }

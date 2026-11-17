@@ -195,6 +195,14 @@ impl Image {
     pub fn from_image_data(data: &ImageData) -> Result<Image, ImageError> {
         Image::from_rgba(data.width, data.height, &data.pixels)
     }
+
+    /// As [`Image::from_image_data`], with options such as mipmaps.
+    pub fn from_image_data_with(
+        data: &ImageData,
+        settings: super::ImageSettings,
+    ) -> Result<Image, ImageError> {
+        Image::from_rgba_with(data.width, data.height, &data.pixels, settings)
+    }
 }
 
 #[cfg(test)]

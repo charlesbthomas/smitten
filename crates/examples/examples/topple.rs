@@ -306,7 +306,7 @@ impl Topple {
         self.sounds
             .thud
             .play_once_with(0.25 + strength * 0.75, math::random_range(0.85, 1.2));
-        if let Some(pad) = joystick::joysticks().first() {
+        if let Some(pad) = joystick::gamepads().first() {
             pad.set_vibration(strength, strength * 0.4, 0.08 + strength * 0.15);
         }
     }
@@ -329,7 +329,7 @@ impl Topple {
         self.over = true;
         self.next = None;
         self.sounds.over.play_once_with(0.8, 1.0);
-        if let Some(pad) = joystick::joysticks().first() {
+        if let Some(pad) = joystick::gamepads().first() {
             pad.set_vibration(1.0, 1.0, 0.5);
         }
         if self.run_best > self.best {
@@ -348,7 +348,7 @@ impl Topple {
     /// How far left or right the player is steering, from -1 to 1.
     fn steering(&self) -> f32 {
         let mut steer = keyboard::axis(&[Key::Left, Key::A], &[Key::Right, Key::D]);
-        if let Some(pad) = joystick::joysticks().first() {
+        if let Some(pad) = joystick::gamepads().first() {
             steer += pad.left_stick(0.2).0;
             if pad.is_gamepad_down(GamepadButton::DpadLeft) {
                 steer -= 1.0;

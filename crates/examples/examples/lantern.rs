@@ -424,7 +424,7 @@ impl Lantern {
     /// Which way the player wants to walk, no longer than 1.
     fn walking(&self) -> (f32, f32) {
         let (mut x, mut y) = keyboard::direction();
-        if let Some(pad) = joystick::joysticks().first() {
+        if let Some(pad) = joystick::gamepads().first() {
             let (stick_x, stick_y) = pad.left_stick(0.25);
             x += stick_x;
             y += stick_y;
@@ -444,7 +444,7 @@ impl Lantern {
         if self.aim_at_mouse {
             self.aim = (mouse.1 - self.player.1).atan2(mouse.0 - self.player.0);
         }
-        if let Some(pad) = joystick::joysticks().first() {
+        if let Some(pad) = joystick::gamepads().first() {
             let (x, y) = pad.right_stick(0.4);
             if (x, y) != (0.0, 0.0) {
                 self.aim_at_mouse = false;
@@ -553,7 +553,7 @@ impl Lantern {
         self.hearts = self.hearts.saturating_sub(1);
         self.hurt = 1.0;
         self.sounds.sting.play_once();
-        if let Some(pad) = joystick::joysticks().first() {
+        if let Some(pad) = joystick::gamepads().first() {
             pad.set_vibration(1.0, 0.6, 0.35);
         }
         if self.hearts == 0 {
@@ -1009,7 +1009,7 @@ impl Game for Lantern {
             let closeness = 1.0 - nearest / 220.0;
             self.until_thump = 1.0 - closeness * 0.7;
             self.sounds.thump.play_once_with(0.3 + closeness * 0.7, 1.0);
-            if let Some(pad) = joystick::joysticks().first() {
+            if let Some(pad) = joystick::gamepads().first() {
                 pad.set_vibration(closeness * 0.5, 0.0, 0.08);
             }
         }

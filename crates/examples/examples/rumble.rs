@@ -44,7 +44,7 @@ impl Game for Rumble {
     }
 
     fn update(&mut self, _dt: f32) {
-        let Some(pad) = joystick::joysticks().into_iter().next() else {
+        let Some(pad) = joystick::gamepads().into_iter().next() else {
             return;
         };
         let left = pad.gamepad_axis(GamepadAxis::TriggerLeft);
@@ -94,7 +94,7 @@ impl Game for Rumble {
         graphics::clear(Color::rgb(0.09, 0.09, 0.14));
         graphics::set_color(Color::WHITE);
 
-        let Some(pad) = joystick::joysticks().into_iter().next() else {
+        let Some(pad) = joystick::gamepads().into_iter().next() else {
             graphics::print("Plug in a gamepad to try its rumble.", 40.0, 40.0);
             graphics::print("Escape quits.", 40.0, 70.0);
             return;

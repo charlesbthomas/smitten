@@ -27,6 +27,7 @@
 
 mod context;
 mod error;
+mod gamepad_mapping;
 mod input;
 mod reload;
 
@@ -44,13 +45,18 @@ pub mod sound;
 pub mod system;
 pub mod timer;
 pub mod touch;
+#[cfg(feature = "video")]
+pub mod video;
 pub mod window;
 
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, CompareMode, Config, Cursor, Filter, GamepadAxis, GamepadButton, Key,
-    MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
+    BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
+    GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton,
+    Scaling, StencilAction, TouchId, Wrap,
 };
+
+use std::path::Path;
 
 use smitten_core::backend::BackendEvent;
 
@@ -77,6 +83,13 @@ pub trait Game: Sized + 'static {
     /// input method have been applied. Use this for text fields, and
     /// `key_pressed` for controls.
     fn text_input(&mut self, _text: &str) {}
+
+    /// Called while an input method is composing text that has not been
+    /// typed yet, as for Chinese or Japanese. `start` and `length` select
+    /// the part being edited, counted in characters. A game showing a text
+    /// box can draw `text` at the cursor until [`Game::text_input`] brings
+    /// the finished text.
+    fn text_edited(&mut self, _text: &str, _start: usize, _length: usize) {}
 
     /// Called when the pointer moves to `(x, y)`, having moved `(dx, dy)`.
     fn mouse_moved(&mut self, _x: f32, _y: f32, _dx: f32, _dy: f32) {}
@@ -125,11 +138,11 @@ pub trait Game: Sized + 'static {
     ) {
     }
 
-    /// Called when a gamepad is plugged in, and once at startup for each
-    /// gamepad that was already connected.
+    /// Called when a joystick or gamepad is plugged in, and once at
+    /// startup for each one that was already connected.
     fn joystick_added(&mut self, _joystick: Joystick) {}
 
-    /// Called when a gamepad is unplugged.
+    /// Called when a joystick or gamepad is unplugged.
     fn joystick_removed(&mut self, _joystick: Joystick) {}
 
     /// Called when a gamepad button goes down.
@@ -140,6 +153,20 @@ pub trait Game: Sized + 'static {
 
     /// Called when a gamepad stick or trigger moves.
     fn gamepad_axis(&mut self, _joystick: Joystick, _axis: GamepadAxis, _value: f32) {}
+
+    /// Called when a raw joystick button goes down, gamepad or not.
+    /// Buttons count from 0.
+    fn joystick_pressed(&mut self, _joystick: Joystick, _button: usize) {}
+
+    /// Called when a raw joystick button is released.
+    fn joystick_released(&mut self, _joystick: Joystick, _button: usize) {}
+
+    /// Called when a raw joystick axis moves, with its new value from
+    /// -1.0 to 1.0.
+    fn joystick_axis(&mut self, _joystick: Joystick, _axis: usize, _value: f32) {}
+
+    /// Called when a joystick hat changes direction.
+    fn joystick_hat(&mut self, _joystick: Joystick, _hat: usize, _direction: JoystickHat) {}
 
     /// Called when the window's size changes, with its new size in units
     /// (see [`window::dimensions`]).
@@ -156,6 +183,52 @@ pub trait Game: Sized + 'static {
     /// Called when the window is minimized or hidden, and when it comes
     /// back.
     fn visible(&mut self, _visible: bool) {}
+
+    /// Called when the player drops a file on the window, with its
+    /// absolute path and where it was dropped, the equivalent of
+    /// `love.filedropped`. Several files dropped together arrive one call
+    /// each.
+    ///
+    /// [`filesystem::read`] and friends take the absolute path as it is.
+    /// The file is not copied anywhere; save what the game needs to keep
+    /// with [`filesystem::write`].
+    ///
+    /// Not every platform reports where a drop happened. Where it is not
+    /// known, `(x, y)` is `(0, 0)`.
+    fn file_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
+
+    /// Called when the player drops a directory on the window, with its
+    /// absolute path and where it was dropped, the equivalent of
+    /// `love.directorydropped`.
+    ///
+    /// To read the files inside it like the game's own, mount it:
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use smitten::filesystem;
+    /// # fn directory_dropped(path: &Path) {
+    /// filesystem::mount(path, "dropped").expect("the directory can be mounted");
+    /// let names = filesystem::directory_items("dropped");
+    /// # }
+    /// ```
+    fn directory_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
+
+    /// Called with each event the game sent itself with [`event::push`],
+    /// the equivalent of a handler in `love.handlers`. They arrive at the
+    /// start of a frame, after the platform's events and before
+    /// `update`.
+    fn custom_event(&mut self, _event: event::CustomEvent) {}
+
+    /// Called when the system is running out of memory, the equivalent of
+    /// `love.lowmemory`. Mobile systems send this before closing a game
+    /// to reclaim memory, so drop caches and anything that can be loaded
+    /// again.
+    fn low_memory(&mut self) {}
+
+    /// Called when the display the window is on turns, as when a phone
+    /// is rotated, the equivalent of `love.displayrotated`. The safe area
+    /// (see [`window::safe_area`]) may have moved too.
+    fn display_rotated(&mut self, _orientation: DisplayOrientation) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
     fn quit(&mut self) -> bool {
@@ -196,6 +269,9 @@ pub fn run<G: Game>(config: Config) {
         'running: loop {
             while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
                 dispatch(&mut game, event);
+            }
+            for event in context::with(|ctx| ctx.events.take()) {
+                game.custom_event(event);
             }
 
             if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
@@ -335,6 +411,14 @@ fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
                 pressure,
             }
         }
+        BackendEvent::FileDropped { path, x, y } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::FileDropped { path, x, y }
+        }
+        BackendEvent::DirectoryDropped { path, x, y } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::DirectoryDropped { path, x, y }
+        }
         other => other,
     }
 }
@@ -350,9 +434,18 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
     match event {
         BackendEvent::Quit => event::quit(),
         BackendEvent::Resized { width, height } => game.resized(width, height),
-        BackendEvent::KeyDown { key, is_repeat } => game.key_pressed(key, is_repeat),
+        BackendEvent::KeyDown { key, is_repeat } => {
+            if !is_repeat || context::with(|ctx| ctx.input.key_repeat) {
+                game.key_pressed(key, is_repeat);
+            }
+        }
         BackendEvent::KeyUp { key } => game.key_released(key),
         BackendEvent::TextInput(text) => game.text_input(&text),
+        BackendEvent::TextEdited {
+            text,
+            start,
+            length,
+        } => game.text_edited(&text, start, length),
         BackendEvent::MouseMoved { x, y, dx, dy } => game.mouse_moved(x, y, dx, dy),
         BackendEvent::MousePressed {
             x,
@@ -402,8 +495,24 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::GamepadAxis { id, axis, value } => {
             game.gamepad_axis(Joystick::new(id), axis, value);
         }
+        BackendEvent::JoystickPressed { id, button } => {
+            game.joystick_pressed(Joystick::new(id), button);
+        }
+        BackendEvent::JoystickReleased { id, button } => {
+            game.joystick_released(Joystick::new(id), button);
+        }
+        BackendEvent::JoystickAxis { id, axis, value } => {
+            game.joystick_axis(Joystick::new(id), axis, value);
+        }
+        BackendEvent::JoystickHat { id, hat, direction } => {
+            game.joystick_hat(Joystick::new(id), hat, direction);
+        }
         BackendEvent::Focus(focused) => game.focus(focused),
         BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
         BackendEvent::Visible(visible) => game.visible(visible),
+        BackendEvent::FileDropped { path, x, y } => game.file_dropped(&path, x, y),
+        BackendEvent::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
+        BackendEvent::LowMemory => game.low_memory(),
+        BackendEvent::DisplayRotated(orientation) => game.display_rotated(orientation),
     }
 }
