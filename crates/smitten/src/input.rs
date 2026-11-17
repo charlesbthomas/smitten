@@ -196,7 +196,8 @@ impl InputState {
             | BackendEvent::MouseFocus(_)
             | BackendEvent::Visible(_)
             | BackendEvent::FileDropped { .. }
-            | BackendEvent::DirectoryDropped { .. } => {}
+            | BackendEvent::DirectoryDropped { .. }
+            | BackendEvent::LowMemory => {}
         }
     }
 }

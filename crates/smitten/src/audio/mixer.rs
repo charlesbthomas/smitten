@@ -4,7 +4,7 @@
 //! and the audio thread, which calls [`Mixer::mix`]. It has no dependency
 //! on a platform, so everything here can be tested by mixing into a buffer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use smitten_core::backend::AUDIO_SAMPLE_RATE;
@@ -19,6 +19,62 @@ pub(crate) enum Data {
     Static(Arc<Decoded>),
     /// Decoded while it plays. Uses little memory however long it is.
     Stream(Stream),
+    /// Buffers of samples handed over by the game as it makes them.
+    Queue(Queue),
+}
+
+/// The buffers waiting to be played by a queueable source.
+pub(crate) struct Queue {
+    buffers: VecDeque<Vec<Frame>>,
+    /// The index of `buffers[0][0]` counted from when the source started.
+    base: u64,
+    rate: u32,
+    channels: u16,
+    /// How many buffers may wait at once.
+    capacity: usize,
+}
+
+impl Queue {
+    pub fn new(rate: u32, channels: u16, capacity: usize) -> Self {
+        Self {
+            buffers: VecDeque::new(),
+            base: 0,
+            rate,
+            channels,
+            capacity: capacity.max(1),
+        }
+    }
+
+    /// Returns frame `index`, forgetting buffers that have been played
+    /// past. As with a stream, frames earlier than the last one asked for
+    /// are gone.
+    fn frame(&mut self, index: u64) -> Option<Frame> {
+        // A buffer is kept while it holds the frame before `index`, since
+        // the mixer blends each frame with the next and may ask for that
+        // one again.
+        while let Some(front) = self.buffers.front() {
+            let end = self.base + front.len() as u64;
+            if end >= index {
+                break;
+            }
+            self.base = end;
+            self.buffers.pop_front();
+        }
+        let mut offset = index.checked_sub(self.base)?;
+        for buffer in &self.buffers {
+            if let Some(&frame) = buffer.get(offset as usize) {
+                return Some(frame);
+            }
+            offset -= buffer.len() as u64;
+        }
+        None
+    }
+
+    /// Forgets everything queued and counts from the start again.
+    fn clear(&mut self) {
+        self.buffers.clear();
+        self.base = 0;
+    }
 }
 
 /// A sliding window over a file that is decoded as playback advances.
@@ -93,6 +149,7 @@ impl Data {
         match self {
             Data::Static(sound) => sound.rate,
             Data::Stream(stream) => stream.decoder.rate(),
+            Data::Queue(queue) => queue.rate,
         }
     }
 
@@ -101,6 +158,7 @@ impl Data {
         match self {
             Data::Static(sound) => sound.channels,
             Data::Stream(stream) => stream.decoder.channels(),
+            Data::Queue(queue) => queue.channels,
         }
     }
 
@@ -108,6 +166,7 @@ impl Data {
         match self {
             Data::Static(sound) => sound.frames.get(usize::try_from(index).ok()?).copied(),
             Data::Stream(stream) => stream.frame(index),
+            Data::Queue(queue) => queue.frame(index),
         }
     }
 
@@ -116,12 +175,22 @@ impl Data {
         match self {
             Data::Static(sound) => Some(sound.frames.len() as u64),
             Data::Stream(stream) => stream.end.or(stream.decoder.total_frames()),
+            // A queue goes on for as long as the game keeps feeding it.
+            Data::Queue(_) => None,
         }
     }
 
+    /// Moves to `index`. A queue can only go back to the start, which
+    /// empties it, as stopping a queueable source does in LÖVE.
     fn seek(&mut self, index: u64) {
-        if let Data::Stream(stream) = self {
-            stream.seek(index);
+        match self {
+            Data::Static(_) => {}
+            Data::Stream(stream) => stream.seek(index),
+            Data::Queue(queue) => {
+                if index == 0 {
+                    queue.clear();
+                }
+            }
         }
     }
 }
@@ -385,6 +454,10 @@ impl Mixer {
         let data = match &original.data {
             Data::Static(sound) => Data::Static(sound.clone()),
             Data::Stream(stream) => Data::Stream(Stream::new(stream.bytes().clone())?),
+            // A copy of a queue starts with nothing queued.
+            Data::Queue(queue) => {
+                Data::Queue(Queue::new(queue.rate, queue.channels, queue.capacity))
+            }
         };
         let copy = Voice {
             looping: original.looping,
@@ -419,6 +492,41 @@ impl Mixer {
         if let Some(voice) = self.voices.get_mut(&id) {
             voice.data = data;
             voice.position = 0.0;
+        }
+    }
+
+    /// Adds a buffer to the end of a queueable source. Returns `Ok(false)`
+    /// if it already has as many buffers waiting as it can hold.
+    pub fn queue(
+        &mut self,
+        id: u64,
+        frames: Vec<Frame>,
+        rate: u32,
+        channels: u16,
+    ) -> Result<bool, String> {
+        let Some(Data::Queue(queue)) = self.voices.get_mut(&id).map(|voice| &mut voice.data) else {
+            return Err("only a queueable source can have sound queued".to_owned());
+        };
+        if rate != queue.rate || channels != queue.channels {
+            return Err(format!(
+                "queued sound is {rate} Hz with {channels} channel(s), but the source plays {} Hz with {} channel(s)",
+                queue.rate, queue.channels
+            ));
+        }
+        if queue.buffers.len() >= queue.capacity {
+            return Ok(false);
+        }
+        if !frames.is_empty() {
+            queue.buffers.push_back(frames);
+        }
+        Ok(true)
+    }
+
+    /// How many more buffers a queueable source can take right now.
+    pub fn free_buffers(&self, id: u64) -> usize {
+        match self.voices.get(&id).map(|voice| &voice.data) {
+            Some(Data::Queue(queue)) => queue.capacity.saturating_sub(queue.buffers.len()),
+            _ => 0,
         }
     }
 
@@ -472,7 +580,8 @@ impl Mixer {
 
     pub fn set_looping(&mut self, id: u64, looping: bool) {
         if let Some(voice) = self.voices.get_mut(&id) {
-            voice.looping = looping;
+            // A queue has no end to go back to the start from.
+            voice.looping = looping && !matches!(voice.data, Data::Queue(_));
         }
     }
 
@@ -503,6 +612,9 @@ impl Mixer {
     /// Moves playback to `seconds` from the start.
     pub fn seek(&mut self, id: u64, seconds: f64) {
         if let Some(voice) = self.voices.get_mut(&id) {
+            if matches!(voice.data, Data::Queue(_)) {
+                return;
+            }
             let frame = (seconds.max(0.0) * f64::from(voice.data.rate())).floor();
             voice.position = frame;
             voice.data.seek(frame as u64);
@@ -1044,5 +1156,97 @@ mod tests {
         left(&mut mixer, 900);
         // 900 frames at a pitch of 1 / 0.9 cover 1000 frames of the sound.
         assert!((mixer.tell(id) * f64::from(RATE) - 1_000.0).abs() < 1.0);
+    }
+
+    fn queue_voice(mixer: &mut Mixer, capacity: usize) -> u64 {
+        mixer.add(Voice::new(Data::Queue(Queue::new(RATE, 2, capacity))))
+    }
+
+    #[test]
+    fn a_queue_plays_its_buffers_in_order_and_frees_them() {
+        let mut mixer = Mixer::default();
+        let id = queue_voice(&mut mixer, 2);
+        assert_eq!(mixer.free_buffers(id), 2);
+        assert_eq!(mixer.queue(id, vec![[0.25; 2]; 10], RATE, 2), Ok(true));
+        assert_eq!(mixer.queue(id, vec![[0.5; 2]; 10], RATE, 2), Ok(true));
+        // Full until the audio thread has played through a buffer.
+        assert_eq!(mixer.queue(id, vec![[0.75; 2]; 10], RATE, 2), Ok(false));
+        assert_eq!(mixer.free_buffers(id), 0);
+
+        mixer.play(id);
+        let out = left(&mut mixer, 15);
+        assert_eq!(out[..10], [0.25; 10]);
+        assert_eq!(out[10..], [0.5; 5]);
+        assert_eq!(mixer.free_buffers(id), 1);
+        assert!(mixer.is_playing(id));
+    }
+
+    #[test]
+    fn a_queue_that_runs_dry_stops_and_plays_again_once_fed() {
+        let mut mixer = Mixer::default();
+        let id = queue_voice(&mut mixer, 4);
+        mixer.queue(id, vec![[0.5; 2]; 10], RATE, 2).unwrap();
+        mixer.play(id);
+        let out = left(&mut mixer, 20);
+        assert_eq!(out[..10], [0.5; 10]);
+        assert_eq!(out[10..], [0.0; 10]);
+        assert!(!mixer.is_playing(id));
+        assert_eq!(mixer.free_buffers(id), 4);
+
+        mixer.queue(id, vec![[0.25; 2]; 10], RATE, 2).unwrap();
+        mixer.play(id);
+        assert_eq!(left(&mut mixer, 5), [0.25; 5]);
+    }
+
+    #[test]
+    fn a_queue_crosses_buffers_smoothly_at_a_low_pitch() {
+        let mut mixer = Mixer::default();
+        let id = queue_voice(&mut mixer, 8);
+        for _ in 0..4 {
+            mixer.queue(id, vec![[0.5; 2]; 3], RATE, 2).unwrap();
+        }
+        mixer.set_pitch(id, 0.5);
+        mixer.play(id);
+        // Twelve frames at half speed last about twenty-four.
+        let out = left(&mut mixer, 22);
+        assert!(out.iter().all(|&sample| sample == 0.5), "{out:?}");
+        assert!(mixer.is_playing(id));
+    }
+
+    #[test]
+    fn stopping_a_queue_empties_it_and_it_never_loops() {
+        let mut mixer = Mixer::default();
+        let id = queue_voice(&mut mixer, 2);
+        mixer.queue(id, vec![[0.5; 2]; 10], RATE, 2).unwrap();
+        mixer.set_looping(id, true);
+        assert!(!mixer.is_looping(id));
+        mixer.play(id);
+        left(&mut mixer, 2);
+        mixer.stop(id);
+        assert_eq!(mixer.free_buffers(id), 2);
+        mixer.play(id);
+        assert_eq!(left(&mut mixer, 3), [0.0; 3]);
+    }
+
+    #[test]
+    fn a_queue_refuses_sound_of_another_format() {
+        let mut mixer = Mixer::default();
+        let id = queue_voice(&mut mixer, 2);
+        assert!(mixer.queue(id, vec![[0.5; 2]; 10], 22_050, 2).is_err());
+        assert!(mixer.queue(id, vec![[0.5; 2]; 10], RATE, 1).is_err());
+        let file = mixer.add(Voice::new(constant(10, 0.5)));
+        assert!(mixer.queue(file, vec![[0.5; 2]; 10], RATE, 2).is_err());
+        assert_eq!(mixer.free_buffers(file), 0);
+    }
+
+    #[test]
+    fn a_copy_of_a_queue_starts_empty() {
+        let mut mixer = Mixer::default();
+        let id = queue_voice(&mut mixer, 3);
+        mixer.queue(id, vec![[0.5; 2]; 10], RATE, 2).unwrap();
+        let copy = mixer.duplicate(id).unwrap();
+        assert_eq!(mixer.free_buffers(copy), 3);
+        assert_eq!(mixer.channels(copy), 2);
+        assert_eq!(mixer.duration(copy), None);
     }
 }
