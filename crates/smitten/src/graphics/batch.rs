@@ -1,7 +1,7 @@
 //! Collects a frame's triangles and groups them into as few draw calls as
 //! the draw order allows.
 
-use smitten_core::backend::{DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex};
+use smitten_core::backend::{ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex};
 use smitten_core::{BlendMode, Color, Filter, StencilMode};
 
 #[derive(Default)]
@@ -16,6 +16,8 @@ pub(crate) struct Batch {
     pub scissor: Option<Scissor>,
     pub stencil: StencilMode,
     pub stencil_value: u8,
+    pub color_mask: ColorMask,
+    pub wireframe: bool,
     /// Uniform data for the queued calls that use a custom shader.
     pub uniforms: Vec<u8>,
     shader: Option<ShaderId>,
@@ -106,9 +108,9 @@ impl Batch {
         });
     }
 
-    /// Queues triangles that ignore the scissor, stencil and shader in
-    /// force and use `blend`. For the framework's own drawing, such as
-    /// showing the game's picture in the window.
+    /// Queues triangles that ignore the scissor, stencil, shader, color
+    /// mask and wireframe in force and use `blend`. For the framework's
+    /// own drawing, such as showing the game's picture in the window.
     pub fn push_plain(
         &mut self,
         texture: Option<TextureId>,
@@ -121,9 +123,18 @@ impl Batch {
             self.scissor.take(),
             std::mem::replace(&mut self.stencil, StencilMode::Off),
             self.shader.take(),
+            std::mem::take(&mut self.color_mask),
+            std::mem::take(&mut self.wireframe),
         );
         self.push(texture, filter, triangles);
-        (self.blend, self.scissor, self.stencil, self.shader) = saved;
+        (
+            self.blend,
+            self.scissor,
+            self.stencil,
+            self.shader,
+            self.color_mask,
+            self.wireframe,
+        ) = saved;
     }
 
     /// Queues triangles, three vertices each, to draw on top of everything
@@ -184,6 +195,8 @@ impl Batch {
                     && last.scissor == self.scissor
                     && last.stencil == self.stencil
                     && last.stencil_value == self.stencil_value
+                    && last.color_mask == self.color_mask
+                    && last.wireframe == self.wireframe
                     && last.shader == self.shader
                     && last.uniform_offset == uniform_offset =>
             {
@@ -197,6 +210,8 @@ impl Batch {
                     scissor: self.scissor,
                     stencil: self.stencil,
                     stencil_value: self.stencil_value,
+                    color_mask: self.color_mask,
+                    wireframe: self.wireframe,
                     shader: self.shader,
                     uniform_offset,
                     first_vertex,
@@ -263,6 +278,33 @@ mod tests {
         batch.push(None, Filter::Nearest, &TRIANGLE);
 
         assert_eq!(batch.calls.len(), 1);
+    }
+
+    #[test]
+    fn a_color_mask_or_wireframe_starts_a_new_call_that_plain_draws_ignore() {
+        let mut batch = Batch::default();
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.color_mask = ColorMask {
+            a: false,
+            ..ColorMask::ALL
+        };
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.wireframe = true;
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push_plain(None, Filter::Linear, BlendMode::Replace, &TRIANGLE);
+
+        let states: Vec<_> = batch
+            .calls
+            .iter()
+            .map(|call| (call.color_mask.a, call.wireframe))
+            .collect();
+        assert_eq!(
+            states,
+            [(true, false), (false, false), (false, true), (true, false)]
+        );
+        // The game's settings are back once the plain draw is queued.
+        assert!(batch.wireframe);
+        assert!(!batch.color_mask.a);
     }
 
     #[test]

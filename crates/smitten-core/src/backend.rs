@@ -200,6 +200,32 @@ pub struct Scissor {
     pub height: u32,
 }
 
+/// Which color channels drawing may change. The rest keep what the
+/// target already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColorMask {
+    pub r: bool,
+    pub g: bool,
+    pub b: bool,
+    pub a: bool,
+}
+
+impl ColorMask {
+    /// Every channel may change, as drawing starts out.
+    pub const ALL: ColorMask = ColorMask {
+        r: true,
+        g: true,
+        b: true,
+        a: true,
+    };
+}
+
+impl Default for ColorMask {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
 /// A run of triangles that share a texture and drawing state.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DrawCall {
@@ -214,6 +240,11 @@ pub struct DrawCall {
     /// The value written by [`StencilMode::Write`] with a replace action,
     /// or compared against by [`StencilMode::Test`].
     pub stencil_value: u8,
+    /// The color channels the draw may change.
+    pub color_mask: ColorMask,
+    /// Whether to draw only the edges of the triangles, one pixel wide,
+    /// for debugging.
+    pub wireframe: bool,
     /// The custom shader to draw with, or `None` for the built-in one.
     pub shader: Option<ShaderId>,
     /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its

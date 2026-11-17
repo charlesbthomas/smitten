@@ -11,7 +11,9 @@ use std::ffi::{CStr, c_void};
 use std::ptr;
 
 use sdl3_sys::everything::*;
-use smitten_core::backend::{DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId, Vertex};
+use smitten_core::backend::{
+    ColorMask, DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId, Vertex,
+};
 use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
 
 use crate::{sdl_error, shader};
@@ -34,6 +36,8 @@ struct PipelineKey {
     to_target: bool,
     blend: BlendMode,
     stencil: StencilMode,
+    color_mask: ColorMask,
+    wireframe: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -156,6 +160,8 @@ impl Renderer {
                 to_target: false,
                 blend: BlendMode::Alpha,
                 stencil: StencilMode::Off,
+                color_mask: ColorMask::ALL,
+                wireframe: false,
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
@@ -396,8 +402,7 @@ impl Renderer {
                 fragment,
                 format,
                 self.stencil_format,
-                key.blend,
-                key.stencil,
+                key,
             )
         }
     }
@@ -434,6 +439,8 @@ impl Renderer {
                     to_target: pass.target.is_some(),
                     blend: call.blend,
                     stencil: call.stencil,
+                    color_mask: call.color_mask,
+                    wireframe: call.wireframe,
                 };
                 if !self.pipelines.contains_key(&key)
                     && let Ok(pipeline) = self.create_pipeline(key)
@@ -824,6 +831,8 @@ impl Renderer {
                     to_target: target.is_some(),
                     blend: call.blend,
                     stencil: call.stencil,
+                    color_mask: call.color_mask,
+                    wireframe: call.wireframe,
                 };
                 // A pipeline that could not be built draws nothing.
                 let Some(&pipeline) = self.pipelines.get(&key) else {
@@ -1017,9 +1026,15 @@ unsafe fn create_pipeline(
     fragment_shader: *mut SDL_GPUShader,
     format: SDL_GPUTextureFormat,
     stencil_format: SDL_GPUTextureFormat,
-    blend: BlendMode,
-    stencil: StencilMode,
+    key: PipelineKey,
 ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
+    let PipelineKey {
+        blend,
+        stencil,
+        color_mask,
+        wireframe,
+        ..
+    } = key;
     // SAFETY: all pointers in the create-info structs outlive the calls
     // that read them.
     unsafe {
@@ -1058,6 +1073,20 @@ unsafe fn create_pipeline(
         if matches!(stencil, StencilMode::Write(_)) {
             blend_state.enable_color_write_mask = true;
             blend_state.color_write_mask = SDL_GPUColorComponentFlags(0);
+        } else if color_mask != ColorMask::ALL {
+            let mut flags = 0;
+            for (on, flag) in [
+                (color_mask.r, SDL_GPU_COLORCOMPONENT_R),
+                (color_mask.g, SDL_GPU_COLORCOMPONENT_G),
+                (color_mask.b, SDL_GPU_COLORCOMPONENT_B),
+                (color_mask.a, SDL_GPU_COLORCOMPONENT_A),
+            ] {
+                if on {
+                    flags |= flag.0;
+                }
+            }
+            blend_state.enable_color_write_mask = true;
+            blend_state.color_write_mask = SDL_GPUColorComponentFlags(flags);
         }
         let targets = [SDL_GPUColorTargetDescription {
             format,
@@ -1075,7 +1104,11 @@ unsafe fn create_pipeline(
             },
             primitive_type: SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
             rasterizer_state: SDL_GPURasterizerState {
-                fill_mode: SDL_GPU_FILLMODE_FILL,
+                fill_mode: if wireframe {
+                    SDL_GPU_FILLMODE_LINE
+                } else {
+                    SDL_GPU_FILLMODE_FILL
+                },
                 cull_mode: SDL_GPU_CULLMODE_NONE,
                 ..Default::default()
             },

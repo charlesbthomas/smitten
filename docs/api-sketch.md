@@ -215,6 +215,8 @@ fn main() {
 | `text:set(s)` / `setf(s, limit, align)` / `add(s, x, y)` / `addf(s, limit, align, x, y)` / `clear()` | `text.set(s)` / `set_f(s, limit, align)` / `add(s, x, y)` / `add_f(s, limit, align, x, y)` / `clear()` | `add` returns the index from 0. `add_ex` takes the full `draw` arguments. Colored text tables are not supported yet. |
 | `text:getDimensions()` / `getWidth()` / `getHeight()` / `setFont(font)` | `text.dimensions()` / `width()` / `height()` / `set_font(&font)` | `text.bounds(index)` gives one piece's box. |
 | `love.graphics.draw(text, x, y)` | `graphics::draw_text(&text, x, y)` | `draw_text_ex` and `draw_text_with` take the other forms. |
+| `love.graphics.setColorMask(r, g, b, a)` / `getColorMask()` | `graphics::set_color_mask(r, g, b, a)` / `graphics::color_mask()` | Booleans. Clearing ignores the mask. |
+| `love.graphics.setWireframe(true)` / `isWireframe()` | `graphics::set_wireframe(true)` / `graphics::is_wireframe()` | Triangle edges, one pixel wide. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

@@ -27,7 +27,7 @@ mod transform;
 
 use std::path::Path;
 
-use smitten_core::backend::{Backend, Frame, Pass, Scissor, TextureId, Vertex};
+use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId, Vertex};
 
 use crate::context;
 use smitten_core::StencilMode;
@@ -223,6 +223,8 @@ impl GraphicsState {
         self.batch.set_shader(None);
         self.batch.blend = BlendMode::default();
         self.batch.stencil = StencilMode::Off;
+        self.batch.color_mask = ColorMask::ALL;
+        self.batch.wireframe = false;
         self.scissor = None;
         self.screen.design = None;
         let leftovers = (
@@ -974,6 +976,33 @@ pub fn set_line_style(style: LineStyle) {
 /// Returns whether the edges of lines and outlines are softened.
 pub fn line_style() -> LineStyle {
     context::with(|ctx| ctx.gfx.line_style)
+}
+
+/// Chooses which color channels drawing may change, the equivalent of
+/// `love.graphics.setColorMask`. A channel left out keeps what is already
+/// there. Clearing the screen or a canvas ignores the mask.
+pub fn set_color_mask(r: bool, g: bool, b: bool, a: bool) {
+    context::with(|ctx| ctx.gfx.batch.color_mask = ColorMask { r, g, b, a });
+}
+
+/// Which color channels drawing may change, as `(r, g, b, a)`.
+pub fn color_mask() -> (bool, bool, bool, bool) {
+    context::with(|ctx| {
+        let mask = ctx.gfx.batch.color_mask;
+        (mask.r, mask.g, mask.b, mask.a)
+    })
+}
+
+/// Draws only the edges of every triangle from now on, one pixel wide,
+/// to see how shapes, images and text are built. For debugging, as in
+/// LÖVE.
+pub fn set_wireframe(enabled: bool) {
+    context::with(|ctx| ctx.gfx.batch.wireframe = enabled);
+}
+
+/// Whether wireframe drawing is on.
+pub fn is_wireframe() -> bool {
+    context::with(|ctx| ctx.gfx.batch.wireframe)
 }
 
 /// Returns the filter that newly created images start with.
