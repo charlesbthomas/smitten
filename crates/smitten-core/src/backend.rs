@@ -308,6 +308,28 @@ pub trait Backend {
     fn create_texture(&mut self, width: u32, height: u32, rgba: &[u8])
     -> Result<TextureId, String>;
 
+    /// As `create_texture`, with a full chain of mipmaps made from the
+    /// image: smaller copies the GPU uses when the image is drawn small.
+    /// They start out blended with [`Filter::Linear`] and a sharpness of 0,
+    /// and `update_texture` makes them again.
+    fn create_mipmapped_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<TextureId, String>;
+
+    /// Sets how a texture with mipmaps blends between them, or `None` to
+    /// draw only the full-size image. Positive `sharpness` chooses larger
+    /// mipmaps than the GPU would, and negative smaller ones. Does nothing
+    /// to a texture without mipmaps.
+    fn set_texture_mipmap_filter(
+        &mut self,
+        texture: TextureId,
+        filter: Option<Filter>,
+        sharpness: f32,
+    );
+
     /// Replaces the `width` by `height` region of a texture whose top-left
     /// corner is at `(x, y)`. `rgba` is laid out as in `create_texture`.
     fn update_texture(

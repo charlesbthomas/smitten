@@ -45,7 +45,7 @@ pub(crate) mod reloading {
 }
 
 pub use canvas::Canvas;
-pub use image::{Image, ImageError, Quad};
+pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
@@ -1303,7 +1303,24 @@ pub fn new_image(path: impl AsRef<Path>) -> Image {
 
 /// Loads an image file (PNG or JPEG), returning an error if it fails.
 pub fn try_new_image(path: impl AsRef<Path>) -> Result<Image, ImageError> {
-    image::load(path.as_ref())
+    image::load(path.as_ref(), ImageSettings::default())
+}
+
+/// Loads an image file with options such as mipmaps, the equivalent of
+/// `love.graphics.newImage(path, settings)`.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_with`] to handle the failure instead.
+pub fn new_image_with(path: impl AsRef<Path>, settings: ImageSettings) -> Image {
+    try_new_image_with(path, settings).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads an image file with options, returning an error if it fails.
+pub fn try_new_image_with(
+    path: impl AsRef<Path>,
+    settings: ImageSettings,
+) -> Result<Image, ImageError> {
+    image::load(path.as_ref(), settings)
 }
 
 /// Loads an image file into memory, where its pixels can be read and

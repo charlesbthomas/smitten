@@ -56,6 +56,26 @@ struct Texture {
     wrap: (Wrap, Wrap),
     /// How much GPU memory the pixels take, for the game's statistics.
     bytes: u64,
+    /// How many mipmap levels it has, 1 for none.
+    levels: u32,
+    /// How mipmaps are sampled, once the texture has them.
+    mipmaps: Option<Mipmaps>,
+}
+
+/// How a texture with mipmaps blends between them.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Mipmaps {
+    filter: Filter,
+    /// The game's sharpness as the bits of an `f32`, so it can be hashed.
+    sharpness: u32,
+}
+
+/// Everything that tells one sampler from another.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct SamplerKey {
+    filter: Filter,
+    wrap: (Wrap, Wrap),
+    mipmaps: Option<Mipmaps>,
 }
 
 /// A fragment shader supplied by the game.
@@ -83,8 +103,9 @@ pub(crate) struct Renderer {
     screen_stencil_fresh: bool,
     linear: *mut SDL_GPUSampler,
     nearest: *mut SDL_GPUSampler,
-    /// Samplers for textures that do not clamp, made when first asked for.
-    wrapping: HashMap<(Filter, Wrap, Wrap), *mut SDL_GPUSampler>,
+    /// Samplers for textures that do not clamp or have mipmaps, made when
+    /// first asked for.
+    samplers: HashMap<SamplerKey, *mut SDL_GPUSampler>,
     white: *mut SDL_GPUTexture,
     textures: HashMap<u32, Texture>,
     next_texture_id: u32,
@@ -110,7 +131,7 @@ impl Renderer {
             screen_stencil_size: (0, 0),
             screen_stencil_fresh: false,
             linear: ptr::null_mut(),
-            wrapping: HashMap::new(),
+            samplers: HashMap::new(),
             nearest: ptr::null_mut(),
             white: ptr::null_mut(),
             textures: HashMap::new(),
@@ -167,9 +188,9 @@ impl Renderer {
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
-            renderer.linear = create_sampler(device, Filter::Linear, (Wrap::Clamp, Wrap::Clamp))?;
-            renderer.nearest = create_sampler(device, Filter::Nearest, (Wrap::Clamp, Wrap::Clamp))?;
-            renderer.white = new_texture(device, 1, 1, &[255, 255, 255, 255])?;
+            renderer.linear = create_sampler(device, SamplerKey::clamped(Filter::Linear))?;
+            renderer.nearest = create_sampler(device, SamplerKey::clamped(Filter::Nearest))?;
+            renderer.white = new_texture(device, 1, 1, 1, &[255, 255, 255, 255])?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
         Ok(renderer)
@@ -180,14 +201,27 @@ impl Renderer {
         width: u32,
         height: u32,
         rgba: &[u8],
+        mipmapped: bool,
     ) -> Result<TextureId, String> {
         if width == 0 || height == 0 {
             return Err("an image must be at least 1x1 pixels".to_string());
         }
         check_pixel_count(width, height, rgba)?;
+        let levels = if mipmapped {
+            mipmap_levels(width, height)
+        } else {
+            1
+        };
+        let mipmaps = mipmapped.then_some(Mipmaps {
+            filter: Filter::Linear,
+            sharpness: 0f32.to_bits(),
+        });
+        if let Some(mipmaps) = mipmaps {
+            self.ensure_samplers((Wrap::Clamp, Wrap::Clamp), Some(mipmaps))?;
+        }
         // SAFETY: the device is alive and `rgba` was just checked to cover
         // the whole texture.
-        let handle = unsafe { new_texture(self.device, width, height, rgba)? };
+        let handle = unsafe { new_texture(self.device, width, height, levels, rgba)? };
         let id = self.next_texture_id;
         self.next_texture_id += 1;
         self.textures.insert(
@@ -200,7 +234,9 @@ impl Renderer {
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: u64::from(width) * u64::from(height) * 4,
+                bytes: mipmap_bytes(width, height, levels),
+                levels,
+                mipmaps,
             },
         );
         Ok(TextureId(id))
@@ -260,6 +296,8 @@ impl Renderer {
                 stencil_fresh: false,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
                 bytes: u64::from(width) * u64::from(height) * 4,
+                levels: 1,
+                mipmaps: None,
             },
         );
         Ok(TextureId(id))
@@ -294,35 +332,79 @@ impl Renderer {
         check_pixel_count(width, height, rgba)?;
         // SAFETY: the texture is alive, the region was checked to lie inside
         // it, and `rgba` was checked to cover the region.
-        unsafe { upload_region(self.device, target.handle, x, y, width, height, rgba) }
+        unsafe {
+            upload_region(self.device, target.handle, x, y, width, height, rgba)?;
+            if target.levels > 1 {
+                generate_mipmaps(self.device, target.handle)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets how a texture with mipmaps blends between them. `None` uses
+    /// only the full-size picture. Positive `sharpness` picks larger
+    /// mipmaps than the GPU would.
+    pub fn set_texture_mipmap_filter(
+        &mut self,
+        texture: TextureId,
+        filter: Option<Filter>,
+        sharpness: f32,
+    ) {
+        let Some(&entry) = self.textures.get(&texture.0) else {
+            return;
+        };
+        if entry.levels <= 1 {
+            return;
+        }
+        let mipmaps = filter.map(|filter| Mipmaps {
+            filter,
+            sharpness: sharpness.to_bits(),
+        });
+        if let Err(message) = self.ensure_samplers(entry.wrap, mipmaps) {
+            eprintln!("smitten: {message}");
+            return;
+        }
+        if let Some(entry) = self.textures.get_mut(&texture.0) {
+            entry.mipmaps = mipmaps;
+        }
+    }
+
+    /// Makes the samplers a texture with these settings needs, for both
+    /// filters, so that drawing never has to stop to make one.
+    fn ensure_samplers(
+        &mut self,
+        wrap: (Wrap, Wrap),
+        mipmaps: Option<Mipmaps>,
+    ) -> Result<(), String> {
+        for filter in [Filter::Linear, Filter::Nearest] {
+            let key = SamplerKey {
+                filter,
+                wrap,
+                mipmaps,
+            };
+            if key == SamplerKey::clamped(filter) || self.samplers.contains_key(&key) {
+                continue;
+            }
+            // SAFETY: the device is alive.
+            let sampler = unsafe { create_sampler(self.device, key)? };
+            self.samplers.insert(key, sampler);
+        }
+        Ok(())
     }
 
     pub fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap) {
-        let Some(entry) = self.textures.get_mut(&texture.0) else {
+        let Some(entry) = self.textures.get(&texture.0) else {
             return;
         };
         let wrap = (horizontal, vertical);
-        if wrap != (Wrap::Clamp, Wrap::Clamp) {
-            // Made now, for both filters, so that drawing never has to
-            // stop to make one.
-            for filter in [Filter::Linear, Filter::Nearest] {
-                if self.wrapping.contains_key(&(filter, horizontal, vertical)) {
-                    continue;
-                }
-                // SAFETY: the device is alive.
-                match unsafe { create_sampler(self.device, filter, wrap) } {
-                    Ok(sampler) => {
-                        self.wrapping
-                            .insert((filter, horizontal, vertical), sampler);
-                    }
-                    Err(message) => {
-                        eprintln!("smitten: {message}");
-                        return;
-                    }
-                }
-            }
+        let mipmaps = entry.mipmaps;
+        if let Err(message) = self.ensure_samplers(wrap, mipmaps) {
+            eprintln!("smitten: {message}");
+            return;
         }
-        entry.wrap = wrap;
+        if let Some(entry) = self.textures.get_mut(&texture.0) {
+            entry.wrap = wrap;
+        }
     }
 
     /// The GPU memory taken by every texture the game holds, in bytes.
@@ -825,10 +907,10 @@ impl Renderer {
                     continue;
                 }
                 // A texture that was freed while still queued draws nothing.
-                let (texture, wrap) = match call.texture {
-                    None => (self.white, (Wrap::Clamp, Wrap::Clamp)),
+                let (texture, wrap, mipmaps) = match call.texture {
+                    None => (self.white, (Wrap::Clamp, Wrap::Clamp), None),
                     Some(id) => match self.textures.get(&id.0) {
-                        Some(texture) => (texture.handle, texture.wrap),
+                        Some(texture) => (texture.handle, texture.wrap, texture.mipmaps),
                         None => continue,
                     },
                 };
@@ -894,8 +976,12 @@ impl Renderer {
                     Filter::Nearest => self.nearest,
                 };
                 let sampler = self
-                    .wrapping
-                    .get(&(call.filter, wrap.0, wrap.1))
+                    .samplers
+                    .get(&SamplerKey {
+                        filter: call.filter,
+                        wrap,
+                        mipmaps,
+                    })
                     .copied()
                     .unwrap_or(clamped);
                 SDL_BindGPUFragmentSamplers(
@@ -1012,7 +1098,7 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
-            for &sampler in self.wrapping.values() {
+            for &sampler in self.samplers.values() {
                 SDL_ReleaseGPUSampler(self.device, sampler);
             }
             for &pipeline in self.pipelines.values() {
@@ -1250,10 +1336,9 @@ unsafe fn create_shader(
 /// `device` must be alive.
 unsafe fn create_sampler(
     device: *mut SDL_GPUDevice,
-    filter: Filter,
-    wrap: (Wrap, Wrap),
+    key: SamplerKey,
 ) -> Result<*mut SDL_GPUSampler, String> {
-    let filter = match filter {
+    let filter = match key.filter {
         Filter::Linear => SDL_GPU_FILTER_LINEAR,
         Filter::Nearest => SDL_GPU_FILTER_NEAREST,
     };
@@ -1262,20 +1347,76 @@ unsafe fn create_sampler(
         Wrap::Repeat => SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
         Wrap::MirroredRepeat => SDL_GPU_SAMPLERADDRESSMODE_MIRRORED_REPEAT,
     };
-    let info = SDL_GPUSamplerCreateInfo {
+    let mut info = SDL_GPUSamplerCreateInfo {
         min_filter: filter,
         mag_filter: filter,
-        address_mode_u: address_mode(wrap.0),
-        address_mode_v: address_mode(wrap.1),
+        address_mode_u: address_mode(key.wrap.0),
+        address_mode_v: address_mode(key.wrap.1),
         address_mode_w: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
         ..Default::default()
     };
+    // Without mipmaps the level of detail stays at 0, the full picture.
+    if let Some(mipmaps) = key.mipmaps {
+        info.mipmap_mode = match mipmaps.filter {
+            Filter::Linear => SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+            Filter::Nearest => SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+        };
+        // Sharper means a larger mipmap, as in LÖVE.
+        info.mip_lod_bias = -f32::from_bits(mipmaps.sharpness);
+        info.max_lod = 1000.0;
+    }
     // SAFETY: `info` is valid for the call.
     let sampler = unsafe { SDL_CreateGPUSampler(device, &info) };
     if sampler.is_null() {
         return Err(format!("could not create a sampler: {}", sdl_error()));
     }
     Ok(sampler)
+}
+
+impl SamplerKey {
+    /// The sampler for a texture that clamps and has no mipmaps.
+    fn clamped(filter: Filter) -> SamplerKey {
+        SamplerKey {
+            filter,
+            wrap: (Wrap::Clamp, Wrap::Clamp),
+            mipmaps: None,
+        }
+    }
+}
+
+/// How many mipmap levels a full chain for a `width` by `height` texture
+/// has, down to 1 by 1.
+fn mipmap_levels(width: u32, height: u32) -> u32 {
+    32 - width.max(height).max(1).leading_zeros()
+}
+
+/// The bytes of `levels` mipmap levels of a `width` by `height` texture.
+fn mipmap_bytes(width: u32, height: u32, levels: u32) -> u64 {
+    (0..levels)
+        .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
+        .sum()
+}
+
+/// Fills every smaller mipmap level of `texture` from the full-size one.
+///
+/// # Safety
+/// `device` and `texture` must be alive, and the texture must have been
+/// made to be drawn to.
+unsafe fn generate_mipmaps(
+    device: *mut SDL_GPUDevice,
+    texture: *mut SDL_GPUTexture,
+) -> Result<(), String> {
+    // SAFETY: the command buffer is submitted on the only path that gets
+    // one, with no pass open.
+    unsafe {
+        let commands = SDL_AcquireGPUCommandBuffer(device);
+        if commands.is_null() {
+            return Err(format!("could not make mipmaps: {}", sdl_error()));
+        }
+        SDL_GenerateMipmapsForGPUTexture(commands, texture);
+        SDL_SubmitGPUCommandBuffer(commands);
+    }
+    Ok(())
 }
 
 fn check_pixel_count(width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
@@ -1298,8 +1439,15 @@ unsafe fn new_texture(
     device: *mut SDL_GPUDevice,
     width: u32,
     height: u32,
+    levels: u32,
     rgba: &[u8],
 ) -> Result<*mut SDL_GPUTexture, String> {
+    // Mipmaps are made by drawing each level from the one above.
+    let usage = if levels > 1 {
+        SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET
+    } else {
+        SDL_GPU_TEXTUREUSAGE_SAMPLER
+    };
     // SAFETY: the create-info is valid for the call, and the new texture is
     // released if filling it fails.
     unsafe {
@@ -1308,11 +1456,11 @@ unsafe fn new_texture(
             &SDL_GPUTextureCreateInfo {
                 r#type: SDL_GPU_TEXTURETYPE_2D,
                 format: TEXTURE_FORMAT,
-                usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                usage,
                 width,
                 height,
                 layer_count_or_depth: 1,
-                num_levels: 1,
+                num_levels: levels,
                 sample_count: SDL_GPU_SAMPLECOUNT_1,
                 ..Default::default()
             },
@@ -1320,7 +1468,14 @@ unsafe fn new_texture(
         if texture.is_null() {
             return Err(format!("could not create a texture: {}", sdl_error()));
         }
-        if let Err(message) = upload_region(device, texture, 0, 0, width, height, rgba) {
+        let filled = upload_region(device, texture, 0, 0, width, height, rgba).and_then(|()| {
+            if levels > 1 {
+                generate_mipmaps(device, texture)
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(message) = filled {
             SDL_ReleaseGPUTexture(device, texture);
             return Err(message);
         }

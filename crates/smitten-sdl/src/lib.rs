@@ -21,8 +21,8 @@ use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId,
 };
 use smitten_core::{
-    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
-    PowerInfo, PowerState, TouchId, WindowState, Wrap,
+    Config, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
+    MouseButton, PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -439,7 +439,26 @@ impl Backend for SdlBackend {
         height: u32,
         rgba: &[u8],
     ) -> Result<TextureId, String> {
-        self.renderer.create_texture(width, height, rgba)
+        self.renderer.create_texture(width, height, rgba, false)
+    }
+
+    fn create_mipmapped_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<TextureId, String> {
+        self.renderer.create_texture(width, height, rgba, true)
+    }
+
+    fn set_texture_mipmap_filter(
+        &mut self,
+        texture: TextureId,
+        filter: Option<Filter>,
+        sharpness: f32,
+    ) {
+        self.renderer
+            .set_texture_mipmap_filter(texture, filter, sharpness);
     }
 
     fn update_texture(

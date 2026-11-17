@@ -27,7 +27,20 @@ pub(crate) struct Inner {
     height: Cell<u32>,
     filter: Cell<Filter>,
     wrap: Cell<(Wrap, Wrap)>,
+    /// How many mipmap levels the texture has, 1 for none.
+    mipmap_count: u32,
+    mipmap_filter: Cell<Option<(Filter, f32)>>,
     _counted: Counted,
+}
+
+/// Options for making an image, the equivalent of the settings table
+/// LÖVE's `newImage` takes.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ImageSettings {
+    /// Whether to make mipmaps: smaller copies of the image that the GPU
+    /// uses when it is drawn small, so it does not shimmer or look grainy.
+    /// They take a third more memory. See [`Image::set_mipmap_filter`].
+    pub mipmaps: bool,
 }
 
 impl Drop for Inner {
@@ -41,11 +54,28 @@ impl Image {
     /// Creates an image from raw pixels: `width * height` of them, four
     /// bytes each (red, green, blue, alpha), in rows from the top.
     pub fn from_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Image, ImageError> {
+        Image::from_rgba_with(width, height, rgba, ImageSettings::default())
+    }
+
+    /// As [`Image::from_rgba`], with options such as mipmaps.
+    pub fn from_rgba_with(
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        settings: ImageSettings,
+    ) -> Result<Image, ImageError> {
         context::with(|ctx| {
-            let texture = ctx
-                .backend
-                .create_texture(width, height, rgba)
-                .map_err(ImageError::Upload)?;
+            let texture = if settings.mipmaps {
+                ctx.backend.create_mipmapped_texture(width, height, rgba)
+            } else {
+                ctx.backend.create_texture(width, height, rgba)
+            }
+            .map_err(ImageError::Upload)?;
+            let mipmap_count = if settings.mipmaps {
+                32 - width.max(height).max(1).leading_zeros()
+            } else {
+                1
+            };
             Ok(Image {
                 inner: Rc::new(Inner {
                     texture: Cell::new(texture),
@@ -53,6 +83,8 @@ impl Image {
                     height: Cell::new(height),
                     filter: Cell::new(ctx.gfx.default_filter),
                     wrap: Cell::default(),
+                    mipmap_count,
+                    mipmap_filter: Cell::new(settings.mipmaps.then_some((Filter::Linear, 0.0))),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -75,6 +107,8 @@ impl Image {
                 height: Cell::new(height),
                 filter: Cell::new(filter),
                 wrap: Cell::default(),
+                mipmap_count: 1,
+                mipmap_filter: Cell::new(None),
                 _counted: Counted::new(kind),
             }),
         }
@@ -118,6 +152,38 @@ impl Image {
         context::with(|ctx| {
             ctx.backend
                 .set_texture_wrap(self.texture(), horizontal, vertical);
+        });
+    }
+
+    /// How many mipmap levels the image has, counting the full-size image:
+    /// 1 for an image made without mipmaps.
+    pub fn mipmap_count(&self) -> u32 {
+        self.inner.mipmap_count
+    }
+
+    /// How the image blends between its mipmaps, and their sharpness, or
+    /// `None` if it draws only the full-size image.
+    pub fn mipmap_filter(&self) -> Option<(Filter, f32)> {
+        self.inner.mipmap_filter.get()
+    }
+
+    /// Sets how the image blends between its mipmaps, the equivalent of
+    /// `Image:setMipmapFilter`. [`Filter::Linear`] blends smoothly from one
+    /// to the next, and is how it starts out. `None` draws only the
+    /// full-size image. A positive `sharpness` picks larger mipmaps than
+    /// the GPU would, for a crisper image, and a negative one smaller.
+    ///
+    /// Does nothing to an image made without mipmaps.
+    pub fn set_mipmap_filter(&self, filter: Option<Filter>, sharpness: f32) {
+        if self.inner.mipmap_count <= 1 {
+            return;
+        }
+        self.inner
+            .mipmap_filter
+            .set(filter.map(|filter| (filter, sharpness)));
+        context::with(|ctx| {
+            ctx.backend
+                .set_texture_mipmap_filter(self.texture(), filter, sharpness);
         });
     }
 
@@ -222,7 +288,7 @@ pub(crate) fn load_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), ImageError> 
     Ok((decoded.width(), decoded.height(), decoded.into_raw()))
 }
 
-pub(crate) fn load(path: &Path) -> Result<Image, ImageError> {
+pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageError> {
     let bytes = crate::filesystem::read(path).map_err(|source| ImageError::Read {
         path: path.to_path_buf(),
         source,
@@ -231,7 +297,12 @@ pub(crate) fn load(path: &Path) -> Result<Image, ImageError> {
         path: path.to_path_buf(),
         message,
     })?;
-    let image = Image::from_rgba(decoded.width(), decoded.height(), decoded.as_raw())?;
+    let image = Image::from_rgba_with(
+        decoded.width(),
+        decoded.height(),
+        decoded.as_raw(),
+        settings,
+    )?;
     let file = crate::filesystem::resolve(path);
     context::with(|ctx| {
         ctx.reload
@@ -249,9 +320,19 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
     }
     // A different size needs a new texture. Quads made for the old size
     // keep their old numbers until the game makes them again.
-    let texture = backend.create_texture(width, height, decoded.as_raw())?;
+    // The number of mipmaps changes with the size, so the image keeps
+    // whether it has them but not how many.
+    let texture = if inner.mipmap_count > 1 {
+        backend.create_mipmapped_texture(width, height, decoded.as_raw())?
+    } else {
+        backend.create_texture(width, height, decoded.as_raw())?
+    };
     let (horizontal, vertical) = inner.wrap.get();
     backend.set_texture_wrap(texture, horizontal, vertical);
+    if inner.mipmap_count > 1 {
+        let (filter, sharpness) = inner.mipmap_filter.get().unzip();
+        backend.set_texture_mipmap_filter(texture, filter, sharpness.unwrap_or(0.0));
+    }
     backend.destroy_texture(inner.texture.replace(texture));
     inner.width.set(width);
     inner.height.set(height);

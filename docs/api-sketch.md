@@ -218,6 +218,8 @@ fn main() {
 | `love.graphics.setColorMask(r, g, b, a)` / `getColorMask()` | `graphics::set_color_mask(r, g, b, a)` / `graphics::color_mask()` | Booleans. Clearing ignores the mask. |
 | `love.graphics.setWireframe(true)` / `isWireframe()` | `graphics::set_wireframe(true)` / `graphics::is_wireframe()` | Triangle edges, one pixel wide. |
 | `love.graphics.getStats()` | `graphics::stats()` | A `Stats` struct with LÖVE's fields in `snake_case`. Draw counts start from zero each frame. |
+| `love.graphics.newImage(path, {mipmaps = true})` | `graphics::new_image_with(path, ImageSettings { mipmaps: true })` | Also `Image::from_rgba_with` and `Image::from_image_data_with`. Hot reloading keeps the mipmaps. Canvases cannot have mipmaps yet. |
+| `image:setMipmapFilter("linear", sharpness)` / `getMipmapFilter()` / `getMipmapCount()` | `image.set_mipmap_filter(Some(Filter::Linear), sharpness)` / `mipmap_filter()` / `mipmap_count()` | `None` turns them off. Starts out `Linear` with a sharpness of 0. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
