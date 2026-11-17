@@ -468,6 +468,10 @@ impl Backend for SdlBackend {
         self.renderer.destroy_texture(texture);
     }
 
+    fn texture_memory(&self) -> u64 {
+        self.renderer.texture_memory()
+    }
+
     fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
         self.renderer.create_shader(source)
     }

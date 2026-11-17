@@ -332,6 +332,10 @@ pub trait Backend {
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
 
+    /// Roughly how much GPU memory the textures that have not been
+    /// destroyed take, in bytes.
+    fn texture_memory(&self) -> u64;
+
     /// Compiles a custom fragment shader written in WGSL.
     ///
     /// `source` must define

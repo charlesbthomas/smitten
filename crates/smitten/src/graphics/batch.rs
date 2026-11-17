@@ -4,6 +4,8 @@
 use smitten_core::backend::{ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex};
 use smitten_core::{BlendMode, Color, Filter, StencilMode};
 
+use super::stats::FrameCounts;
+
 #[derive(Default)]
 pub(crate) struct Batch {
     pub vertices: Vec<Vertex>,
@@ -26,6 +28,9 @@ pub(crate) struct Batch {
     shader_data: Vec<u8>,
     /// Where that copy is, once it has been made.
     shader_offset: Option<u32>,
+    /// What has been queued since the frame began, for the game's
+    /// statistics. Unlike the queue, it survives drawing canvases early.
+    pub counts: FrameCounts,
 }
 
 impl Batch {
@@ -36,6 +41,7 @@ impl Batch {
         self.passes.clear();
         self.uniforms.clear();
         self.shader_offset = None;
+        self.counts = FrameCounts::default();
     }
 
     /// Forgets the passes queued for canvases, once they have been drawn
@@ -161,6 +167,9 @@ impl Batch {
             .last()
             .is_none_or(|pass| pass.target != self.target)
         {
+            if !self.passes.is_empty() {
+                self.counts.canvas_switches += 1;
+            }
             self.passes.push(Pass {
                 target: self.target,
                 clear: None,
@@ -201,8 +210,18 @@ impl Batch {
                     && last.uniform_offset == uniform_offset =>
             {
                 last.vertex_count += vertex_count;
+                self.counts.draw_calls_batched += 1;
             }
             _ => {
+                self.counts.draw_calls += 1;
+                if self
+                    .counts
+                    .last_shader
+                    .is_some_and(|last| last != self.shader)
+                {
+                    self.counts.shader_switches += 1;
+                }
+                self.counts.last_shader = Some(self.shader);
                 self.calls.push(DrawCall {
                     texture,
                     filter,
@@ -305,6 +324,28 @@ mod tests {
         // The game's settings are back once the plain draw is queued.
         assert!(batch.wireframe);
         assert!(!batch.color_mask.a);
+    }
+
+    #[test]
+    fn counts_follow_what_was_queued_until_cleared() {
+        let mut batch = Batch::default();
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.set_shader(Some((ShaderId(3), &[])));
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.set_target(Some(TextureId(9)));
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.set_shader(None);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.forget_canvas_passes();
+
+        let counts = batch.counts;
+        assert_eq!(counts.draw_calls, 4);
+        assert_eq!(counts.draw_calls_batched, 1);
+        assert_eq!(counts.canvas_switches, 1);
+        assert_eq!(counts.shader_switches, 2);
+        batch.clear();
+        assert_eq!(batch.counts.draw_calls, 0);
     }
 
     #[test]

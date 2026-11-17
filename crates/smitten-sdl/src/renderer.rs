@@ -54,6 +54,8 @@ struct Texture {
     stencil_fresh: bool,
     /// What shows beyond the edges, horizontally and vertically.
     wrap: (Wrap, Wrap),
+    /// How much GPU memory the pixels take, for the game's statistics.
+    bytes: u64,
 }
 
 /// A fragment shader supplied by the game.
@@ -198,6 +200,7 @@ impl Renderer {
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
+                bytes: u64::from(width) * u64::from(height) * 4,
             },
         );
         Ok(TextureId(id))
@@ -256,6 +259,7 @@ impl Renderer {
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
+                bytes: u64::from(width) * u64::from(height) * 4,
             },
         );
         Ok(TextureId(id))
@@ -319,6 +323,11 @@ impl Renderer {
             }
         }
         entry.wrap = wrap;
+    }
+
+    /// The GPU memory taken by every texture the game holds, in bytes.
+    pub fn texture_memory(&self) -> u64 {
+        self.textures.values().map(|texture| texture.bytes).sum()
     }
 
     pub fn destroy_texture(&mut self, texture: TextureId) {

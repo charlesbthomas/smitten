@@ -9,6 +9,8 @@ use smitten_core::{Filter, Wrap};
 use crate::context;
 use crate::reload::Asset;
 
+use super::stats::{Counted, Kind};
+
 /// A picture that can be drawn, the equivalent of LÖVE's `Image`.
 ///
 /// Cloning is cheap and gives another handle to the same picture. Its GPU
@@ -25,6 +27,7 @@ pub(crate) struct Inner {
     height: Cell<u32>,
     filter: Cell<Filter>,
     wrap: Cell<(Wrap, Wrap)>,
+    _counted: Counted,
 }
 
 impl Drop for Inner {
@@ -50,18 +53,20 @@ impl Image {
                     height: Cell::new(height),
                     filter: Cell::new(ctx.gfx.default_filter),
                     wrap: Cell::default(),
+                    _counted: Counted::new(Kind::Image),
                 }),
             })
         })
     }
 
     /// Wraps a texture the backend already holds. The image takes over
-    /// freeing it.
+    /// freeing it. `kind` says what to count it as in the statistics.
     pub(crate) fn from_texture(
         texture: TextureId,
         width: u32,
         height: u32,
         filter: Filter,
+        kind: Kind,
     ) -> Image {
         Image {
             inner: Rc::new(Inner {
@@ -70,6 +75,7 @@ impl Image {
                 height: Cell::new(height),
                 filter: Cell::new(filter),
                 wrap: Cell::default(),
+                _counted: Counted::new(kind),
             }),
         }
     }

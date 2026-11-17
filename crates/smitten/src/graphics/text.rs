@@ -13,6 +13,7 @@ use std::rc::Rc;
 use smitten_core::Filter;
 use smitten_core::backend::{Backend, TextureId};
 
+use super::stats::{Counted, Kind};
 use crate::context;
 use crate::reload::Asset;
 
@@ -59,6 +60,7 @@ pub(crate) struct Inner {
     ///
     /// [`Text`]: super::Text
     generation: Cell<u32>,
+    _counted: Counted,
 }
 
 impl Drop for Inner {
@@ -109,6 +111,7 @@ impl Font {
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
                 generation: Cell::new(0),
+                _counted: Counted::new(Kind::Font),
             }),
         })
     }
@@ -139,6 +142,7 @@ impl Font {
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
                 generation: Cell::new(0),
+                _counted: Counted::new(Kind::Font),
             }),
         })
     }

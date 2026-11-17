@@ -21,6 +21,7 @@ mod screen;
 mod shader;
 mod shapes;
 mod sprite_batch;
+mod stats;
 mod text;
 mod text_object;
 mod transform;
@@ -51,6 +52,7 @@ pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use sprite_batch::SpriteBatch;
+pub use stats::Stats;
 pub use text::{Align, Font, FontError};
 pub use text_object::Text;
 pub use transform::Transform;
@@ -1003,6 +1005,26 @@ pub fn set_wireframe(enabled: bool) {
 /// Whether wireframe drawing is on.
 pub fn is_wireframe() -> bool {
     context::with(|ctx| ctx.gfx.batch.wireframe)
+}
+
+/// What the frame has drawn so far and how many images, canvases and
+/// fonts the game holds, the equivalent of `love.graphics.getStats`. Call
+/// it at the end of `draw` to see the whole frame.
+pub fn stats() -> Stats {
+    use stats::{Kind, alive};
+    context::with(|ctx| {
+        let counts = ctx.gfx.batch.counts;
+        Stats {
+            draw_calls: counts.draw_calls,
+            draw_calls_batched: counts.draw_calls_batched,
+            canvas_switches: counts.canvas_switches,
+            shader_switches: counts.shader_switches,
+            texture_memory: ctx.backend.texture_memory(),
+            images: alive(Kind::Image),
+            canvases: alive(Kind::Canvas),
+            fonts: alive(Kind::Font),
+        }
+    })
 }
 
 /// Returns the filter that newly created images start with.

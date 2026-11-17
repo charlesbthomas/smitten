@@ -4,6 +4,7 @@ use std::ops::Deref;
 use smitten_core::Filter;
 use smitten_core::backend::Backend;
 
+use super::stats::Kind;
 use super::{Image, ImageData};
 use crate::context;
 
@@ -74,7 +75,7 @@ impl Canvas {
         );
         let texture = backend.create_render_target(pixels.0, pixels.1)?;
         Ok(Canvas {
-            image: Image::from_texture(texture, width, height, filter),
+            image: Image::from_texture(texture, width, height, filter, Kind::Canvas),
             pixels,
             scale,
         })
