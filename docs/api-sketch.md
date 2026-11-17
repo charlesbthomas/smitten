@@ -172,6 +172,10 @@ fn main() {
 | `love.graphics.captureScreenshot("shot.png")` | `graphics::save_screenshot("shot.png")` | Written to the save directory. |
 | `love.graphics.setLineJoin("bevel")` | `graphics::set_line_join(LineJoin::Bevel)` | `Miter` (the default), `Bevel` or `None`. |
 | *(none)* | `graphics::dashed_line(x1, y1, x2, y2, dash, gap)`, `graphics::dashed_polyline(points, dash, gap)` | LÖVE has no dashed lines. |
+| *(none)* | `graphics::shadow(light_x, light_y, polygon, length)` | The shadow a convex shape casts away from a light, for stencil lighting. |
+| `love.graphics.rectangle` under a shader | the same | A filled shape's `uv` runs 0 to 1 across the box around it, so a shader can paint a shape with no image. |
+| *(none)* | `keyboard::axis(negative, positive)`, `keyboard::direction()` | Keys as -1, 0 or 1, and arrows plus WASD as a direction no longer than 1. |
+| *(none)* | `pad.left_stick(dead_zone)`, `pad.right_stick(dead_zone)` | A stick as `(x, y)` with the dead zone taken out. |
 | *(none)* | `color.lerp(other, t)`, `color.with_alpha(a)` | Blend two colors, or fade one. |
 | `source:clone():play()` | `source.play_once()`, `source.play_once_with(volume, pitch)` | Plays a copy that cleans itself up, so one sound can overlap itself. |
 | `love.graphics.setLineStyle("rough")` | `graphics::set_line_style(LineStyle::Rough)` | Lines start out `Smooth`, as in LÖVE. |

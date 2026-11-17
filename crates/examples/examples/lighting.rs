@@ -65,8 +65,6 @@ struct Block {
 struct Lighting {
     light_map: Canvas,
     glow: Shader,
-    /// A small white square for the glow shader to draw on.
-    square: Image,
     heart: Image,
     placed: Vec<Light>,
     shadows_on: bool,
@@ -168,47 +166,6 @@ fn wandering_lights() -> Vec<Light> {
     ]
 }
 
-/// Draws, for each edge of `block` that faces away from the light, the
-/// shadow behind it: the edge itself stretched away from the light.
-///
-/// Only the far edges cast shadows, so the block itself stays lit on the
-/// side facing the light, as if light falls on its top.
-fn draw_shadows(block: &Block, light_x: f32, light_y: f32) {
-    let corners = &block.corners;
-    // Which way round the corners go, so "facing away" can be told apart
-    // from "facing toward" whatever order they were listed in.
-    let winding: f32 = (0..corners.len())
-        .map(|index| {
-            let (ax, ay) = corners[index];
-            let (bx, by) = corners[(index + 1) % corners.len()];
-            ax * by - bx * ay
-        })
-        .sum::<f32>()
-        .signum();
-    for index in 0..corners.len() {
-        let (ax, ay) = corners[index];
-        let (bx, by) = corners[(index + 1) % corners.len()];
-        // The edge's outward side, compared with the direction to the light.
-        let (outward_x, outward_y) = ((by - ay) * winding, (ax - bx) * winding);
-        let toward_light = outward_x * (light_x - ax) + outward_y * (light_y - ay);
-        if toward_light >= 0.0 {
-            continue;
-        }
-        let far = |x: f32, y: f32| {
-            let (dx, dy) = (x - light_x, y - light_y);
-            let length = (dx * dx + dy * dy).sqrt().max(0.001);
-            (
-                x + dx / length * SHADOW_LENGTH,
-                y + dy / length * SHADOW_LENGTH,
-            )
-        };
-        graphics::polygon(
-            DrawMode::Fill,
-            &[(ax, ay), (bx, by), far(bx, by), far(ax, ay)],
-        );
-    }
-}
-
 impl Lighting {
     fn all_lights(&self) -> Vec<Light> {
         let (x, y) = mouse::position();
@@ -275,8 +232,11 @@ impl Lighting {
                     // Each light starts with a clean stencil, then marks
                     // its own shadows.
                     graphics::stencil(|| {
+                        // Only the far edges of a block cast shadows, so
+                        // the block itself stays lit, as if light falls
+                        // on its top.
                         for block in blocks {
-                            draw_shadows(block, light.x, light.y);
+                            graphics::shadow(light.x, light.y, &block.corners, SHADOW_LENGTH);
                         }
                     });
                     graphics::set_stencil_test(CompareMode::Equal, 0);
@@ -285,18 +245,14 @@ impl Lighting {
                 // Light adds up where lights overlap.
                 graphics::set_blend_mode(BlendMode::Add);
                 graphics::set_color(light.color);
-                let size = light.radius * 2.0;
-                let (width, _) = self.square.dimensions();
-                let scale = size / width as f32;
-                graphics::draw_ex(
-                    &self.square,
+                // A filled shape's texture coordinates run across it as
+                // they do across an image, so the shader needs no image.
+                graphics::rectangle(
+                    DrawMode::Fill,
                     light.x - light.radius,
                     light.y - light.radius,
-                    0.0,
-                    scale,
-                    scale,
-                    0.0,
-                    0.0,
+                    light.radius * 2.0,
+                    light.radius * 2.0,
                 );
                 graphics::set_blend_mode(BlendMode::Alpha);
                 graphics::clear_stencil_test();
@@ -311,11 +267,9 @@ impl Game for Lighting {
         graphics::set_background_color(Color::BLACK);
         let glow = graphics::new_shader(GLOW);
         glow.send("falloff", 1.6_f32);
-        let square = Image::from_rgba(4, 4, &[255; 4 * 4 * 4]).expect("a 4 by 4 image is valid");
         Lighting {
             light_map: graphics::new_canvas(WIDTH, HEIGHT),
             glow,
-            square,
             heart: graphics::new_image("heart.png"),
             placed: Vec::new(),
             shadows_on: true,

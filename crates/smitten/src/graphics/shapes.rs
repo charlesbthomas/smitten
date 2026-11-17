@@ -21,6 +21,52 @@ pub(crate) fn fill_convex(points: &[Point]) -> Vec<Point> {
     triangles
 }
 
+/// Returns a function giving each point its place in the box around
+/// `points`: `[0, 0]` at the top-left and `[1, 1]` at the bottom-right.
+pub(crate) fn spread_uv(points: &[Point]) -> impl Fn(f32, f32) -> [f32; 2] {
+    let mut low = (f32::MAX, f32::MAX);
+    let mut high = (f32::MIN, f32::MIN);
+    for &(x, y) in points {
+        low = (low.0.min(x), low.1.min(y));
+        high = (high.0.max(x), high.1.max(y));
+    }
+    // A shape with no width or height has nothing to spread across.
+    let span = |low: f32, high: f32| if high - low > 1e-9 { high - low } else { 1.0 };
+    let (width, height) = (span(low.0, high.0), span(low.1, high.1));
+    move |x, y| [(x - low.0) / width, (y - low.1) / height]
+}
+
+/// The shadow a convex polygon casts away from `light`, as triangles:
+/// each edge facing away from the light, stretched `length` further.
+pub(crate) fn shadow(light: Point, corners: &[Point], length: f32) -> Vec<Point> {
+    let mut triangles = Vec::new();
+    if corners.len() < 2 {
+        return triangles;
+    }
+    let edges = || (0..corners.len()).map(|i| (corners[i], corners[(i + 1) % corners.len()]));
+    // Which way round the corners go, so "facing away" can be told from
+    // "facing toward" whatever order they were listed in.
+    let winding = edges()
+        .map(|((ax, ay), (bx, by))| ax * by - bx * ay)
+        .sum::<f32>()
+        .signum();
+    let far = |(x, y): Point| {
+        let (dx, dy) = (x - light.0, y - light.1);
+        let distance = dx.hypot(dy).max(1e-6);
+        (x + dx / distance * length, y + dy / distance * length)
+    };
+    for (a, b) in edges() {
+        let outward = ((b.1 - a.1) * winding, (a.0 - b.0) * winding);
+        let toward_light = outward.0 * (light.0 - a.0) + outward.1 * (light.1 - a.1);
+        if toward_light >= 0.0 {
+            continue;
+        }
+        let (far_a, far_b) = (far(a), far(b));
+        triangles.extend_from_slice(&[a, b, far_b, a, far_b, far_a]);
+    }
+    triangles
+}
+
 /// How the corners of lines and outlines are drawn, as LÖVE's `LineJoin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LineJoin {
@@ -471,6 +517,38 @@ mod tests {
         let triangles = fill_convex(&SQUARE);
         assert_eq!(triangles.len(), 6);
         assert!((area(&triangles) - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_shape_spreads_texture_coordinates_across_the_box_around_it() {
+        let uv_of = spread_uv(&[(10.0, 20.0), (30.0, 20.0), (30.0, 60.0)]);
+        assert_eq!(uv_of(10.0, 20.0), [0.0, 0.0]);
+        assert_eq!(uv_of(30.0, 60.0), [1.0, 1.0]);
+        assert_eq!(uv_of(20.0, 30.0), [0.5, 0.25]);
+        // A shape with no size does not divide by zero.
+        let uv_of = spread_uv(&[(5.0, 5.0), (5.0, 5.0)]);
+        assert_eq!(uv_of(5.0, 5.0), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_shadow_stretches_the_far_edges_away_from_the_light() {
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        // A light to the left, level with the middle: only the left edge
+        // faces it, so the other three cast shadows, all to the right.
+        let triangles = shadow((-20.0, 5.0), &square, 100.0);
+        assert_eq!(triangles.len(), 18);
+        assert!(triangles.iter().all(|&(x, _)| x >= 0.0));
+        assert!(triangles.iter().any(|&(x, _)| x > 100.0));
+        // The other way round gives the same shadow.
+        let reversed: Vec<Point> = square.iter().rev().copied().collect();
+        let mirrored = shadow((-20.0, 5.0), &reversed, 100.0);
+        assert_eq!(mirrored.len(), 18);
+        assert!(mirrored.iter().all(|&(x, _)| x >= 0.0));
+        // A light off a corner leaves two edges facing away.
+        assert_eq!(shadow((-20.0, -20.0), &square, 100.0).len(), 12);
+        // A light inside the shape is hidden on every side.
+        assert_eq!(shadow((5.0, 5.0), &square, 100.0).len(), 24);
+        assert!(shadow((0.0, 0.0), &[(1.0, 1.0)], 100.0).is_empty());
     }
 
     #[test]

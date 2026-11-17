@@ -64,6 +64,28 @@ impl Joystick {
         })
     }
 
+    /// The left stick as a direction, with right and down positive.
+    ///
+    /// Sticks rarely rest at exactly zero, so anything pushed less than
+    /// `dead_zone` reads as `(0.0, 0.0)`; 0.2 suits most gamepads. Past
+    /// that the push grows smoothly from zero and is never longer than 1.
+    pub fn left_stick(&self, dead_zone: f32) -> (f32, f32) {
+        crate::input::stick_with_dead_zone(
+            self.gamepad_axis(GamepadAxis::LeftX),
+            self.gamepad_axis(GamepadAxis::LeftY),
+            dead_zone,
+        )
+    }
+
+    /// The right stick as a direction. See [`Joystick::left_stick`].
+    pub fn right_stick(&self, dead_zone: f32) -> (f32, f32) {
+        crate::input::stick_with_dead_zone(
+            self.gamepad_axis(GamepadAxis::RightX),
+            self.gamepad_axis(GamepadAxis::RightY),
+            dead_zone,
+        )
+    }
+
     /// Whether the gamepad can rumble.
     pub fn is_vibration_supported(&self) -> bool {
         context::with(|ctx| ctx.backend.gamepad_can_rumble(self.id))

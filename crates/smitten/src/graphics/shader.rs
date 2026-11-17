@@ -104,7 +104,10 @@ impl Shader {
 
     /// Sets the member of `Params` called `name`.
     ///
-    /// The value applies to everything drawn with this shader afterwards.
+    /// The value applies to everything drawn with this shader afterwards,
+    /// and what was drawn before keeps the value it was drawn with. So
+    /// one shader can draw several things in a frame with a different
+    /// value for each: send, draw, send again, draw again.
     ///
     /// Panics if the shader has no such member or it has a different type,
     /// which is always a bug in the game. Use [`Shader::try_send`] to

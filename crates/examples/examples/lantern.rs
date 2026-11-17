@@ -25,8 +25,8 @@ use smitten::audio::{self, Filter, Reverb, Source};
 use smitten::graphics::{Align, Canvas, DrawMode, Font, Image, Shader};
 use smitten::sound::SoundData;
 use smitten::{
-    BlendMode, Color, CompareMode, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, event,
-    filesystem, graphics, joystick, keyboard, math, mouse,
+    BlendMode, Color, CompareMode, Config, Game, GamepadButton, Joystick, Key, event, filesystem,
+    graphics, joystick, keyboard, math, mouse,
 };
 
 const WIDTH: f32 = 800.0;
@@ -48,6 +48,8 @@ const SHADE_PATIENCE: f32 = 0.3;
 const HEARTS: u32 = 3;
 const BEST_FILE: &str = "lantern-best.txt";
 const SHADOW_LENGTH: f32 = 2000.0;
+/// A `spread` for the beam shader that lets a light shine all round.
+const ALL_ROUND: f32 = -2.0;
 
 /// The rooms. `#` is wall, `@` where you start, `e` an ember, `s` a
 /// shade and `X` the door out.
@@ -202,8 +204,6 @@ struct Lantern {
     until_thump: f32,
     light_map: Canvas,
     beam: Shader,
-    halo: Shader,
-    square: Image,
     heart: Image,
     whisper: SoundData,
     sounds: Sounds,
@@ -423,35 +423,14 @@ impl Lantern {
 
     /// Which way the player wants to walk, no longer than 1.
     fn walking(&self) -> (f32, f32) {
-        let (mut x, mut y) = (0.0, 0.0);
-        if keyboard::is_any_down(&[Key::Left, Key::A]) {
-            x -= 1.0;
-        }
-        if keyboard::is_any_down(&[Key::Right, Key::D]) {
-            x += 1.0;
-        }
-        if keyboard::is_any_down(&[Key::Up, Key::W]) {
-            y -= 1.0;
-        }
-        if keyboard::is_any_down(&[Key::Down, Key::S]) {
-            y += 1.0;
-        }
+        let (mut x, mut y) = keyboard::direction();
         if let Some(pad) = joystick::joysticks().first() {
-            let (stick_x, stick_y) = (
-                pad.gamepad_axis(GamepadAxis::LeftX),
-                pad.gamepad_axis(GamepadAxis::LeftY),
-            );
-            if stick_x.hypot(stick_y) > 0.25 {
-                x += stick_x;
-                y += stick_y;
-            }
+            let (stick_x, stick_y) = pad.left_stick(0.25);
+            x += stick_x;
+            y += stick_y;
         }
-        let length = x.hypot(y);
-        if length > 1.0 {
-            (x / length, y / length)
-        } else {
-            (x, y)
-        }
+        let length = x.hypot(y).max(1.0);
+        (x / length, y / length)
     }
 
     /// Points the lantern: at the mouse when it moves, or along the right
@@ -466,11 +445,8 @@ impl Lantern {
             self.aim = (mouse.1 - self.player.1).atan2(mouse.0 - self.player.0);
         }
         if let Some(pad) = joystick::joysticks().first() {
-            let (x, y) = (
-                pad.gamepad_axis(GamepadAxis::RightX),
-                pad.gamepad_axis(GamepadAxis::RightY),
-            );
-            if x.hypot(y) > 0.4 {
+            let (x, y) = pad.right_stick(0.4);
+            if (x, y) != (0.0, 0.0) {
                 self.aim_at_mouse = false;
                 self.aim = y.atan2(x);
             }
@@ -707,44 +683,24 @@ impl Lantern {
                 (left + width, top + height),
                 (left, top + height),
             ];
-            for index in 0..4 {
-                let (ax, ay) = corners[index];
-                let (bx, by) = corners[(index + 1) % 4];
-                // Only edges that face away from the light cast shadows,
-                // so the wall itself stays lit.
-                let (outward_x, outward_y) = (by - ay, ax - bx);
-                if outward_x * (x - ax) + outward_y * (y - ay) >= 0.0 {
-                    continue;
-                }
-                let far = |px: f32, py: f32| {
-                    let (dx, dy) = (px - x, py - y);
-                    let length = dx.hypot(dy).max(0.001);
-                    (
-                        px + dx / length * SHADOW_LENGTH,
-                        py + dy / length * SHADOW_LENGTH,
-                    )
-                };
-                graphics::polygon(
-                    DrawMode::Fill,
-                    &[(ax, ay), (bx, by), far(bx, by), far(ax, ay)],
-                );
-            }
+            graphics::shadow(x, y, &corners, SHADOW_LENGTH);
         }
     }
 
-    /// Draws one glow onto the light map with the shader that is set.
-    fn draw_glow(&self, x: f32, y: f32, reach: f32, color: Color) {
+    /// Draws one glow onto the light map: a square for the beam shader
+    /// to paint, round or as a cone `spread` wide around the aim.
+    fn draw_glow(&self, x: f32, y: f32, reach: f32, color: Color, falloff: f32, spread: f32) {
+        // What is sent applies to what is drawn next, so one shader
+        // serves every light.
+        self.beam.send("falloff", falloff);
+        self.beam.send("spread", spread);
         graphics::set_color(color);
-        let scale = reach * 2.0 / self.square.dimensions().0 as f32;
-        graphics::draw_ex(
-            &self.square,
+        graphics::rectangle(
+            DrawMode::Fill,
             x - reach,
             y - reach,
-            0.0,
-            scale,
-            scale,
-            0.0,
-            0.0,
+            reach * 2.0,
+            reach * 2.0,
         );
     }
 
@@ -768,9 +724,17 @@ impl Lantern {
                 y,
                 BEAM_REACH + flicker * 14.0,
                 Color::rgb(1.0, 0.9, 0.68),
+                1.1,
+                BEAM_HALF_ANGLE.cos(),
             );
-            graphics::set_shader(Some(&self.halo));
-            self.draw_glow(x, y, HALO_REACH, Color::rgba(1.0, 0.8, 0.55, 0.5));
+            self.draw_glow(
+                x,
+                y,
+                HALO_REACH,
+                Color::rgba(1.0, 0.8, 0.55, 0.5),
+                1.6,
+                ALL_ROUND,
+            );
             graphics::clear_stencil_test();
 
             // Small lights that need no shadows.
@@ -781,11 +745,13 @@ impl Lantern {
                     ember.y,
                     34.0 + pulse * 8.0,
                     Color::rgb(1.0, 0.6, 0.25),
+                    1.6,
+                    ALL_ROUND,
                 );
             }
             if self.door_is_open() {
                 let (x, y) = self.exit;
-                self.draw_glow(x, y, 120.0, Color::rgb(0.45, 1.0, 0.65));
+                self.draw_glow(x, y, 120.0, Color::rgb(0.45, 1.0, 0.65), 1.6, ALL_ROUND);
             }
             graphics::set_shader(None);
             graphics::set_blend_mode(BlendMode::Alpha);
@@ -940,14 +906,6 @@ impl Game for Lantern {
         );
 
         let beam = graphics::new_shader(BEAM);
-        beam.send("falloff", 1.1_f32);
-        beam.send("spread", BEAM_HALF_ANGLE.cos());
-        beam.send("direction", (1.0_f32, 0.0_f32));
-        // The same shader shining all the way round.
-        let halo = graphics::new_shader(BEAM);
-        halo.send("falloff", 1.6_f32);
-        halo.send("spread", -2.0_f32);
-        halo.send("direction", (1.0_f32, 0.0_f32));
 
         let best = filesystem::read_string(BEST_FILE)
             .ok()
@@ -978,8 +936,6 @@ impl Game for Lantern {
             until_thump: 0.0,
             light_map: graphics::new_canvas(WIDTH as u32, HEIGHT as u32),
             beam,
-            halo,
-            square: Image::from_rgba(4, 4, &[255; 4 * 4 * 4]).expect("a 4 by 4 image is valid"),
             heart: graphics::new_image("heart.png"),
             whisper: make_whisper(),
             sounds: make_sounds(),

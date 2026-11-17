@@ -150,9 +150,54 @@ impl InputState {
     }
 }
 
+/// Shortens `(x, y)` to a length of 1 if it is longer.
+pub fn limit_length(x: f32, y: f32) -> (f32, f32) {
+    let length = x.hypot(y);
+    if length > 1.0 {
+        (x / length, y / length)
+    } else {
+        (x, y)
+    }
+}
+
+/// Reads a stick with a dead zone: nothing while it is pushed less than
+/// `dead_zone`, then growing smoothly from zero to a full push, never
+/// longer than 1.
+pub fn stick_with_dead_zone(x: f32, y: f32, dead_zone: f32) -> (f32, f32) {
+    let length = x.hypot(y);
+    let dead_zone = dead_zone.clamp(0.0, 0.99);
+    if length <= dead_zone || length == 0.0 {
+        return (0.0, 0.0);
+    }
+    let pushed = ((length - dead_zone) / (1.0 - dead_zone)).min(1.0);
+    (x / length * pushed, y / length * pushed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stick_inside_its_dead_zone_reads_as_nothing() {
+        assert_eq!(stick_with_dead_zone(0.1, -0.1, 0.2), (0.0, 0.0));
+        assert_eq!(stick_with_dead_zone(0.0, 0.0, 0.0), (0.0, 0.0));
+        // Just past the edge is a small push, not a jump to 0.2.
+        let (x, y) = stick_with_dead_zone(0.21, 0.0, 0.2);
+        assert!(x > 0.0 && x < 0.02 && y == 0.0);
+        // Halfway between the edge and a full push is half.
+        let (x, _) = stick_with_dead_zone(-0.6, 0.0, 0.2);
+        assert!((x + 0.5).abs() < 1e-6);
+        // A corner of a square stick is still no longer than 1.
+        let (x, y) = stick_with_dead_zone(1.0, 1.0, 0.2);
+        assert!((x.hypot(y) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_direction_is_never_longer_than_one() {
+        assert_eq!(limit_length(0.5, 0.0), (0.5, 0.0));
+        let (x, y) = limit_length(1.0, -1.0);
+        assert!((x.hypot(y) - 1.0).abs() < 1e-6 && x > 0.0 && y < 0.0);
+    }
 
     const PAD: JoystickId = JoystickId(3);
 
