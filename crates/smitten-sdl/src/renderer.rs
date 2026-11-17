@@ -12,7 +12,8 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    ColorMask, DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId, Vertex,
+    BoundTexture, ColorMask, DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId,
+    TextureKind, Vertex,
 };
 use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
 
@@ -21,6 +22,7 @@ use crate::{sdl_error, shader};
 // Compiled from the GLSL beside them by `shaders/build.sh`.
 static VERTEX_SPIRV: &[u8] = include_bytes!("../shaders/sprite.vert.spv");
 static FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite.frag.spv");
+static ARRAY_FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite_array.frag.spv");
 
 const VERTEX_SIZE: u32 = size_of::<Vertex>() as u32;
 const INITIAL_VERTEX_CAPACITY: u32 = 4096;
@@ -32,6 +34,8 @@ const TEXTURE_FORMAT: SDL_GPUTextureFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNOR
 struct PipelineKey {
     /// A custom shader, or `None` for the built-in one.
     shader: Option<u32>,
+    /// Whether the built-in shader draws a layer of an array texture.
+    layered: bool,
     /// Whether it draws to a render target rather than the screen.
     to_target: bool,
     blend: BlendMode,
@@ -60,6 +64,7 @@ struct Texture {
     levels: u32,
     /// How mipmaps are sampled, once the texture has them.
     mipmaps: Option<Mipmaps>,
+    kind: TextureKind,
 }
 
 /// How a texture with mipmaps blends between them.
@@ -83,6 +88,8 @@ struct CustomShader {
     fragment: *mut SDL_GPUShader,
     /// How many bytes of uniform data each draw must supply.
     uniform_size: u32,
+    /// The kinds of the textures it declares besides `image`.
+    textures: Vec<TextureKind>,
 }
 
 pub(crate) struct Renderer {
@@ -94,6 +101,8 @@ pub(crate) struct Renderer {
     next_shader_id: u32,
     /// The built-in fragment shader.
     fragment_shader: *mut SDL_GPUShader,
+    /// The built-in fragment shader for a layer of an array texture.
+    array_fragment_shader: *mut SDL_GPUShader,
     /// Built the first time each combination is drawn with.
     pipelines: HashMap<PipelineKey, *mut SDL_GPUGraphicsPipeline>,
     stencil_format: SDL_GPUTextureFormat,
@@ -107,6 +116,9 @@ pub(crate) struct Renderer {
     /// first asked for.
     samplers: HashMap<SamplerKey, *mut SDL_GPUSampler>,
     white: *mut SDL_GPUTexture,
+    /// Stand-ins for textures a shader declares but was not sent.
+    white_array: *mut SDL_GPUTexture,
+    white_cube: *mut SDL_GPUTexture,
     textures: HashMap<u32, Texture>,
     next_texture_id: u32,
     vertex_buffer: *mut SDL_GPUBuffer,
@@ -125,6 +137,7 @@ impl Renderer {
             shaders: HashMap::new(),
             next_shader_id: 1,
             fragment_shader: ptr::null_mut(),
+            array_fragment_shader: ptr::null_mut(),
             pipelines: HashMap::new(),
             stencil_format: SDL_GPU_TEXTUREFORMAT_INVALID,
             screen_stencil: ptr::null_mut(),
@@ -134,6 +147,8 @@ impl Renderer {
             samplers: HashMap::new(),
             nearest: ptr::null_mut(),
             white: ptr::null_mut(),
+            white_array: ptr::null_mut(),
+            white_cube: ptr::null_mut(),
             textures: HashMap::new(),
             next_texture_id: 1,
             vertex_buffer: ptr::null_mut(),
@@ -162,6 +177,14 @@ impl Renderer {
                 1,
                 0,
             )?;
+            renderer.array_fragment_shader = create_shader(
+                device,
+                ARRAY_FRAGMENT_SPIRV,
+                c"main",
+                SDL_GPU_SHADERSTAGE_FRAGMENT,
+                1,
+                1,
+            )?;
             renderer.stencil_format = [
                 SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
                 SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
@@ -180,6 +203,7 @@ impl Renderer {
             // setup fails at startup rather than drawing nothing.
             let common = PipelineKey {
                 shader: None,
+                layered: false,
                 to_target: false,
                 blend: BlendMode::Alpha,
                 stencil: StencilMode::Off,
@@ -191,6 +215,10 @@ impl Renderer {
             renderer.linear = create_sampler(device, SamplerKey::clamped(Filter::Linear))?;
             renderer.nearest = create_sampler(device, SamplerKey::clamped(Filter::Nearest))?;
             renderer.white = new_texture(device, 1, 1, 1, &[255, 255, 255, 255])?;
+            let white: &[u8] = &[255; 4];
+            renderer.white_array = new_layered_texture(device, TextureKind::Array, 1, 1, &[white])?;
+            renderer.white_cube =
+                new_layered_texture(device, TextureKind::Cube, 1, 1, &[white; 6])?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
         Ok(renderer)
@@ -237,6 +265,56 @@ impl Renderer {
                 bytes: mipmap_bytes(width, height, levels),
                 levels,
                 mipmaps,
+                kind: TextureKind::Flat,
+            },
+        );
+        Ok(TextureId(id))
+    }
+
+    pub fn create_layered_texture(
+        &mut self,
+        kind: TextureKind,
+        width: u32,
+        height: u32,
+        layers: &[&[u8]],
+    ) -> Result<TextureId, String> {
+        if kind == TextureKind::Flat {
+            let [layer] = layers else {
+                return Err("a flat texture has exactly one layer".to_string());
+            };
+            return self.create_texture(width, height, layer, false);
+        }
+        if width == 0 || height == 0 {
+            return Err("an image must be at least 1x1 pixels".to_string());
+        }
+        if layers.is_empty() {
+            return Err("there must be at least one layer".to_string());
+        }
+        if kind == TextureKind::Cube && (layers.len() != 6 || width != height) {
+            return Err("a cube needs six square faces".to_string());
+        }
+        for layer in layers {
+            check_pixel_count(width, height, layer)?;
+        }
+        // SAFETY: the device is alive and every layer was just checked to
+        // cover the whole texture.
+        let handle = unsafe { new_layered_texture(self.device, kind, width, height, layers)? };
+        let id = self.next_texture_id;
+        self.next_texture_id += 1;
+        self.textures.insert(
+            id,
+            Texture {
+                handle,
+                width,
+                height,
+                is_target: false,
+                stencil: ptr::null_mut(),
+                stencil_fresh: false,
+                wrap: (Wrap::Clamp, Wrap::Clamp),
+                bytes: u64::from(width) * u64::from(height) * 4 * layers.len() as u64,
+                levels: 1,
+                mipmaps: None,
+                kind,
             },
         );
         Ok(TextureId(id))
@@ -298,6 +376,7 @@ impl Renderer {
                 bytes: u64::from(width) * u64::from(height) * 4,
                 levels: 1,
                 mipmaps: None,
+                kind: TextureKind::Flat,
             },
         );
         Ok(TextureId(id))
@@ -315,6 +394,9 @@ impl Renderer {
         let Some(&target) = self.textures.get(&texture.0) else {
             return Err("the texture no longer exists".to_string());
         };
+        if target.kind != TextureKind::Flat {
+            return Err("only a flat texture can be updated".to_string());
+        }
         if width == 0 || height == 0 {
             return Ok(());
         }
@@ -333,7 +415,7 @@ impl Renderer {
         // SAFETY: the texture is alive, the region was checked to lie inside
         // it, and `rgba` was checked to cover the region.
         unsafe {
-            upload_region(self.device, target.handle, x, y, width, height, rgba)?;
+            upload_region(self.device, target.handle, 0, x, y, width, height, rgba)?;
             if target.levels > 1 {
                 generate_mipmaps(self.device, target.handle)?;
             }
@@ -433,7 +515,7 @@ impl Renderer {
                 &compiled.spirv,
                 shader::ENTRY_POINT,
                 SDL_GPU_SHADERSTAGE_FRAGMENT,
-                1,
+                1 + compiled.textures.len() as u32,
                 u32::from(compiled.uniform_size > 0),
             )?
         };
@@ -444,12 +526,18 @@ impl Renderer {
             CustomShader {
                 fragment,
                 uniform_size: compiled.uniform_size,
+                textures: compiled
+                    .textures
+                    .iter()
+                    .map(|texture| texture.kind)
+                    .collect(),
             },
         );
         Ok(ShaderInfo {
             id: ShaderId(id),
             uniform_size: compiled.uniform_size,
             fields: compiled.fields,
+            textures: compiled.textures,
         })
     }
 
@@ -472,6 +560,7 @@ impl Renderer {
 
     fn create_pipeline(&self, key: PipelineKey) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
         let fragment = match key.shader {
+            None if key.layered => self.array_fragment_shader,
             None => self.fragment_shader,
             Some(id) => {
                 self.shaders
@@ -525,14 +614,7 @@ impl Renderer {
                 .and_then(|end| frame.calls.get(pass.first_call as usize..end))
                 .unwrap_or(&[]);
             for call in calls {
-                let key = PipelineKey {
-                    shader: call.shader.map(|id| id.0),
-                    to_target: pass.target.is_some(),
-                    blend: call.blend,
-                    stencil: call.stencil,
-                    color_mask: call.color_mask,
-                    wireframe: call.wireframe,
-                };
+                let key = self.pipeline_key(call, pass.target.is_some());
                 if !self.pipelines.contains_key(&key)
                     && let Ok(pipeline) = self.create_pipeline(key)
                 {
@@ -540,6 +622,82 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    /// The pipeline `call` draws with.
+    fn pipeline_key(&self, call: &DrawCall, to_target: bool) -> PipelineKey {
+        let layered = call.shader.is_none()
+            && call
+                .texture
+                .and_then(|id| self.textures.get(&id.0))
+                .is_some_and(|texture| texture.kind == TextureKind::Array);
+        PipelineKey {
+            shader: call.shader.map(|id| id.0),
+            layered,
+            to_target,
+            blend: call.blend,
+            stencil: call.stencil,
+            color_mask: call.color_mask,
+            wireframe: call.wireframe,
+        }
+    }
+
+    /// The texture and sampler for each texture `shader` declares, from
+    /// what the game sent, or white where it sent nothing usable.
+    fn shader_bindings(
+        &self,
+        shader: &CustomShader,
+        sent: &[Option<BoundTexture>],
+    ) -> Vec<SDL_GPUTextureSamplerBinding> {
+        shader
+            .textures
+            .iter()
+            .enumerate()
+            .map(|(index, &kind)| {
+                let found = sent
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .and_then(|bound| Some((bound, self.textures.get(&bound.texture.0)?)))
+                    .filter(|(_, texture)| texture.kind == kind);
+                match found {
+                    Some((bound, texture)) => SDL_GPUTextureSamplerBinding {
+                        texture: texture.handle,
+                        sampler: self.sampler(bound.filter, texture.wrap, texture.mipmaps),
+                    },
+                    None => SDL_GPUTextureSamplerBinding {
+                        texture: match kind {
+                            TextureKind::Flat => self.white,
+                            TextureKind::Array => self.white_array,
+                            TextureKind::Cube => self.white_cube,
+                        },
+                        sampler: self.linear,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// The sampler for these settings, made beforehand by
+    /// `ensure_samplers`.
+    fn sampler(
+        &self,
+        filter: Filter,
+        wrap: (Wrap, Wrap),
+        mipmaps: Option<Mipmaps>,
+    ) -> *mut SDL_GPUSampler {
+        let clamped = match filter {
+            Filter::Linear => self.linear,
+            Filter::Nearest => self.nearest,
+        };
+        self.samplers
+            .get(&SamplerKey {
+                filter,
+                wrap,
+                mipmaps,
+            })
+            .copied()
+            .unwrap_or(clamped)
     }
 
     /// Makes the screen's stencil texture match the screen's size.
@@ -840,6 +998,7 @@ impl Renderer {
                         render_pass,
                         calls,
                         frame.uniforms,
+                        frame.textures,
                         pass.target,
                         frame.vertices.len() as u32,
                         width,
@@ -864,6 +1023,7 @@ impl Renderer {
         pass: *mut SDL_GPURenderPass,
         calls: &[DrawCall],
         uniforms: &[u8],
+        sent_textures: &[Option<BoundTexture>],
         target: Option<TextureId>,
         vertex_count: u32,
         width: u32,
@@ -907,34 +1067,53 @@ impl Renderer {
                     continue;
                 }
                 // A texture that was freed while still queued draws nothing.
-                let (texture, wrap, mipmaps) = match call.texture {
-                    None => (self.white, (Wrap::Clamp, Wrap::Clamp), None),
+                let (texture, wrap, mipmaps, kind) = match call.texture {
+                    None => (
+                        self.white,
+                        (Wrap::Clamp, Wrap::Clamp),
+                        None,
+                        TextureKind::Flat,
+                    ),
                     Some(id) => match self.textures.get(&id.0) {
-                        Some(texture) => (texture.handle, texture.wrap, texture.mipmaps),
+                        Some(texture) => {
+                            (texture.handle, texture.wrap, texture.mipmaps, texture.kind)
+                        }
                         None => continue,
                     },
                 };
+                // A cube cannot be drawn flat, and a custom shader's
+                // `image` is always flat.
+                let drawable = match kind {
+                    TextureKind::Flat => true,
+                    TextureKind::Array => call.shader.is_none(),
+                    TextureKind::Cube => false,
+                };
+                if !drawable {
+                    continue;
+                }
                 let Some(scissor) = clip_scissor(call.scissor, width, height) else {
                     continue;
                 };
-                let key = PipelineKey {
-                    shader: call.shader.map(|id| id.0),
-                    to_target: target.is_some(),
-                    blend: call.blend,
-                    stencil: call.stencil,
-                    color_mask: call.color_mask,
-                    wireframe: call.wireframe,
-                };
+                let key = self.pipeline_key(call, target.is_some());
                 // A pipeline that could not be built draws nothing.
                 let Some(&pipeline) = self.pipelines.get(&key) else {
                     continue;
                 };
+                let mut extra_bindings = Vec::new();
                 if let Some(id) = call.shader {
                     // A shader that was freed while still queued, or whose
                     // data is missing, draws nothing.
                     let Some(shader) = self.shaders.get(&id.0) else {
                         continue;
                     };
+                    if !shader.textures.is_empty() {
+                        let start = call.texture_offset as usize;
+                        let sent = start
+                            .checked_add(shader.textures.len())
+                            .and_then(|end| sent_textures.get(start..end))
+                            .unwrap_or(&[]);
+                        extra_bindings = self.shader_bindings(shader, sent);
+                    }
                     if shader.uniform_size > 0 {
                         let start = call.uniform_offset as usize;
                         let Some(data) = start
@@ -950,6 +1129,16 @@ impl Renderer {
                             shader.uniform_size,
                         );
                     }
+                }
+                if key.layered {
+                    // Padded to 16 bytes, the size of the uniform block.
+                    let layer = [call.layer as f32, 0.0, 0.0, 0.0];
+                    SDL_PushGPUFragmentUniformData(
+                        commands,
+                        0,
+                        layer.as_ptr().cast::<c_void>(),
+                        size_of_val(&layer) as u32,
+                    );
                 }
                 if call.stencil != StencilMode::Off && bound_reference != Some(call.stencil_value) {
                     SDL_SetGPUStencilReference(pass, call.stencil_value);
@@ -971,25 +1160,10 @@ impl Renderer {
                     );
                     bound_scissor = Some(scissor);
                 }
-                let clamped = match call.filter {
-                    Filter::Linear => self.linear,
-                    Filter::Nearest => self.nearest,
-                };
-                let sampler = self
-                    .samplers
-                    .get(&SamplerKey {
-                        filter: call.filter,
-                        wrap,
-                        mipmaps,
-                    })
-                    .copied()
-                    .unwrap_or(clamped);
-                SDL_BindGPUFragmentSamplers(
-                    pass,
-                    0,
-                    &SDL_GPUTextureSamplerBinding { texture, sampler },
-                    1,
-                );
+                let sampler = self.sampler(call.filter, wrap, mipmaps);
+                let mut bindings = vec![SDL_GPUTextureSamplerBinding { texture, sampler }];
+                bindings.extend(extra_bindings);
+                SDL_BindGPUFragmentSamplers(pass, 0, bindings.as_ptr(), bindings.len() as u32);
                 SDL_DrawGPUPrimitives(pass, call.vertex_count, 1, call.first_vertex, 0);
             }
         }
@@ -1094,6 +1268,8 @@ impl Drop for Renderer {
             }
             SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
             SDL_ReleaseGPUTexture(self.device, self.white);
+            SDL_ReleaseGPUTexture(self.device, self.white_array);
+            SDL_ReleaseGPUTexture(self.device, self.white_cube);
             SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
@@ -1109,6 +1285,7 @@ impl Drop for Renderer {
             }
             SDL_ReleaseGPUShader(self.device, self.vertex_shader);
             SDL_ReleaseGPUShader(self.device, self.fragment_shader);
+            SDL_ReleaseGPUShader(self.device, self.array_fragment_shader);
         }
     }
 }
@@ -1468,7 +1645,7 @@ unsafe fn new_texture(
         if texture.is_null() {
             return Err(format!("could not create a texture: {}", sdl_error()));
         }
-        let filled = upload_region(device, texture, 0, 0, width, height, rgba).and_then(|()| {
+        let filled = upload_region(device, texture, 0, 0, 0, width, height, rgba).and_then(|()| {
             if levels > 1 {
                 generate_mipmaps(device, texture)
             } else {
@@ -1483,14 +1660,64 @@ unsafe fn new_texture(
     }
 }
 
+/// Creates an array or cube texture and fills each layer.
+///
+/// # Safety
+/// `device` must be alive, `kind` must not be flat, and each layer must
+/// hold `width * height * 4` bytes.
+unsafe fn new_layered_texture(
+    device: *mut SDL_GPUDevice,
+    kind: TextureKind,
+    width: u32,
+    height: u32,
+    layers: &[&[u8]],
+) -> Result<*mut SDL_GPUTexture, String> {
+    let r#type = match kind {
+        TextureKind::Cube => SDL_GPU_TEXTURETYPE_CUBE,
+        _ => SDL_GPU_TEXTURETYPE_2D_ARRAY,
+    };
+    // SAFETY: the create-info is valid for the call, and the new texture
+    // is released if filling it fails.
+    unsafe {
+        let texture = SDL_CreateGPUTexture(
+            device,
+            &SDL_GPUTextureCreateInfo {
+                r#type,
+                format: TEXTURE_FORMAT,
+                usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                width,
+                height,
+                layer_count_or_depth: layers.len() as u32,
+                num_levels: 1,
+                sample_count: SDL_GPU_SAMPLECOUNT_1,
+                ..Default::default()
+            },
+        );
+        if texture.is_null() {
+            return Err(format!("could not create a texture: {}", sdl_error()));
+        }
+        for (index, layer) in layers.iter().enumerate() {
+            if let Err(message) =
+                upload_region(device, texture, index as u32, 0, 0, width, height, layer)
+            {
+                SDL_ReleaseGPUTexture(device, texture);
+                return Err(message);
+            }
+        }
+        Ok(texture)
+    }
+}
+
 /// Copies `rgba` into a region of `texture`.
 ///
 /// # Safety
 /// `device` and `texture` must be alive, the region must lie inside the
 /// texture, and `rgba` must hold `width * height * 4` bytes.
+#[allow(clippy::too_many_arguments)]
 unsafe fn upload_region(
     device: *mut SDL_GPUDevice,
     texture: *mut SDL_GPUTexture,
+    layer: u32,
     x: u32,
     y: u32,
     width: u32,
@@ -1538,6 +1765,7 @@ unsafe fn upload_region(
             },
             &SDL_GPUTextureRegion {
                 texture,
+                layer,
                 x,
                 y,
                 w: width,

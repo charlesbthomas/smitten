@@ -181,6 +181,26 @@ pub struct UniformField {
     pub kind: Option<UniformKind>,
 }
 
+/// The shape of a texture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextureKind {
+    /// An ordinary picture.
+    #[default]
+    Flat,
+    /// Several pictures of one size, picked by index.
+    Array,
+    /// Six square pictures that make the inside of a cube, picked by
+    /// direction.
+    Cube,
+}
+
+/// A texture a custom shader declares besides `image`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShaderTexture {
+    pub name: String,
+    pub kind: TextureKind,
+}
+
 /// What a backend reports about a shader it compiled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaderInfo {
@@ -189,6 +209,9 @@ pub struct ShaderInfo {
     /// Every [`DrawCall`] using the shader must supply exactly this many.
     pub uniform_size: u32,
     pub fields: Vec<UniformField>,
+    /// The textures the shader declares, in order. Every [`DrawCall`]
+    /// using the shader binds this many from [`Frame::textures`].
+    pub textures: Vec<ShaderTexture>,
 }
 
 /// A rectangle of pixels on a render target, measured from its top-left.
@@ -226,11 +249,22 @@ impl Default for ColorMask {
     }
 }
 
+/// A texture sent to a custom shader, and how to sample it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoundTexture {
+    pub texture: TextureId,
+    pub filter: Filter,
+}
+
 /// A run of triangles that share a texture and drawing state.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DrawCall {
-    /// The texture to sample, or `None` for plain vertex colors.
+    /// The texture to sample, or `None` for plain vertex colors. Only an
+    /// array texture with the built-in shader, or a flat one, can be drawn
+    /// this way.
     pub texture: Option<TextureId>,
+    /// Which picture of an array texture to draw. Ignored for others.
+    pub layer: u32,
     pub filter: Filter,
     pub blend: BlendMode,
     /// Pixels outside this rectangle are left untouched. `None` draws
@@ -250,6 +284,10 @@ pub struct DrawCall {
     /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its
     /// length is the shader's [`ShaderInfo::uniform_size`].
     pub uniform_offset: u32,
+    /// Where the textures for the custom shader's own declarations start
+    /// in [`Frame::textures`]. There are as many as
+    /// [`ShaderInfo::textures`] lists.
+    pub texture_offset: u32,
     /// Index into [`Frame::vertices`] of the first vertex.
     pub first_vertex: u32,
     /// A multiple of three, since every three vertices form a triangle.
@@ -281,6 +319,9 @@ pub struct Frame<'a> {
     pub calls: &'a [DrawCall],
     /// Uniform data for the calls that use a custom shader.
     pub uniforms: &'a [u8],
+    /// Textures for the calls whose custom shader declares its own. `None`
+    /// is one the game has not sent, which reads as white.
+    pub textures: &'a [Option<BoundTexture>],
     /// Run in order. A later pass may sample a target drawn by an
     /// earlier one.
     pub passes: &'a [Pass],
@@ -341,6 +382,18 @@ pub trait Backend {
         height: u32,
         rgba: &[u8],
     ) -> Result<(), String>;
+
+    /// Creates an array or cube texture from `layers`, each laid out as in
+    /// `create_texture` and all `width` by `height` pixels. A cube has six
+    /// square layers, in the order +x, -x, +y, -y, +z, -z. A
+    /// [`TextureKind::Flat`] texture has one layer.
+    fn create_layered_texture(
+        &mut self,
+        kind: TextureKind,
+        width: u32,
+        height: u32,
+        layers: &[&[u8]],
+    ) -> Result<TextureId, String>;
 
     /// Creates a texture that can be drawn to by naming it as a
     /// [`Pass::target`], and sampled like any other. It starts out

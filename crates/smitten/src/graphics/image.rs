@@ -216,6 +216,10 @@ impl Image {
     pub(crate) fn texture(&self) -> TextureId {
         self.inner.texture.get()
     }
+
+    pub(crate) fn keep_alive(&self) -> Rc<dyn std::any::Any> {
+        self.inner.clone()
+    }
 }
 
 impl fmt::Debug for Image {

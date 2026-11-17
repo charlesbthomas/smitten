@@ -15,6 +15,7 @@ mod batch;
 mod canvas;
 pub(crate) mod image;
 mod image_data;
+mod layered;
 mod mesh;
 mod particles;
 mod screen;
@@ -47,9 +48,10 @@ pub(crate) mod reloading {
 pub use canvas::Canvas;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
+pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
-pub use shader::{Shader, ShaderError, UniformValue};
+pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use sprite_batch::SpriteBatch;
 pub use stats::Stats;
@@ -405,15 +407,16 @@ impl GraphicsState {
             vertices: &self.batch.vertices,
             calls: &self.batch.calls,
             uniforms: &self.batch.uniforms,
+            textures: &self.batch.textures,
             passes: &self.batch.passes,
         }
     }
 
     fn set_shader(&mut self, shader: Option<Shader>) {
         match &shader {
-            Some(shader) => {
-                shader.with_data(|data| self.batch.set_shader(Some((shader.id(), data))))
-            }
+            Some(shader) => shader.with_data(|data, textures| {
+                self.batch.set_shader(Some((shader.id(), data, textures)))
+            }),
             None => self.batch.set_shader(None),
         }
         self.shader = shader;
@@ -422,7 +425,9 @@ impl GraphicsState {
     /// Picks up new values sent to `shader` if it is the one in use.
     pub(crate) fn refresh_shader(&mut self, shader: &Shader) {
         if self.shader.as_ref().is_some_and(|active| active.is(shader)) {
-            shader.with_data(|data| self.batch.set_shader(Some((shader.id(), data))));
+            shader.with_data(|data, textures| {
+                self.batch.set_shader(Some((shader.id(), data, textures)))
+            });
         }
     }
 
@@ -500,6 +505,19 @@ impl GraphicsState {
 
     /// Queues the part of `image` covered by `quad`, placed by `local`.
     fn push_image(&mut self, image: &Image, quad: &Quad, local: &Transform) {
+        self.push_texture(image.texture(), 0, image.filter(), quad, local);
+    }
+
+    /// Queues the part of layer `layer` of `texture` covered by `quad`,
+    /// placed by `local`.
+    fn push_texture(
+        &mut self,
+        texture: TextureId,
+        layer: u32,
+        filter: Filter,
+        quad: &Quad,
+        local: &Transform,
+    ) {
         let transform = self.device().then_inner(local);
         let color = color_array(self.color);
         let (u0, v0) = (quad.x / quad.sheet_width, quad.y / quad.sheet_height);
@@ -519,9 +537,10 @@ impl GraphicsState {
         let top_right = corner(quad.width, 0.0, u1, v0);
         let bottom_right = corner(quad.width, quad.height, u1, v1);
         let bottom_left = corner(0.0, quad.height, u0, v1);
-        self.batch.push(
-            Some(image.texture()),
-            image.filter(),
+        self.batch.push_layer(
+            Some(texture),
+            layer,
+            filter,
             &[
                 top_left,
                 top_right,
@@ -1626,4 +1645,77 @@ pub fn draw_text_with(text: &Text, transform: &Transform) {
         ctx.gfx
             .push_text_object(ctx.backend.as_mut(), text, transform)
     });
+}
+
+/// Draws layer `layer` of an [`ArrayImage`], counting from 0, with its
+/// top-left corner at `(x, y)`. The equivalent of
+/// `love.graphics.drawLayer`.
+///
+/// Panics if there is no such layer, or if a custom shader is active: a
+/// shader reads an array image by declaring a `texture_2d_array<f32>` and
+/// being sent it with [`Shader::send_texture`].
+pub fn draw_layer(image: &ArrayImage, layer: u32, x: f32, y: f32) {
+    draw_layer_ex(image, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a layer of an [`ArrayImage`] with the full set of LÖVE's `draw`
+/// arguments. See [`draw_ex`] for what they mean.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.drawLayer.
+pub fn draw_layer_ex(
+    image: &ArrayImage,
+    layer: u32,
+    x: f32,
+    y: f32,
+    r: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+) {
+    let (width, height) = (image.width() as f32, image.height() as f32);
+    let quad = Quad::new(0.0, 0.0, width, height, width, height);
+    draw_layer_quad_with(
+        image,
+        layer,
+        &quad,
+        &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
+    );
+}
+
+/// Draws part of a layer of an [`ArrayImage`], placed by `transform`.
+pub fn draw_layer_quad_with(image: &ArrayImage, layer: u32, quad: &Quad, transform: &Transform) {
+    assert!(
+        layer < image.layer_count(),
+        "layer {layer} does not exist: the array image has {} layers",
+        image.layer_count()
+    );
+    context::with(|ctx| {
+        assert!(
+            ctx.gfx.shader.is_none(),
+            "graphics::draw_layer cannot be used with a custom shader active; \
+             send the array image to the shader with Shader::send_texture instead"
+        );
+        ctx.gfx
+            .push_texture(image.texture(), layer, image.filter(), quad, transform);
+    });
+}
+
+/// Loads an image file for each layer of an [`ArrayImage`], the
+/// equivalent of `love.graphics.newArrayImage`. They must all be the same
+/// size.
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`ArrayImage::from_files`] to handle the failure instead.
+pub fn new_array_image(paths: &[impl AsRef<Path>]) -> ArrayImage {
+    ArrayImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads the six faces of a [`CubeImage`] from image files, in the order
+/// +x, -x, +y, -y, +z, -z. The equivalent of `love.graphics.newCubeImage`
+/// with six files.
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`CubeImage::from_files`] to handle the failure instead.
+pub fn new_cube_image(paths: &[impl AsRef<Path>; 6]) -> CubeImage {
+    CubeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
 }

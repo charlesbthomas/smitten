@@ -18,7 +18,7 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
-    AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId,
+    AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId, TextureKind,
 };
 use smitten_core::{
     Config, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
@@ -472,6 +472,17 @@ impl Backend for SdlBackend {
     ) -> Result<(), String> {
         self.renderer
             .update_texture(texture, x, y, width, height, rgba)
+    }
+
+    fn create_layered_texture(
+        &mut self,
+        kind: TextureKind,
+        width: u32,
+        height: u32,
+        layers: &[&[u8]],
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_layered_texture(kind, width, height, layers)
     }
 
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {

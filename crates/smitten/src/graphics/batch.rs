@@ -1,10 +1,15 @@
 //! Collects a frame's triangles and groups them into as few draw calls as
 //! the draw order allows.
 
-use smitten_core::backend::{ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex};
+use smitten_core::backend::{
+    BoundTexture, ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex,
+};
 use smitten_core::{BlendMode, Color, Filter, StencilMode};
 
 use super::stats::FrameCounts;
+
+/// A custom shader with its uniform data and the textures sent to it.
+pub(crate) type ShaderState<'a> = (ShaderId, &'a [u8], &'a [Option<BoundTexture>]);
 
 #[derive(Default)]
 pub(crate) struct Batch {
@@ -22,12 +27,16 @@ pub(crate) struct Batch {
     pub wireframe: bool,
     /// Uniform data for the queued calls that use a custom shader.
     pub uniforms: Vec<u8>,
+    /// Textures for the queued calls whose shader declares its own.
+    pub textures: Vec<Option<BoundTexture>>,
     shader: Option<ShaderId>,
-    /// The active shader's uniform data, copied into `uniforms` the first
-    /// time something is drawn with it.
+    /// The active shader's uniform data and textures, copied into
+    /// `uniforms` and `textures` the first time something is drawn with
+    /// it.
     shader_data: Vec<u8>,
-    /// Where that copy is, once it has been made.
-    shader_offset: Option<u32>,
+    shader_textures: Vec<Option<BoundTexture>>,
+    /// Where those copies are, once they have been made.
+    shader_offset: Option<(u32, u32)>,
     /// What has been queued since the frame began, for the game's
     /// statistics. Unlike the queue, it survives drawing canvases early.
     pub counts: FrameCounts,
@@ -40,6 +49,7 @@ impl Batch {
         self.calls.clear();
         self.passes.clear();
         self.uniforms.clear();
+        self.textures.clear();
         self.shader_offset = None;
         self.counts = FrameCounts::default();
     }
@@ -63,13 +73,15 @@ impl Batch {
         self.calls = calls;
     }
 
-    /// Draws what is queued from now on with `shader` and this uniform
-    /// data, or with the built-in shader for `None`.
-    pub fn set_shader(&mut self, shader: Option<(ShaderId, &[u8])>) {
+    /// Draws what is queued from now on with `shader`, this uniform data
+    /// and these textures, or with the built-in shader for `None`.
+    pub fn set_shader(&mut self, shader: Option<ShaderState>) {
         self.shader_data.clear();
+        self.shader_textures.clear();
         self.shader_offset = None;
-        self.shader = shader.map(|(id, data)| {
+        self.shader = shader.map(|(id, data, textures)| {
             self.shader_data.extend_from_slice(data);
+            self.shader_textures.extend_from_slice(textures);
             id
         });
     }
@@ -146,6 +158,17 @@ impl Batch {
     /// Queues triangles, three vertices each, to draw on top of everything
     /// queued so far.
     pub fn push(&mut self, texture: Option<TextureId>, filter: Filter, triangles: &[Vertex]) {
+        self.push_layer(texture, 0, filter, triangles);
+    }
+
+    /// As `push`, drawing picture `layer` of an array texture.
+    pub fn push_layer(
+        &mut self,
+        texture: Option<TextureId>,
+        layer: u32,
+        filter: Filter,
+        triangles: &[Vertex],
+    ) {
         debug_assert!(triangles.len().is_multiple_of(3));
         if triangles.is_empty() {
             return;
@@ -180,14 +203,15 @@ impl Batch {
         }
         let pass = self.passes.last_mut().expect("a pass was just ensured");
 
-        let uniform_offset = match (self.shader, self.shader_offset) {
-            (None, _) => 0,
-            (Some(_), Some(offset)) => offset,
+        let (uniform_offset, texture_offset) = match (self.shader, self.shader_offset) {
+            (None, _) => (0, 0),
+            (Some(_), Some(offsets)) => offsets,
             (Some(_), None) => {
-                let offset = self.uniforms.len() as u32;
+                let offsets = (self.uniforms.len() as u32, self.textures.len() as u32);
                 self.uniforms.extend_from_slice(&self.shader_data);
-                self.shader_offset = Some(offset);
-                offset
+                self.textures.extend_from_slice(&self.shader_textures);
+                self.shader_offset = Some(offsets);
+                offsets
             }
         };
 
@@ -199,6 +223,7 @@ impl Batch {
             Some(last)
                 if pass.call_count > 0
                     && last.texture == texture
+                    && last.layer == layer
                     && last.filter == filter
                     && last.blend == self.blend
                     && last.scissor == self.scissor
@@ -207,7 +232,8 @@ impl Batch {
                     && last.color_mask == self.color_mask
                     && last.wireframe == self.wireframe
                     && last.shader == self.shader
-                    && last.uniform_offset == uniform_offset =>
+                    && last.uniform_offset == uniform_offset
+                    && last.texture_offset == texture_offset =>
             {
                 last.vertex_count += vertex_count;
                 self.counts.draw_calls_batched += 1;
@@ -224,6 +250,7 @@ impl Batch {
                 self.counts.last_shader = Some(self.shader);
                 self.calls.push(DrawCall {
                     texture,
+                    layer,
                     filter,
                     blend: self.blend,
                     scissor: self.scissor,
@@ -233,6 +260,7 @@ impl Batch {
                     wireframe: self.wireframe,
                     shader: self.shader,
                     uniform_offset,
+                    texture_offset,
                     first_vertex,
                     vertex_count,
                 });
@@ -331,7 +359,7 @@ mod tests {
         let mut batch = Batch::default();
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.push(None, Filter::Linear, &TRIANGLE);
-        batch.set_shader(Some((ShaderId(3), &[])));
+        batch.set_shader(Some((ShaderId(3), &[], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.set_target(Some(TextureId(9)));
         batch.push(None, Filter::Linear, &TRIANGLE);
@@ -494,10 +522,10 @@ mod tests {
         let mut batch = Batch::default();
         let shader = ShaderId(3);
         batch.push(None, Filter::Linear, &TRIANGLE);
-        batch.set_shader(Some((shader, &[1, 1, 1, 1])));
+        batch.set_shader(Some((shader, &[1, 1, 1, 1], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.push(None, Filter::Linear, &TRIANGLE);
-        batch.set_shader(Some((shader, &[2, 2, 2, 2])));
+        batch.set_shader(Some((shader, &[2, 2, 2, 2], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.set_shader(None);
         batch.push(None, Filter::Linear, &TRIANGLE);
@@ -522,8 +550,8 @@ mod tests {
     #[test]
     fn values_set_but_never_drawn_with_are_not_queued() {
         let mut batch = Batch::default();
-        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
-        batch.set_shader(Some((ShaderId(3), &[2, 2, 2, 2])));
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1], &[])));
+        batch.set_shader(Some((ShaderId(3), &[2, 2, 2, 2], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
 
         assert_eq!(batch.uniforms, [2, 2, 2, 2]);
@@ -532,7 +560,7 @@ mod tests {
     #[test]
     fn a_shader_stays_active_after_the_frame_is_cleared() {
         let mut batch = Batch::default();
-        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.clear();
         batch.push(None, Filter::Linear, &TRIANGLE);
@@ -582,7 +610,7 @@ mod tests {
             }),
             ..Batch::default()
         };
-        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1], &[])));
         batch.push_plain(None, Filter::Linear, BlendMode::Replace, &TRIANGLE);
         batch.push(None, Filter::Linear, &TRIANGLE);
 
