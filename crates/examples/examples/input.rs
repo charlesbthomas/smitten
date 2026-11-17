@@ -74,6 +74,8 @@ impl Input {
 impl Game for Input {
     fn load() -> Self {
         graphics::set_background_color(Color::rgb(0.1, 0.12, 0.16));
+        // Holding Backspace keeps deleting.
+        keyboard::set_key_repeat(true);
         let game = Input {
             x: 400.0,
             y: 300.0,

@@ -209,7 +209,7 @@ fn main() {
 | `love.keyboard.isScancodeDown(sc)` / `love.keypressed(key, scancode, isrepeat)` | `keyboard::is_down(Key)` / `Game::key_pressed(key, is_repeat)` | A `Key` always names a position, by what a US layout has there, which is LÖVE's scancode. WASD stays put on an AZERTY keyboard. |
 | `love.keyboard.getKeyFromScancode(sc)` / `getScancodeFromKey(key)` | `keyboard::layout_key(Key)` / `keyboard::layout_position(Key)` | `None` for a key Smitten has no name for. On AZERTY, `layout_key(Key::Q)` is `Some(Key::A)`. |
 | `love.keyboard.isDown(key)` with layout keys | `keyboard::is_layout_down(Key)` | Follows the letter rather than the position, for shortcuts such as Ctrl+Z. |
-| `love.keyboard.setKeyRepeat(enable)` / `hasKeyRepeat()` | `keyboard::set_key_repeat(enabled)` / `keyboard::has_key_repeat()` | On by default, where LÖVE starts with it off. Text input repeats either way. |
+| `love.keyboard.setKeyRepeat(enable)` / `hasKeyRepeat()` | `keyboard::set_key_repeat(enabled)` / `keyboard::has_key_repeat()` | Off by default, as in LÖVE. Text input repeats either way. |
 | `love.keyboard.setTextInput(enable)` / `setTextInput(true, x, y, w, h)` / `hasTextInput()` / `hasScreenKeyboard()` | `keyboard::set_text_input(enabled)` / `keyboard::set_text_input_area(x, y, w, h)` / `keyboard::has_text_input()` / `keyboard::has_screen_keyboard()` | The area is in units, like `mouse::position()`. Text input starts on, as in LÖVE on desktop. |
 | `love.textedited(text, start, length)` | `Game::text_edited(text, start, length)` | Text an input method is still composing. |
 | `love.mouse.isDown(1, 2)` / `love.mouse.isCursorSupported()` | `mouse::is_any_down(&[MouseButton::Left, MouseButton::Right])` / `mouse::is_cursor_supported()` | |

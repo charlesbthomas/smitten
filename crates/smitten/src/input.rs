@@ -85,7 +85,7 @@ impl Default for InputState {
             image_cursor: None,
             joysticks: Vec::new(),
             touches: Vec::new(),
-            key_repeat: true,
+            key_repeat: false,
             added_mappings: Vec::new(),
         }
     }

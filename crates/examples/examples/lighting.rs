@@ -19,8 +19,8 @@ use std::f32::consts::TAU;
 
 use smitten::graphics::{Canvas, DrawMode, Image, Shader};
 use smitten::{
-    BlendMode, Color, CompareMode, Config, Game, Key, MouseButton, event, graphics, math, mouse,
-    timer,
+    BlendMode, Color, CompareMode, Config, Game, Key, MouseButton, event, graphics, keyboard, math,
+    mouse, timer,
 };
 
 const WIDTH: u32 = 800;
@@ -265,6 +265,8 @@ impl Lighting {
 impl Game for Lighting {
     fn load() -> Self {
         graphics::set_background_color(Color::BLACK);
+        // Holding Up or Down keeps changing the ambient light.
+        keyboard::set_key_repeat(true);
         let glow = graphics::new_shader(GLOW);
         glow.send("falloff", 1.6_f32);
         Lighting {

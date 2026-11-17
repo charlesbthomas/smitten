@@ -73,9 +73,10 @@ pub fn is_layout_down(key: Key) -> bool {
 /// on or off while a key is held, the equivalent of
 /// `love.keyboard.setKeyRepeat`.
 ///
-/// Repeats are on by default, which differs from LÖVE. Turning them off
-/// does not affect [`Game::text_input`](crate::Game::text_input), which
-/// always repeats as the system does.
+/// Repeats are off when the game starts, as in LÖVE, so a held key calls
+/// `key_pressed` once. They never affect
+/// [`Game::text_input`](crate::Game::text_input), which always repeats as
+/// the system does.
 pub fn set_key_repeat(enabled: bool) {
     context::with(|ctx| ctx.input.key_repeat = enabled);
 }
