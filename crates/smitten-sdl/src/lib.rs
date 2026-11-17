@@ -59,6 +59,11 @@ pub struct SdlBackend {
     /// Whether the window was last reported shown rather than hidden or
     /// minimized.
     visible: bool,
+    /// The device's own vibration motor, opened on the first `vibrate`.
+    /// Null if it has not been opened or there is none.
+    vibrator: *mut SDL_Haptic,
+    /// Whether opening the vibration motor has been tried.
+    vibrator_tried: bool,
 }
 
 pub(crate) fn sdl_error() -> String {
@@ -178,6 +183,8 @@ impl SdlBackend {
                 vsync,
                 content_scaling: config.dpi_scaling,
                 visible: true,
+                vibrator: ptr::null_mut(),
+                vibrator_tried: false,
             })
         }
     }
@@ -200,6 +207,9 @@ impl Drop for SdlBackend {
             }
             for (_, cursor) in self.image_cursors.drain() {
                 SDL_DestroyCursor(cursor);
+            }
+            if !self.vibrator.is_null() {
+                SDL_CloseHaptic(self.vibrator);
             }
             ManuallyDrop::drop(&mut self.renderer);
             SDL_ReleaseWindowFromGPUDevice(self.device, self.window);
@@ -478,6 +488,75 @@ impl Backend for SdlBackend {
             },
             percent: u8::try_from(percent).ok(),
             seconds: u32::try_from(seconds).ok(),
+        }
+    }
+
+    fn preferred_locales(&mut self) -> Vec<String> {
+        let mut count = 0;
+        // SAFETY: SDL returns `count` valid locale pointers, whose strings
+        // live as long as the array, which is freed once after copying.
+        unsafe {
+            let locales = SDL_GetPreferredLocales(&mut count);
+            if locales.is_null() {
+                return Vec::new();
+            }
+            let mut names = Vec::new();
+            for index in 0..count.max(0) as usize {
+                let locale = *locales.add(index);
+                if locale.is_null() || (*locale).language.is_null() {
+                    continue;
+                }
+                let language = CStr::from_ptr((*locale).language).to_string_lossy();
+                let country = if (*locale).country.is_null() {
+                    None
+                } else {
+                    Some(CStr::from_ptr((*locale).country).to_string_lossy())
+                };
+                // Linux can name a locale twice, through both LANGUAGE
+                // and LANG.
+                let name = locale_name(&language, country.as_deref());
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            SDL_free(locales.cast());
+            names
+        }
+    }
+
+    fn vibrate(&mut self, seconds: f32) -> bool {
+        // SDL offers a phone's own vibration motor as a haptic device
+        // only on Android. Elsewhere its haptic devices are joysticks,
+        // which have `rumble_gamepad`.
+        if !cfg!(target_os = "android") || !seconds.is_finite() || seconds <= 0.0 {
+            return false;
+        }
+        // SAFETY: plain SDL calls on the main thread. The haptic device is
+        // opened once, kept until `drop`, and the ID list is freed once.
+        unsafe {
+            if !self.vibrator_tried {
+                self.vibrator_tried = true;
+                if SDL_InitSubSystem(SDL_INIT_HAPTIC) {
+                    let mut count = 0;
+                    let ids = SDL_GetHaptics(&mut count);
+                    if !ids.is_null() {
+                        if count > 0 {
+                            let haptic = SDL_OpenHaptic(*ids);
+                            if !haptic.is_null() && SDL_InitHapticRumble(haptic) {
+                                self.vibrator = haptic;
+                            } else if !haptic.is_null() {
+                                SDL_CloseHaptic(haptic);
+                            }
+                        }
+                        SDL_free(ids.cast());
+                    }
+                }
+            }
+            if self.vibrator.is_null() {
+                return false;
+            }
+            let milliseconds = (seconds * 1000.0).round().min(u32::MAX as f32) as u32;
+            SDL_PlayHapticRumble(self.vibrator, 1.0, milliseconds)
         }
     }
 
@@ -1348,6 +1427,15 @@ fn display_orientation(orientation: SDL_DisplayOrientation) -> DisplayOrientatio
     }
 }
 
+/// Joins a language and country code as `"en_US"`, or gives the
+/// language alone.
+fn locale_name(language: &str, country: Option<&str>) -> String {
+    match country {
+        Some(country) if !country.is_empty() => format!("{language}_{country}"),
+        _ => language.to_string(),
+    }
+}
+
 fn mouse_button(button: u8) -> Option<MouseButton> {
     let button = i32::from(button);
     [
@@ -1561,4 +1649,16 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
         .iter()
         .find(|(sdl, _)| sdl.0 == code)
         .map(|&(_, key)| key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locales_are_named_as_in_love() {
+        assert_eq!(locale_name("en", Some("US")), "en_US");
+        assert_eq!(locale_name("fr", None), "fr");
+        assert_eq!(locale_name("de", Some("")), "de");
+    }
 }

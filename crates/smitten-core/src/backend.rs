@@ -707,6 +707,15 @@ pub trait Backend {
     /// The mapping used for joysticks with this GUID, if there is one.
     fn gamepad_mapping(&self, guid: &str) -> Option<String>;
 
+    /// The user's languages, most preferred first, each as a language
+    /// code with an optional country code, such as `"en_US"` or `"fr"`.
+    /// Empty if the system does not say.
+    fn preferred_locales(&mut self) -> Vec<String>;
+
+    /// Vibrates the device itself, such as a phone, for `seconds`.
+    /// Returns whether it could.
+    fn vibrate(&mut self, seconds: f32) -> bool;
+
     /// Whether the gamepad `id` has rumble motors.
     fn gamepad_can_rumble(&self, id: JoystickId) -> bool;
 

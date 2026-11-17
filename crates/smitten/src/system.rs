@@ -51,6 +51,38 @@ pub fn power_info() -> PowerInfo {
     context::with(|ctx| ctx.backend.power_info())
 }
 
+/// The player's preferred languages, most preferred first, the
+/// equivalent of `love.system.getPreferredLocales`. Each is a language
+/// code with an optional country code, such as `"en_US"`, `"pt_BR"` or
+/// `"fr"`. Empty if the system does not say.
+///
+/// Pick the first one the game has a translation for, falling back to
+/// matching the language alone:
+///
+/// ```no_run
+/// use smitten::system;
+///
+/// let translations = ["en", "fr", "de"];
+/// let language = system::preferred_locales()
+///     .iter()
+///     .map(|locale| locale.split('_').next().unwrap_or(locale).to_string())
+///     .find(|language| translations.contains(&language.as_str()))
+///     .unwrap_or_else(|| "en".to_string());
+/// ```
+pub fn preferred_locales() -> Vec<String> {
+    context::with(|ctx| ctx.backend.preferred_locales())
+}
+
+/// Vibrates the phone or tablet the game runs on for `seconds`, the
+/// equivalent of `love.system.vibrate`. Returns whether it could.
+///
+/// This works on Android, with the `VIBRATE` permission in the app's
+/// manifest. Elsewhere it does nothing and returns `false`; to shake a
+/// gamepad, use [`crate::Joystick::set_vibration`].
+pub fn vibrate(seconds: f32) -> bool {
+    context::with(|ctx| ctx.backend.vibrate(seconds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

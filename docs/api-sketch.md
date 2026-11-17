@@ -275,6 +275,8 @@ fn main() {
 | `love.window.toPixels(value)` / `fromPixels(value)` | `window::to_pixels(value)` / `window::from_pixels(value)` | Multiply or divide by `window::dpi_scale()`. |
 | `love.timer.getAverageDelta()` | `timer::average_delta()` | Over the last second, updated once a second. |
 | `love.timer.sleep(seconds)` | `timer::sleep(seconds)` | |
+| `love.system.getPreferredLocales()` | `system::preferred_locales()` | `Vec<String>` such as `["en_US", "fr"]`, most preferred first. |
+| `love.system.vibrate(seconds)` | `system::vibrate(seconds)` | Android only; returns whether it vibrated. Gamepads use `Joystick::set_vibration`. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
