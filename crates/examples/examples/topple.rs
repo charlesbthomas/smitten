@@ -19,8 +19,8 @@ use smitten::graphics::{Align, DrawMode, Font, Image, LineStyle, ParticleSystem}
 use smitten::physics::{Body, BodyType, World};
 use smitten::sound::SoundData;
 use smitten::{
-    Color, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, event, filesystem, graphics,
-    joystick, keyboard, math,
+    Color, Config, Game, GamepadButton, Joystick, Key, event, filesystem, graphics, joystick,
+    keyboard, math,
 };
 
 const WIDTH: f32 = 800.0;
@@ -347,18 +347,9 @@ impl Topple {
 
     /// How far left or right the player is steering, from -1 to 1.
     fn steering(&self) -> f32 {
-        let mut steer = 0.0;
-        if keyboard::is_any_down(&[Key::Left, Key::A]) {
-            steer -= 1.0;
-        }
-        if keyboard::is_any_down(&[Key::Right, Key::D]) {
-            steer += 1.0;
-        }
+        let mut steer = keyboard::axis(&[Key::Left, Key::A], &[Key::Right, Key::D]);
         if let Some(pad) = joystick::joysticks().first() {
-            let stick = pad.gamepad_axis(GamepadAxis::LeftX);
-            if stick.abs() > 0.2 {
-                steer += stick;
-            }
+            steer += pad.left_stick(0.2).0;
             if pad.is_gamepad_down(GamepadButton::DpadLeft) {
                 steer -= 1.0;
             }

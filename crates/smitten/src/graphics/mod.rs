@@ -470,16 +470,21 @@ impl GraphicsState {
         self.batch.push(None, Filter::default(), &vertices);
     }
 
+    /// Queues a filled shape in the current color. Its texture
+    /// coordinates run from 0 to 1 across the box around it, which only
+    /// a custom shader can tell.
     fn push_shape(&mut self, triangles: &[(f32, f32)]) {
         let color = color_array(self.color);
         let device = self.device();
+        let uv_of = shapes::spread_uv(triangles);
         let vertices: Vec<Vertex> = triangles
             .iter()
             .map(|&(x, y)| {
+                let uv = uv_of(x, y);
                 let (x, y) = device.apply(x, y);
                 Vertex {
                     position: [x, y],
-                    uv: [0.0, 0.0],
+                    uv,
                     color,
                 }
             })
@@ -1021,6 +1026,12 @@ pub fn circle(mode: DrawMode, x: f32, y: f32, radius: f32) {
 }
 
 /// Draws a polygon through `points`. Filling only works for convex polygons.
+///
+/// Under a custom shader, a filled shape's `uv` runs from `(0, 0)` at the
+/// top-left of the box around the shape to `(1, 1)` at its bottom-right,
+/// as it does across an image. So a shader can paint a rectangle, circle
+/// or any other filled shape with no image at all. This holds for every
+/// filled shape, not only polygons.
 pub fn polygon(mode: DrawMode, points: &[(f32, f32)]) {
     context::with(|ctx| {
         let triangles = match mode {
@@ -1103,6 +1114,26 @@ pub fn points(points: &[(f32, f32)]) {
                 (left, bottom),
             ]);
         }
+        ctx.gfx.push_shape(&triangles);
+    });
+}
+
+/// Draws the shadow that a convex shape casts away from a light at
+/// `(light_x, light_y)`, in the current color: every edge of `polygon`
+/// that faces away from the light, stretched `length` further from it.
+///
+/// The shape itself is not covered, as if light falls on its top. The
+/// corners may be listed clockwise or counter-clockwise. A `length`
+/// longer than the screen is wide gives shadows that run off its edge.
+///
+/// For lighting, draw the shadows of everything solid inside
+/// [`stencil`], then draw the light's glow only where the stencil is
+/// still zero. The `lighting` example does exactly this.
+///
+/// LÖVE has no such call; games there work the corners out by hand.
+pub fn shadow(light_x: f32, light_y: f32, polygon: &[(f32, f32)], length: f32) {
+    context::with(|ctx| {
+        let triangles = shapes::shadow((light_x, light_y), polygon, length);
         ctx.gfx.push_shape(&triangles);
     });
 }
