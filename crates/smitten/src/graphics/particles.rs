@@ -439,6 +439,7 @@ mod tests {
             8,
             8,
             crate::Filter::Linear,
+            super::super::stats::Kind::Image,
         );
         ParticleSystem::new(&image, max)
     }

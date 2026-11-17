@@ -1,11 +1,14 @@
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use smitten_core::backend::{Backend, ShaderId, UniformField, UniformKind};
+use smitten_core::backend::{
+    Backend, BoundTexture, ShaderId, ShaderTexture, TextureKind, UniformField, UniformKind,
+};
 
-use super::GraphicsState;
+use super::{ArrayImage, Canvas, CubeImage, GraphicsState, Image};
 use crate::reload::Asset;
 use crate::{Color, context};
 
@@ -44,6 +47,23 @@ use crate::{Color, context};
 /// Members may be `f32`, `i32`, `u32`, `vec2<f32>`, `vec3<f32>` or
 /// `vec4<f32>`. They start out as zero.
 ///
+/// A shader can read more textures than the one being drawn. Declare each
+/// with no binding, use it with the sampler named after it, and send it
+/// an [`Image`], [`Canvas`], [`ArrayImage`] or [`CubeImage`] with
+/// [`Shader::send_texture`]. One that has not been sent reads as white.
+///
+/// ```wgsl
+/// var sky: texture_cube<f32>;
+///
+/// fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+///     let direction = vec3<f32>(uv * 2.0 - 1.0, 1.0);
+///     return textureSample(sky, sky_sampler, direction) * color;
+/// }
+/// ```
+///
+/// The types it can be are `texture_2d<f32>`, `texture_2d_array<f32>` and
+/// `texture_cube<f32>`.
+///
 /// Cloning is cheap and gives another handle to the same shader.
 #[derive(Clone)]
 pub struct Shader {
@@ -56,6 +76,11 @@ pub(crate) struct Inner {
     fields: RefCell<Vec<UniformField>>,
     /// The current value of `Params`, laid out as the GPU expects.
     data: RefCell<Vec<u8>>,
+    /// The textures the shader declares, and what has been sent to each.
+    textures: RefCell<Vec<ShaderTexture>>,
+    sent: RefCell<Vec<Option<BoundTexture>>>,
+    /// Keeps what was sent alive while the shader may draw with it.
+    kept: RefCell<Vec<Option<Rc<dyn Any>>>>,
 }
 
 impl Drop for Inner {
@@ -75,6 +100,9 @@ impl Shader {
                 id: Cell::new(info.id),
                 fields: RefCell::new(info.fields),
                 data: RefCell::new(vec![0; info.uniform_size as usize]),
+                sent: RefCell::new(vec![None; info.textures.len()]),
+                kept: RefCell::new(vec![None; info.textures.len()]),
+                textures: RefCell::new(info.textures),
             }),
         })
     }
@@ -146,6 +174,54 @@ impl Shader {
         Ok(())
     }
 
+    /// Sends a texture to the one the shader declares as `name`, the
+    /// equivalent of `shader:send(name, image)`. Like [`Shader::send`],
+    /// it applies to what is drawn afterwards. The texture is sampled with
+    /// the filter it has now.
+    ///
+    /// Panics if the shader declares no such texture or one of another
+    /// kind, which is always a bug in the game. Use
+    /// [`Shader::try_send_texture`] to handle the failure instead.
+    pub fn send_texture(&self, name: &str, texture: &impl Texture) {
+        self.try_send_texture(name, texture)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    /// Sends a texture to the one the shader declares as `name`,
+    /// returning an error if there is none or it is of another kind.
+    pub fn try_send_texture(&self, name: &str, texture: &impl Texture) -> Result<(), ShaderError> {
+        let (bound, kind, keep) = texture.binding();
+        let index = {
+            let textures = self.inner.textures.borrow();
+            let (index, declared) = textures
+                .iter()
+                .enumerate()
+                .find(|(_, declared)| declared.name == name)
+                .ok_or_else(|| ShaderError::UnknownTexture(name.to_string()))?;
+            if declared.kind != kind {
+                return Err(ShaderError::WrongTextureKind {
+                    name: name.to_string(),
+                    sent: kind,
+                    declared: declared.kind,
+                });
+            }
+            index
+        };
+        self.inner.sent.borrow_mut()[index] = Some(bound);
+        self.inner.kept.borrow_mut()[index] = Some(keep);
+        context::with(|ctx| ctx.gfx.refresh_shader(self));
+        Ok(())
+    }
+
+    /// Returns whether the shader declares a texture called `name`.
+    pub fn has_texture(&self, name: &str) -> bool {
+        self.inner
+            .textures
+            .borrow()
+            .iter()
+            .any(|texture| texture.name == name)
+    }
+
     /// Returns whether `Params` has a member called `name`.
     pub fn has_value(&self, name: &str) -> bool {
         self.inner
@@ -159,8 +235,9 @@ impl Shader {
         self.inner.id.get()
     }
 
-    pub(crate) fn with_data<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
-        f(&self.inner.data.borrow())
+    /// Calls `f` with the uniform data and the textures sent so far.
+    pub(crate) fn with_data<R>(&self, f: impl FnOnce(&[u8], &[Option<BoundTexture>]) -> R) -> R {
+        f(&self.inner.data.borrow(), &self.inner.sent.borrow())
     }
 
     pub(crate) fn is(&self, other: &Shader) -> bool {
@@ -194,9 +271,26 @@ pub(crate) fn reload(
             }
         }
     }
+    // Textures sent to a declaration that is still there are kept too.
+    let mut sent = vec![None; info.textures.len()];
+    let mut kept = vec![None; info.textures.len()];
+    {
+        let old_textures = inner.textures.borrow();
+        let mut old_sent = inner.sent.borrow_mut();
+        let mut old_kept = inner.kept.borrow_mut();
+        for (index, texture) in info.textures.iter().enumerate() {
+            if let Some(old) = old_textures.iter().position(|old| old == texture) {
+                sent[index] = old_sent[old].take();
+                kept[index] = old_kept[old].take();
+            }
+        }
+    }
     backend.destroy_shader(inner.id.replace(info.id));
     *inner.fields.borrow_mut() = info.fields;
     *inner.data.borrow_mut() = data;
+    *inner.textures.borrow_mut() = info.textures;
+    *inner.sent.borrow_mut() = sent;
+    *inner.kept.borrow_mut() = kept;
     // If the shader is in use, drawing must switch to the new one.
     gfx.refresh_shader(&Shader::from_inner(inner.clone()));
     Ok(())
@@ -207,6 +301,67 @@ impl fmt::Debug for Shader {
         let fields = self.inner.fields.borrow();
         let names: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
         f.debug_struct("Shader").field("values", &names).finish()
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Something with pixels a shader can read: an [`Image`], a [`Canvas`],
+/// an [`ArrayImage`] or a [`CubeImage`]. See [`Shader::send_texture`].
+pub trait Texture: sealed::Sealed {
+    /// The texture to bind, its kind, and a handle that keeps it alive.
+    #[doc(hidden)]
+    fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>);
+}
+
+impl sealed::Sealed for Image {}
+impl Texture for Image {
+    fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>) {
+        let bound = BoundTexture {
+            texture: self.texture(),
+            filter: self.filter(),
+        };
+        (bound, TextureKind::Flat, self.keep_alive())
+    }
+}
+
+impl sealed::Sealed for Canvas {}
+impl Texture for Canvas {
+    fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>) {
+        let image: &Image = self;
+        image.binding()
+    }
+}
+
+impl sealed::Sealed for ArrayImage {}
+impl Texture for ArrayImage {
+    fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>) {
+        let bound = BoundTexture {
+            texture: self.texture(),
+            filter: self.filter(),
+        };
+        (bound, TextureKind::Array, self.keep_alive())
+    }
+}
+
+impl sealed::Sealed for CubeImage {}
+impl Texture for CubeImage {
+    fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>) {
+        let bound = BoundTexture {
+            texture: self.texture(),
+            filter: self.filter(),
+        };
+        (bound, TextureKind::Cube, self.keep_alive())
+    }
+}
+
+fn kind_name(kind: TextureKind) -> &'static str {
+    match kind {
+        TextureKind::Flat => "texture_2d<f32>",
+        TextureKind::Array => "texture_2d_array<f32>",
+        TextureKind::Cube => "texture_cube<f32>",
     }
 }
 
@@ -317,6 +472,15 @@ pub enum ShaderError {
         /// `None` if the member has a type that cannot be sent at all.
         declared: Option<UniformKind>,
     },
+    /// The shader declares no texture with this name.
+    UnknownTexture(String),
+    /// The texture is declared as a different kind from the one sent,
+    /// such as a cube image sent to a `texture_2d<f32>`.
+    WrongTextureKind {
+        name: String,
+        sent: TextureKind,
+        declared: TextureKind,
+    },
 }
 
 impl fmt::Display for ShaderError {
@@ -340,6 +504,19 @@ impl fmt::Display for ShaderError {
                     None => write!(f, " but has a type that cannot be sent"),
                 }
             }
+            ShaderError::UnknownTexture(name) => {
+                write!(f, "the shader declares no texture named `{name}`")
+            }
+            ShaderError::WrongTextureKind {
+                name,
+                sent,
+                declared,
+            } => write!(
+                f,
+                "shader texture `{name}` was sent a {} but is declared as {}",
+                kind_name(*sent),
+                kind_name(*declared)
+            ),
         }
     }
 }
@@ -382,6 +559,19 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "shader value `tint` was sent a f32 but is declared as vec4<f32>"
+        );
+    }
+
+    #[test]
+    fn a_texture_kind_mismatch_says_both_kinds() {
+        let error = ShaderError::WrongTextureKind {
+            name: "sky".to_string(),
+            sent: TextureKind::Flat,
+            declared: TextureKind::Cube,
+        };
+        assert_eq!(
+            error.to_string(),
+            "shader texture `sky` was sent a texture_2d<f32> but is declared as texture_cube<f32>"
         );
     }
 }
