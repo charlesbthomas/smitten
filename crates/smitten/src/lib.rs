@@ -157,6 +157,18 @@ pub trait Game: Sized + 'static {
     /// back.
     fn visible(&mut self, _visible: bool) {}
 
+    /// Called with each event the game sent itself with [`event::push`],
+    /// the equivalent of a handler in `love.handlers`. They arrive at the
+    /// start of a frame, after the platform's events and before
+    /// `update`.
+    fn custom_event(&mut self, _event: event::CustomEvent) {}
+
+    /// Called when the system is running out of memory, the equivalent of
+    /// `love.lowmemory`. Mobile systems send this before closing a game
+    /// to reclaim memory, so drop caches and anything that can be loaded
+    /// again.
+    fn low_memory(&mut self) {}
+
     /// Called when the game is asked to close. Return `true` to keep running.
     fn quit(&mut self) -> bool {
         false
@@ -196,6 +208,9 @@ pub fn run<G: Game>(config: Config) {
         'running: loop {
             while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
                 dispatch(&mut game, event);
+            }
+            for event in context::with(|ctx| ctx.events.take()) {
+                game.custom_event(event);
             }
 
             if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
@@ -405,5 +420,6 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::Focus(focused) => game.focus(focused),
         BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
         BackendEvent::Visible(visible) => game.visible(visible),
+        BackendEvent::LowMemory => game.low_memory(),
     }
 }

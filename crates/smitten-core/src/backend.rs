@@ -114,6 +114,9 @@ pub enum BackendEvent {
     MouseFocus(bool),
     /// The window was shown, or was hidden or minimized.
     Visible(bool),
+    /// The system is running out of memory and the game should free what
+    /// it can, or it may be closed.
+    LowMemory,
 }
 
 /// A corner of a triangle, in pixels from the top-left of the drawable.
