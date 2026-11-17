@@ -273,6 +273,8 @@ fn main() {
 | `love.window.getSafeArea()` | `window::safe_area()` | `(x, y, width, height)` in units. The whole window on desktop. |
 | `love.window.getDisplayOrientation()` / `love.displayrotated(index, orientation)` | `window::display_orientation()` / `Game::display_rotated(orientation)` | For the display the window is on, so there is no index. Desktops report what the display's shape suggests. |
 | `love.window.toPixels(value)` / `fromPixels(value)` | `window::to_pixels(value)` / `window::from_pixels(value)` | Multiply or divide by `window::dpi_scale()`. |
+| `love.timer.getAverageDelta()` | `timer::average_delta()` | Over the last second, updated once a second. |
+| `love.timer.sleep(seconds)` | `timer::sleep(seconds)` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |
