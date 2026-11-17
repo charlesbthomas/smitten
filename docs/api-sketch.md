@@ -142,8 +142,8 @@ fn main() {
 | *(none)* | `body.apply_acceleration(x, y)`, `body.apply_angular_acceleration(a)` | A push in pixels (or radians) per second squared that does not depend on the body's mass or the world's meter. |
 | `body:getInertia()` | `body.inertia()` | |
 | *(tables keyed by body)* | `HashMap<Body, T>` | `Body`, `Fixture` and `Joint` are `Eq + Hash`. |
-| `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
-| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
+| `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | `ray_cast_all` for every hit, nearest first. |
+| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring, distance, prismatic, wheel, mouse, friction and motor joints. Gear and pulley joints are missing. |
 | `love.graphics.ellipse("fill", x, y, rx, ry)` | `graphics::ellipse(DrawMode::Fill, x, y, rx, ry)` | |
 | `love.graphics.arc("line", "open", x, y, r, a1, a2)` | `graphics::arc(DrawMode::Line, ArcType::Open, x, y, r, a1, a2)` | `Pie`, `Open` or `Closed`. |
 | `love.graphics.rectangle("fill", x, y, w, h, rx, ry)` | `graphics::rounded_rectangle(DrawMode::Fill, x, y, w, h, rx, ry)` | |
@@ -206,6 +206,54 @@ fn main() {
 | `love.touchpressed(id, x, y, dx, dy, pressure)` | `Game::touch_pressed(id, x, y, dx, dy, pressure)` | Also `touch_moved` and `touch_released`. A canceled touch counts as released. |
 | `love.mouse.newCursor(path, hotx, hoty)` / `setCursor(cursor)` | `mouse::new_cursor(path, hot_x, hot_y)` / `mouse::set_image_cursor(&cursor)` | `ImageCursor::from_image_data` takes an `ImageData`. `mouse::image_cursor()` is `getCursor`. One image pixel per screen pixel. |
 | `love.filesystem.mount(archive, mountpoint)` / `unmount(archive)` | `filesystem::mount(archive, mount_point)` / `filesystem::unmount(archive)` | Zip archives or directories. `mount_after` is `appendToPath = true`. Images, fonts, shaders and sounds load from mounted files too. |
+| `love.audio.newQueueableSource(rate, bits, channels, buffers)` / `source:queue(sounddata)` / `getFreeBufferCount()` | `audio::new_queueable_source(rate, channels, buffers)` / `source.queue(&data)` / `source.free_buffer_count()` | `queue` returns `false` when full. A queue that runs dry stops; `play` it again after queueing. Stopping empties it. It cannot loop or seek. |
+| `love.sound.newDecoder(path, bufferSize)` / `decoder:decode()` / `seek(s)` / `clone()` | `sound::new_decoder(path, samples)` / `decoder.decode()` / `decoder.seek(s)` / `decoder.clone()` | The buffer size counts samples per channel, not bytes. `decode` gives `Option<SoundData>`. |
+| `love.audio.newSource(decoder, "stream")` | `Source::from_decoder(&decoder, SourceType::Stream)` | Plays the decoder's file from its start. |
+| `love.audio.getRecordingDevices()` / `device:start(samples, rate, bits, channels)` / `getData()` / `stop()` | `audio::recording_devices()` / `device.start(samples, rate, channels)` / `device.data()` / `device.stop()` | No bit depth. A full buffer drops its oldest samples. `start` returns a `Result`. |
+| `love.graphics.newVideo(path)` / `love.graphics.draw(video, x, y)` | `graphics::new_video(path)` / `graphics::draw_video(&video, x, y)` | Ogg Theora, with an Ogg Vorbis sound track if there is one. `video.image()` gives the current picture for quads and shaders. |
+| `video:play()` / `pause()` / `seek(s)` / `tell()` / `rewind()` / `getSource()` | `video.play()` / `pause()` / `seek(s)` / `tell()` / `rewind()` / `source()` | The picture follows the sound when there is some. It stops on the last frame. |
+| `love.video.newVideoStream(path)` | `video::new_video_stream(path)` | A decoder only: `seek(s)` decodes the frame at that time and `pixels()` reads it as RGBA. The `Video` keeps time. |
+| `love.math.newTransform(x, y, r, sx, sy, ox, oy, kx, ky)` | `math::new_transform(x, y, r, sx, sy, ox, oy, kx, ky)` | Or `Transform::new()`. `translate`, `rotate`, `scale`, `shear`, `set_transformation`, `reset`, `inverse`, `transform_point`, `inverse_transform_point` keep their names. `transform:apply(other)` is `apply_transform(&other)`, or `outer * inner`. |
+| `transform:getMatrix()` / `setMatrix(...)` | `transform.matrix()` / `transform.set_matrix(rows)` | A 3 by 3 matrix in rows, since the transform is 2D. |
+| `love.graphics.applyTransform(t)` / `replaceTransform(t)` / `shear(kx, ky)` | `graphics::apply_transform(&t)` / `replace_transform(&t)` / `shear(kx, ky)` | `graphics::transform()` returns the current one. |
+| `love.graphics.transformPoint(x, y)` / `inverseTransformPoint(x, y)` | `graphics::transform_point(x, y)` / `inverse_transform_point(x, y)` | In units, under the current transform. |
+| `love.graphics.draw(image, transform)` / `print(text, transform)` | `graphics::draw_with(&image, &transform)` / `print_with(text, &transform)` | Also `draw_quad_with` and `printf_with`. |
+| `love.graphics.newText(font, text)` | `graphics::new_text(&font, text)` | Laid out once, the first time it is drawn after a change. |
+| `text:set(s)` / `setf(s, limit, align)` / `add(s, x, y)` / `addf(s, limit, align, x, y)` / `clear()` | `text.set(s)` / `set_f(s, limit, align)` / `add(s, x, y)` / `add_f(s, limit, align, x, y)` / `clear()` | `add` returns the index from 0. `add_ex` takes the full `draw` arguments. |
+| `text:getDimensions()` / `getWidth()` / `getHeight()` / `setFont(font)` | `text.dimensions()` / `width()` / `height()` / `set_font(&font)` | `text.bounds(index)` gives one piece's box. |
+| `love.graphics.draw(text, x, y)` | `graphics::draw_text(&text, x, y)` | `draw_text_ex` and `draw_text_with` take the other forms. |
+| `love.graphics.setColorMask(r, g, b, a)` / `getColorMask()` | `graphics::set_color_mask(r, g, b, a)` / `graphics::color_mask()` | Booleans. Clearing ignores the mask. |
+| `love.graphics.setWireframe(true)` / `isWireframe()` | `graphics::set_wireframe(true)` / `graphics::is_wireframe()` | Triangle edges, one pixel wide. |
+| `love.graphics.getStats()` | `graphics::stats()` | A `Stats` struct with LÖVE's fields in `snake_case`. Draw counts start from zero each frame. |
+| `love.graphics.newImage(path, {mipmaps = true})` | `graphics::new_image_with(path, ImageSettings { mipmaps: true })` | Also `Image::from_rgba_with` and `Image::from_image_data_with`. Hot reloading keeps the mipmaps. |
+| `love.graphics.newCanvas(w, h, {mipmaps = "auto"})` / `canvas:generateMipmaps()` | `Canvas::with_mipmaps(w, h, MipmapMode::Auto)` / `canvas.generate_mipmaps()` | `Auto` makes them again each frame the canvas is drawn to; `Manual` only when asked. |
+| `image:setMipmapFilter("linear", sharpness)` / `getMipmapFilter()` / `getMipmapCount()` | `image.set_mipmap_filter(Some(Filter::Linear), sharpness)` / `mipmap_filter()` / `mipmap_count()` | `None` turns them off. Starts out `Linear` with a sharpness of 0. |
+| `love.graphics.newArrayImage({path1, path2})` | `graphics::new_array_image(&[path1, path2])` | `ArrayImage::from_image_data` takes `ImageData` layers. Every layer must be the same size. |
+| `love.graphics.drawLayer(array, layer, x, y)` | `graphics::draw_layer(&array, layer, x, y)` | Layers count from 0. `draw_layer_ex` and `draw_layer_quad_with` take the other forms. Not with a custom shader active: send the array to the shader instead. |
+| `love.graphics.newCubeImage({px, nx, py, ny, pz, nz})` | `graphics::new_cube_image(&[px, nx, py, ny, pz, nz])` | Six square faces, in LÖVE's order. |
+| `love.graphics.newCubeImage(path)` | `graphics::new_cube_image_from_layout(path)` | One picture of all six faces: a 6 by 1 or 1 by 6 strip, or a 4 by 3 or 3 by 4 cross, as in LÖVE. `CubeImage::from_layout` takes an `ImageData`. |
+| `shader:send("sky", cubeimage)` | `shader.send_texture("sky", &cube)` | The shader declares `var sky: texture_cube<f32>;` with no binding and samples it with `sky_sampler`. Also `texture_2d<f32>` for an `Image` or `Canvas`, and `texture_2d_array<f32>` for an `ArrayImage`. One not sent reads as white. |
+| `love.image.newCompressedData(path)` / `love.graphics.newImage(compresseddata)` | `graphics::new_compressed_data(path)` / `Image::from_compressed_data(&data)` | DDS files in BC1 to BC5 and BC7 (DXT1, DXT3, DXT5 and the rest), with their mipmaps. `new_image` loads a `.dds` file too, and reloads it when it changes like any image. KTX, ASTC and ETC files are not supported yet. |
+| `love.graphics.getImageFormats()` | `graphics::is_compressed_format_supported(CompressedFormat::Bc7)` | One format at a time. |
+| `love.graphics.print({color1, "a", color2, "b"}, x, y)` / `printf(coloredtext, ...)` | `graphics::print_colored(&[(color1, "a"), (color2, "b")], x, y)` / `printf_colored(...)` | Each part is tinted by its color and the current one. `Text` has `add_colored`, `add_f_colored`, `set_colored` and `set_f_colored`. |
+| `world:queryBoundingBox(x1, y1, x2, y2, callback)` | `world.fixtures_in_box(x1, y1, x2, y2)` | A list, by bounding box as in LÖVE. `fixture.bounding_box()` is `getBoundingBox`. |
+| `world:setCallbacks(nil, nil, preSolve)` | `world.set_pre_solve(\|contact\| ...)` | A closure. Set `contact.enabled = false` for a one-way platform, or change its `friction` and `restitution`. It must not call into the world. |
+| `world:setCallbacks(nil, nil, nil, postSolve)` / `world:getContacts()` | `world.touching()` after each update | Each `Touch` carries `normal_impulse` and `tangent_impulse`. |
+| `joint:setMotorEnabled(true)` / `setMotorSpeed(s)` / `setMaxMotorTorque(t)` | `joint.set_motor_enabled(true)` / `set_motor_speed(s)` / `set_max_motor_torque(t)` | Revolute, prismatic (`set_max_motor_force`) and wheel joints. `motor_torque()` reads what it applied. |
+| `joint:setLimitsEnabled(true)` / `setLimits(lo, hi)` | `joint.set_limits_enabled(true)` / `joint.set_limits(lo, hi)` | Revolute and prismatic joints, measured from where the joint was made. |
+| `joint:getJointAngle()` / `getJointTranslation()` / `getJointSpeed()` | `joint.joint_angle()` / `joint_translation()` / `joint_speed()` | |
+| `joint:getType()` / `getBodies()` / `getAnchors()` | `joint.kind()` / `joint.bodies()` / `joint.anchors()` | `kind()` is a `JointType`. Asking a joint for what its kind lacks panics. |
+| `joint:getReactionForce(1 / dt)` / `getReactionTorque(1 / dt)` | `joint.reaction_force()` / `joint.reaction_torque()` | Already per second, for the last update. |
+| `ropejoint:setMaxLength(l)` / `distancejoint:setLength(l)` | `joint.set_max_length(l)` / `joint.set_length(l)` | `set_length` also moves a spring joint's rest length; `set_stiffness` and `set_damping` tune it. |
+| `love.physics.newMouseJoint(body, x, y)` / `setTarget(x, y)` | `world.new_mouse_joint(&body, x, y)` / `joint.set_target(x, y)` | `set_frequency`, `set_damping_ratio` and `set_max_force` as in LÖVE. |
+| `wheeljoint:setSpringFrequency(f)` / `setSpringDampingRatio(r)` | `joint.set_frequency(f)` / `joint.set_damping_ratio(r)` | The same names as the mouse joint's. |
+| `motorjoint:setLinearOffset(x, y)` / `setAngularOffset(a)` | `joint.set_linear_offset(x, y)` / `joint.set_angular_offset(a)` | Unlimited force and torque until `set_max_force` and `set_max_torque` say otherwise. |
+| `world:getJoints()` / `body:getJoints()` | `world.joints()` / `body.joints()` | Also `world.joint_count()`. |
+| `love.filesystem.openFile(name, mode)` / `newFile(name, mode)` | `filesystem::open_file(name, FileMode::Read)` | A `File` implements `Read`, `BufRead`, `Write` and `Seek`. `read_bytes`, `read_all`, `write_bytes`, `tell`, `size` and `is_eof` mirror LÖVE's methods, and `lines` comes from `BufRead`. Closed when dropped. `setBuffer` is left out: reads and writes are always buffered. |
+| `love.filedropped(file, x, y)` / `love.directorydropped(path, x, y)` | `Game::file_dropped(path, x, y)` / `Game::directory_dropped(path, x, y)` | An absolute `&Path` instead of a `DroppedFile`. `filesystem` functions take it as it is, and `filesystem::mount` makes a dropped directory readable. |
+| `love.event.push(name, ...)` / `love.handlers[name]` | `event::push(value)` / `Game::custom_event(event)` | Any type can be pushed, usually an enum of the game's own. `CustomEvent::downcast` gets it back. Delivered at the start of the next frame, after the platform's events. |
+| `love.event.clear()` | `event::clear()` | Clears the game's own pushed events. |
+| `love.lowmemory()` | `Game::low_memory()` | |
 | `love.window.getIcon()` | `window::icon()` | `Option<ImageData>`, `None` until the game sets one. |
 | `love.window.getSafeArea()` | `window::safe_area()` | `(x, y, width, height)` in units. The whole window on desktop. |
 | `love.window.getDisplayOrientation()` / `love.displayrotated(index, orientation)` | `window::display_orientation()` / `Game::display_rotated(orientation)` | For the display the window is on, so there is no index. Desktops report what the display's shape suggests. |

@@ -45,5 +45,5 @@ mod tests;
 
 pub use body::{Body, BodyType};
 pub use fixture::Fixture;
-pub use joint::Joint;
-pub use world::{Contact, RayHit, World};
+pub use joint::{Joint, JointType};
+pub use world::{Contact, PreSolve, RayHit, Touch, World};

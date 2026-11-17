@@ -3,10 +3,14 @@
 //! The game writes one function. This module wraps it in an entry point
 //! with the texture, sampler and uniform bindings SDL's GPU API expects,
 //! checks it, and translates it to SPIR-V with naga.
+//!
+//! A game may also declare textures of its own, such as
+//! `var sky: texture_cube<f32>;`, with no binding. Each gets a sampler
+//! named after it, `sky_sampler`, and the next free texture slot.
 
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
-use smitten_core::backend::{UniformField, UniformKind};
+use smitten_core::backend::{ShaderTexture, TextureKind, UniformField, UniformKind};
 
 /// The name of the entry point in the generated shader.
 pub(crate) const ENTRY_POINT: &std::ffi::CStr = c"smitten_fragment";
@@ -43,18 +47,24 @@ pub(crate) struct Compiled {
     /// The size of the `Params` struct in bytes, or 0 without one.
     pub uniform_size: u32,
     pub fields: Vec<UniformField>,
+    /// The game's own textures, in the order of their slots after `image`.
+    pub textures: Vec<ShaderTexture>,
 }
 
 pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
     let has_params = declares_params(source);
+    let texture_names = declared_textures(source);
     let mut full = String::from(source);
     full.push_str(WRAPPER);
+    for name in &texture_names {
+        full.push_str(&format!("var {name}_sampler: sampler;\n"));
+    }
     if has_params {
         full.push_str(PARAMS_BINDING);
     }
     let user_lines = source.lines().count() as u32;
 
-    let module = naga::front::wgsl::parse_str(&full).map_err(|error| {
+    let mut module = naga::front::wgsl::parse_str(&full).map_err(|error| {
         // An error placed in the wrapper means it did not fit the game's
         // `effect`, which is the game's mistake to fix, not ours to show.
         match error.location(&full) {
@@ -62,6 +72,7 @@ pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
             _ => error.emit_to_string_with_path(&full, "shader"),
         }
     })?;
+    let textures = bind_textures(&mut module, &texture_names)?;
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .map_err(|error| {
@@ -93,6 +104,18 @@ pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
             binding_array_size: None,
         },
     );
+    for slot in 1..=textures.len() as u32 {
+        for binding in [slot * 2, slot * 2 + 1] {
+            options.binding_map.insert(
+                naga::ResourceBinding { group: 2, binding },
+                spv::BindingInfo {
+                    descriptor_set: 2,
+                    binding: slot,
+                    binding_array_size: None,
+                },
+            );
+        }
+    }
     let pipeline = spv::PipelineOptions {
         shader_stage: naga::ShaderStage::Fragment,
         entry_point: "smitten_fragment".to_string(),
@@ -105,7 +128,93 @@ pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
         spirv,
         uniform_size,
         fields,
+        textures,
     })
+}
+
+/// The names of the textures `source` declares at the top level with no
+/// binding, in order, found well enough for the purpose: `var`, a name,
+/// then a texture type. A declaration with a binding is left alone, and
+/// one the scan misses fails to compile with a message about bindings.
+fn declared_textures(source: &str) -> Vec<String> {
+    let words: Vec<&str> = source
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for window in words.windows(3) {
+        if window[0] == "var"
+            && window[2].starts_with("texture_")
+            && !names.iter().any(|name| name == window[1])
+        {
+            names.push(window[1].to_string());
+        }
+    }
+    names
+}
+
+/// Gives each of the game's own textures in `names`, and its sampler,
+/// the slot after the ones before it. Returns what kind each one is.
+fn bind_textures(
+    module: &mut naga::Module,
+    names: &[String],
+) -> Result<Vec<ShaderTexture>, String> {
+    let mut textures = Vec::new();
+    for name in names {
+        let found = module
+            .global_variables
+            .iter()
+            .find(|(_, global)| global.name.as_deref() == Some(name) && global.binding.is_none())
+            .map(|(handle, global)| (handle, global.ty));
+        let Some((handle, ty)) = found else {
+            continue;
+        };
+        let kind = match module.types[ty].inner {
+            naga::TypeInner::Image {
+                dim,
+                arrayed,
+                class:
+                    naga::ImageClass::Sampled {
+                        kind: naga::ScalarKind::Float,
+                        multi: false,
+                    },
+            } => match (dim, arrayed) {
+                (naga::ImageDimension::D2, false) => TextureKind::Flat,
+                (naga::ImageDimension::D2, true) => TextureKind::Array,
+                (naga::ImageDimension::Cube, false) => TextureKind::Cube,
+                _ => return Err(unsupported_texture(name)),
+            },
+            _ => return Err(unsupported_texture(name)),
+        };
+        let slot = textures.len() as u32 + 1;
+        module.global_variables.get_mut(handle).binding = Some(naga::ResourceBinding {
+            group: 2,
+            binding: slot * 2,
+        });
+        let sampler_name = format!("{name}_sampler");
+        let sampler = module
+            .global_variables
+            .iter()
+            .find(|(_, global)| global.name.as_deref() == Some(sampler_name.as_str()))
+            .map(|(handle, _)| handle);
+        if let Some(sampler) = sampler {
+            module.global_variables.get_mut(sampler).binding = Some(naga::ResourceBinding {
+                group: 2,
+                binding: slot * 2 + 1,
+            });
+        }
+        textures.push(ShaderTexture {
+            name: name.clone(),
+            kind,
+        });
+    }
+    Ok(textures)
+}
+
+fn unsupported_texture(name: &str) -> String {
+    format!(
+        "texture `{name}` must be a `texture_2d<f32>`, `texture_2d_array<f32>` or `texture_cube<f32>`"
+    )
 }
 
 fn wrong_effect(detail: &str) -> String {
@@ -231,6 +340,53 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
             ]
         );
         assert_eq!(compiled.uniform_size, 64);
+    }
+
+    #[test]
+    fn the_games_own_textures_get_samplers_and_slots_in_order() {
+        let compiled = compile(
+            "
+var sky: texture_cube<f32>;
+var tiles: texture_2d_array<f32>;
+var noise: texture_2d<f32>;
+
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    let a = textureSample(sky, sky_sampler, vec3<f32>(uv, 1.0));
+    let b = textureSample(tiles, tiles_sampler, uv, 2);
+    let c = textureSample(noise, noise_sampler, uv);
+    return a * b * c * color;
+}
+",
+        )
+        .unwrap();
+        let textures: Vec<_> = compiled
+            .textures
+            .iter()
+            .map(|texture| (texture.name.as_str(), texture.kind))
+            .collect();
+        assert_eq!(
+            textures,
+            [
+                ("sky", TextureKind::Cube),
+                ("tiles", TextureKind::Array),
+                ("noise", TextureKind::Flat),
+            ]
+        );
+        assert!(compile(PLAIN).unwrap().textures.is_empty());
+    }
+
+    #[test]
+    fn a_texture_of_another_type_is_explained() {
+        let error = compile(
+            "
+var depth: texture_3d<f32>;
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    return textureSample(depth, depth_sampler, vec3<f32>(uv, 0.0)) * color;
+}
+",
+        )
+        .unwrap_err();
+        assert!(error.contains("texture `depth` must be"), "{error}");
     }
 
     #[test]

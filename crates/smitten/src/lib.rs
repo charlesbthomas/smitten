@@ -44,6 +44,8 @@ pub mod sound;
 pub mod system;
 pub mod timer;
 pub mod touch;
+#[cfg(feature = "video")]
+pub mod video;
 pub mod window;
 
 pub use joystick::Joystick;
@@ -51,6 +53,8 @@ pub use smitten_core::{
     BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
     GamepadButton, Key, MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
 };
+
+use std::path::Path;
 
 use smitten_core::backend::BackendEvent;
 
@@ -157,6 +161,47 @@ pub trait Game: Sized + 'static {
     /// back.
     fn visible(&mut self, _visible: bool) {}
 
+    /// Called when the player drops a file on the window, with its
+    /// absolute path and where it was dropped, the equivalent of
+    /// `love.filedropped`. Several files dropped together arrive one call
+    /// each.
+    ///
+    /// [`filesystem::read`] and friends take the absolute path as it is.
+    /// The file is not copied anywhere; save what the game needs to keep
+    /// with [`filesystem::write`].
+    ///
+    /// Not every platform reports where a drop happened. Where it is not
+    /// known, `(x, y)` is `(0, 0)`.
+    fn file_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
+
+    /// Called when the player drops a directory on the window, with its
+    /// absolute path and where it was dropped, the equivalent of
+    /// `love.directorydropped`.
+    ///
+    /// To read the files inside it like the game's own, mount it:
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use smitten::filesystem;
+    /// # fn directory_dropped(path: &Path) {
+    /// filesystem::mount(path, "dropped").expect("the directory can be mounted");
+    /// let names = filesystem::directory_items("dropped");
+    /// # }
+    /// ```
+    fn directory_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
+
+    /// Called with each event the game sent itself with [`event::push`],
+    /// the equivalent of a handler in `love.handlers`. They arrive at the
+    /// start of a frame, after the platform's events and before
+    /// `update`.
+    fn custom_event(&mut self, _event: event::CustomEvent) {}
+
+    /// Called when the system is running out of memory, the equivalent of
+    /// `love.lowmemory`. Mobile systems send this before closing a game
+    /// to reclaim memory, so drop caches and anything that can be loaded
+    /// again.
+    fn low_memory(&mut self) {}
+
     /// Called when the display the window is on turns, as when a phone
     /// is rotated, the equivalent of `love.displayrotated`. The safe area
     /// (see [`window::safe_area`]) may have moved too.
@@ -201,6 +246,9 @@ pub fn run<G: Game>(config: Config) {
         'running: loop {
             while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
                 dispatch(&mut game, event);
+            }
+            for event in context::with(|ctx| ctx.events.take()) {
+                game.custom_event(event);
             }
 
             if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
@@ -340,6 +388,14 @@ fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
                 pressure,
             }
         }
+        BackendEvent::FileDropped { path, x, y } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::FileDropped { path, x, y }
+        }
+        BackendEvent::DirectoryDropped { path, x, y } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::DirectoryDropped { path, x, y }
+        }
         other => other,
     }
 }
@@ -410,6 +466,9 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::Focus(focused) => game.focus(focused),
         BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
         BackendEvent::Visible(visible) => game.visible(visible),
+        BackendEvent::FileDropped { path, x, y } => game.file_dropped(&path, x, y),
+        BackendEvent::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
+        BackendEvent::LowMemory => game.low_memory(),
         BackendEvent::DisplayRotated(orientation) => game.display_rotated(orientation),
     }
 }
