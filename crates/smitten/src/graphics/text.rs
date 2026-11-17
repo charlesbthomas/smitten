@@ -13,8 +13,9 @@ use std::rc::Rc;
 use smitten_core::Filter;
 use smitten_core::backend::{Backend, TextureId};
 
-use crate::context;
+use super::stats::{Counted, Kind};
 use crate::reload::Asset;
+use crate::{Color, context};
 
 /// The typeface LÖVE also uses by default.
 static DEFAULT_FONT: &[u8] = include_bytes!("fonts/Vera.ttf");
@@ -54,6 +55,12 @@ pub(crate) struct Inner {
     image_layout: Option<(String, f32)>,
     filter: Cell<Filter>,
     line_height: Cell<f32>,
+    /// Counts the times the glyphs were replaced, so a [`Text`] laid out
+    /// with the old ones knows to lay itself out again.
+    ///
+    /// [`Text`]: super::Text
+    generation: Cell<u32>,
+    _counted: Counted,
 }
 
 impl Drop for Inner {
@@ -103,6 +110,8 @@ impl Font {
                 image_layout: None,
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
+                generation: Cell::new(0),
+                _counted: Counted::new(Kind::Font),
             }),
         })
     }
@@ -132,6 +141,8 @@ impl Font {
                 image_layout: Some((glyphs.to_string(), extra_spacing)),
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
+                generation: Cell::new(0),
+                _counted: Counted::new(Kind::Font),
             }),
         })
     }
@@ -227,15 +238,30 @@ impl Font {
         self.inner.filter.set(filter);
     }
 
+    /// Changes whenever a layout made before now may be out of date: the
+    /// font was loaded again, or its line height changed.
+    pub(crate) fn layout_key(&self) -> (u32, u32) {
+        (
+            self.inner.generation.get(),
+            self.inner.line_height.get().to_bits(),
+        )
+    }
+
+    /// Whether `self` and `other` are handles to the same font.
+    pub(crate) fn is(&self, other: &Font) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Lays out `text` and calls `emit` for every visible glyph with its
-    /// atlas texture, its rectangle in text coordinates (origin at the
-    /// top-left of the first line), and its texture coordinates.
+    /// character, atlas texture, its rectangle in text coordinates (origin
+    /// at the top-left of the first line), and its texture coordinates.
+    /// Glyphs come in the order of their characters in `text`.
     pub(crate) fn layout(
         &self,
         backend: &mut dyn Backend,
         text: &str,
         wrap: Option<(f32, Align)>,
-        mut emit: impl FnMut(TextureId, [f32; 4], [f32; 4]),
+        mut emit: impl FnMut(char, TextureId, [f32; 4], [f32; 4]),
     ) {
         let face = &*self.inner.face.borrow();
         let mut atlas = self.inner.atlas.borrow_mut();
@@ -265,6 +291,7 @@ impl Font {
                     let left = snap(pen + glyph.left);
                     let top = baseline + glyph.top;
                     emit(
+                        character,
                         atlas.pages[glyph.page].texture,
                         [left, top, left + glyph.width, top + glyph.height],
                         glyph.uv,
@@ -383,6 +410,48 @@ fn build_image_font(
     Ok((face, atlas))
 }
 
+/// Says which color each glyph of a piece of colored text is, the way
+/// LÖVE's colored text tables work: each part of the text is tinted by
+/// the color before it.
+///
+/// Glyphs are matched to characters in order. Wrapping only drops spaces
+/// and line breaks, which have no glyphs, so those are left out.
+pub(crate) struct GlyphColors {
+    characters: Vec<(char, Color)>,
+    next: usize,
+}
+
+impl GlyphColors {
+    pub fn new(segments: &[(Color, &str)]) -> GlyphColors {
+        let characters = segments
+            .iter()
+            .flat_map(|&(color, text)| text.chars().map(move |character| (character, color)))
+            .filter(|&(character, _)| character != ' ' && character != '\n')
+            .collect();
+        GlyphColors {
+            characters,
+            next: 0,
+        }
+    }
+
+    /// The color of the next glyph, which is for `character`. Characters
+    /// passed over had no glyph to draw.
+    pub fn color(&mut self, character: char) -> Color {
+        while let Some(&(candidate, color)) = self.characters.get(self.next) {
+            self.next += 1;
+            if candidate == character {
+                return color;
+            }
+        }
+        Color::WHITE
+    }
+}
+
+/// The text of colored segments, joined.
+pub(crate) fn joined(segments: &[(Color, &str)]) -> String {
+    segments.iter().map(|(_, text)| *text).collect()
+}
+
 /// Replaces a font's glyphs with a newer version of its file, keeping its
 /// size. Every handle to the font changes at once.
 pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> Result<(), String> {
@@ -400,6 +469,7 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
     };
     *inner.face.borrow_mut() = face;
     let old = inner.atlas.replace(atlas);
+    inner.generation.set(inner.generation.get().wrapping_add(1));
     for page in &old.pages {
         backend.destroy_texture(page.texture);
     }
@@ -720,6 +790,28 @@ impl Atlas {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glyph_colors_follow_the_segments_and_skip_spaces() {
+        let red = Color::rgb(1.0, 0.0, 0.0);
+        let blue = Color::rgb(0.0, 0.0, 1.0);
+        let mut colors = GlyphColors::new(&[(red, "ab "), (blue, "c\nd")]);
+        // Wrapping drops spaces and line breaks; the rest arrive in order.
+        assert_eq!(colors.color('a'), red);
+        assert_eq!(colors.color('b'), red);
+        assert_eq!(colors.color('c'), blue);
+        assert_eq!(colors.color('d'), blue);
+        assert_eq!(colors.color('e'), Color::WHITE);
+    }
+
+    #[test]
+    fn a_character_with_no_glyph_is_passed_over() {
+        let red = Color::rgb(1.0, 0.0, 0.0);
+        let blue = Color::rgb(0.0, 0.0, 1.0);
+        // The tab draws nothing, so the next glyph is the x.
+        let mut colors = GlyphColors::new(&[(red, "\t"), (blue, "x")]);
+        assert_eq!(colors.color('x'), blue);
+    }
 
     fn face() -> Face {
         Face::new(DEFAULT_FONT, 16.0, 1.0).expect("the built-in font is valid")

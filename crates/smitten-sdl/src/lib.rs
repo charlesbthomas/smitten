@@ -18,11 +18,12 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
-    AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId,
+    AudioFill, Backend, BackendEvent, CompressedFormat, CursorId, Frame, ShaderId, ShaderInfo,
+    TextureId, TextureKind,
 };
 use smitten_core::{
-    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
-    PowerInfo, PowerState, TouchId, WindowState, Wrap,
+    Config, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
+    MouseButton, PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -439,7 +440,26 @@ impl Backend for SdlBackend {
         height: u32,
         rgba: &[u8],
     ) -> Result<TextureId, String> {
-        self.renderer.create_texture(width, height, rgba)
+        self.renderer.create_texture(width, height, rgba, false)
+    }
+
+    fn create_mipmapped_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<TextureId, String> {
+        self.renderer.create_texture(width, height, rgba, true)
+    }
+
+    fn set_texture_mipmap_filter(
+        &mut self,
+        texture: TextureId,
+        filter: Option<Filter>,
+        sharpness: f32,
+    ) {
+        self.renderer
+            .set_texture_mipmap_filter(texture, filter, sharpness);
     }
 
     fn update_texture(
@@ -455,8 +475,48 @@ impl Backend for SdlBackend {
             .update_texture(texture, x, y, width, height, rgba)
     }
 
+    fn create_layered_texture(
+        &mut self,
+        kind: TextureKind,
+        width: u32,
+        height: u32,
+        layers: &[&[u8]],
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_layered_texture(kind, width, height, layers)
+    }
+
+    fn supports_compressed_format(&self, format: CompressedFormat) -> bool {
+        self.renderer.supports_compressed_format(format)
+    }
+
+    fn create_compressed_texture(
+        &mut self,
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        levels: &[&[u8]],
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_compressed_texture(format, width, height, levels)
+    }
+
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
-        self.renderer.create_render_target(width, height)
+        self.renderer.create_render_target(width, height, None)
+    }
+
+    fn create_mipmapped_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        automatic: bool,
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_render_target(width, height, Some(automatic))
+    }
+
+    fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {
+        self.renderer.generate_mipmaps(texture)
     }
 
     fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap) {
@@ -466,6 +526,10 @@ impl Backend for SdlBackend {
 
     fn destroy_texture(&mut self, texture: TextureId) {
         self.renderer.destroy_texture(texture);
+    }
+
+    fn texture_memory(&self) -> u64 {
+        self.renderer.texture_memory()
     }
 
     fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
@@ -986,6 +1050,21 @@ impl SdlBackend {
                     axis,
                     // SDL's range is -32768 to 32767.
                     value: (f32::from(event.gaxis.value) / 32767.0).clamp(-1.0, 1.0),
+                })
+            } else if kind == SDL_EVENT_DROP_FILE {
+                if event.drop.data.is_null() {
+                    return None;
+                }
+                let path =
+                    PathBuf::from(CStr::from_ptr(event.drop.data).to_string_lossy().as_ref());
+                // SDL reports window coordinates; Smitten works in pixels.
+                let scale = self.pixel_density();
+                let (x, y) = (event.drop.x * scale, event.drop.y * scale);
+                // SDL drops directories as files, so tell them apart here.
+                Some(if path.is_dir() {
+                    BackendEvent::DirectoryDropped { path, x, y }
+                } else {
+                    BackendEvent::FileDropped { path, x, y }
                 })
             } else {
                 None

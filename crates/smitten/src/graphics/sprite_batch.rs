@@ -233,8 +233,10 @@ mod tests {
     use smitten_core::Filter;
     use smitten_core::backend::TextureId;
 
+    use crate::graphics::stats::Kind;
+
     fn batch() -> SpriteBatch {
-        let image = Image::from_texture(TextureId(1), 64, 32, Filter::Nearest);
+        let image = Image::from_texture(TextureId(1), 64, 32, Filter::Nearest, Kind::Image);
         SpriteBatch::new(&image, 4)
     }
 
