@@ -29,10 +29,19 @@
 //! [`Source::set_filter`] muffles or thins a source. [`set_effect`] defines
 //! a named effect, such as a [`Reverb`] or an [`Echo`], and
 //! [`Source::set_effect`] sends a source through it.
+//!
+//! # Making and recording sound
+//!
+//! [`new_queueable_source`] plays sound the game makes as it goes, such as
+//! a synthesizer, a voice chat or a [`Decoder`](crate::sound::Decoder)'s
+//! pieces changed on the way. [`recording_devices`] lists the microphones,
+//! whose [`RecordingDevice`] hands back what it hears as
+//! [`SoundData`](crate::sound::SoundData).
 
 pub(crate) mod decode;
 mod effects;
 mod mixer;
+mod record;
 mod spatial;
 
 use std::fmt;
@@ -47,6 +56,7 @@ pub use effects::{
     Chorus, Compressor, Distortion, Echo, Effect, Equalizer, Filter, FilterType, Flanger, Reverb,
     RingModulator, Waveform,
 };
+pub use record::{RecordingDevice, recording_devices};
 pub use spatial::DistanceModel;
 
 /// How a sound is held in memory.
@@ -67,6 +77,12 @@ pub enum SourceType {
 #[derive(Clone, Default)]
 pub(crate) struct AudioState {
     mixer: Arc<Mutex<Mixer>>,
+    /// What each recording device has captured, shared by every handle
+    /// to it.
+    recordings: std::collections::HashMap<
+        smitten_core::backend::RecordingDeviceId,
+        Arc<Mutex<record::Capture>>,
+    >,
     /// Whether the output device has been asked for yet.
     started: bool,
 }

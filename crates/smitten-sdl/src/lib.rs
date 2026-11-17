@@ -18,7 +18,8 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
-    AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId,
+    AudioFill, Backend, BackendEvent, CursorId, Frame, RecordingDeviceId, RecordingSink, ShaderId,
+    ShaderInfo, TextureId,
 };
 use smitten_core::{
     Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
@@ -38,6 +39,11 @@ pub struct SdlBackend {
     gamepads: HashMap<u32, *mut SDL_Gamepad>,
     /// Present once `start_audio` has succeeded. Dropping it stops playback.
     audio: Option<audio::AudioOutput>,
+    /// The recording devices that are capturing.
+    recordings: HashMap<RecordingDeviceId, audio::AudioInput>,
+    /// Held from the first time recording devices are listed, so that
+    /// their ids stay valid.
+    audio_subsystem: Option<audio::AudioSubsystem>,
     /// System cursors made so far. SDL frees them when it shuts down.
     cursors: HashMap<Cursor, *mut SDL_Cursor>,
     /// Cursors made from images, freed by `destroy_cursor`.
@@ -160,6 +166,8 @@ impl SdlBackend {
                 renderer: ManuallyDrop::new(renderer),
                 gamepads: HashMap::new(),
                 audio: None,
+                recordings: HashMap::new(),
+                audio_subsystem: None,
                 cursors: HashMap::new(),
                 image_cursors: HashMap::new(),
                 next_image_cursor: 0,
@@ -178,6 +186,8 @@ impl Drop for SdlBackend {
         unsafe {
             // Stop the audio thread before tearing anything else down.
             self.audio = None;
+            self.recordings.clear();
+            self.audio_subsystem = None;
             for (_, gamepad) in self.gamepads.drain() {
                 SDL_CloseGamepad(gamepad);
             }
@@ -214,6 +224,37 @@ impl Backend for SdlBackend {
         }
         self.audio = Some(audio::AudioOutput::open(fill)?);
         Ok(())
+    }
+
+    fn recording_devices(&mut self) -> Vec<(RecordingDeviceId, String)> {
+        if self.audio_subsystem.is_none() {
+            match audio::AudioSubsystem::start() {
+                Ok(running) => self.audio_subsystem = Some(running),
+                Err(_) => return Vec::new(),
+            }
+        }
+        self.audio_subsystem
+            .as_ref()
+            .map_or_else(Vec::new, audio::recording_devices)
+    }
+
+    fn start_recording(
+        &mut self,
+        device: RecordingDeviceId,
+        rate: u32,
+        channels: u16,
+        sink: RecordingSink,
+    ) -> Result<(), String> {
+        // Close any earlier recording first, since a device may only be
+        // opened once.
+        self.recordings.remove(&device);
+        let input = audio::AudioInput::open(device, rate, channels, sink)?;
+        self.recordings.insert(device, input);
+        Ok(())
+    }
+
+    fn stop_recording(&mut self, device: RecordingDeviceId) {
+        self.recordings.remove(&device);
     }
 
     fn save_directory(&mut self, identity: &str) -> Result<PathBuf, String> {

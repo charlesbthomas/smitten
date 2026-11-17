@@ -121,6 +121,15 @@ impl SoundData {
         index * usize::from(self.channels) + usize::from(channel)
     }
 
+    /// Wraps samples that are already interleaved.
+    pub(crate) fn from_samples(samples: Vec<f32>, rate: u32, channels: u16) -> SoundData {
+        SoundData {
+            samples,
+            rate,
+            channels,
+        }
+    }
+
     /// Makes a sound from frames as the decoder gives them, which hold a
     /// mono sample twice.
     fn from_frames(frames: &[Frame], rate: u32, channels: u16) -> SoundData {
