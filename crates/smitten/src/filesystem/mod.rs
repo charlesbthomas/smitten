@@ -17,7 +17,11 @@
 //! A game can also [`mount`] a zip archive or a directory, such as a
 //! downloaded level pack, so that the files inside it can be read like
 //! any others. Mounted files cannot be written.
+//!
+//! For a file too large to read at once, or one written over time, use
+//! [`open_file`] to read or write it a piece at a time.
 
+mod file;
 mod search;
 
 use std::collections::BTreeSet;
@@ -28,6 +32,7 @@ use std::time::SystemTime;
 use crate::Config;
 use crate::context::{self, Context};
 
+pub use file::{File, FileMode, open_file};
 use search::SearchPath;
 
 pub(crate) struct FilesystemState {
