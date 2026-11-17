@@ -59,8 +59,8 @@ pub struct File {
 ///
 /// For [`FileMode::Read`], a relative path is looked up as in
 /// [`super::read`]: the save directory, then the asset directory and
-/// anything mounted. An absolute path, such as one passed to
-/// [`crate::Game::file_dropped`], is opened as it is. For writing, the
+/// anything mounted. An absolute path, such as that of a file the
+/// player dropped on the window, is opened as it is. For writing, the
 /// path must be relative and the file is in the save directory, with any
 /// missing parent directories created.
 pub fn open_file(path: impl AsRef<Path>, mode: FileMode) -> io::Result<File> {
