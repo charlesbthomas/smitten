@@ -181,6 +181,72 @@ pub struct UniformField {
     pub kind: Option<UniformKind>,
 }
 
+/// The shape of a texture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextureKind {
+    /// An ordinary picture.
+    #[default]
+    Flat,
+    /// Several pictures of one size, picked by index.
+    Array,
+    /// Six square pictures that make the inside of a cube, picked by
+    /// direction.
+    Cube,
+}
+
+/// A way of storing pixels compressed in blocks of 4 by 4, which the GPU
+/// reads without unpacking first. These are the BC formats, also called
+/// DXT or S3TC, that desktop GPUs read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompressedFormat {
+    /// Color with on-or-off alpha, 8 bytes a block. Also called DXT1.
+    Bc1,
+    /// Color with sharp alpha, 16 bytes a block. Also called DXT3.
+    Bc2,
+    /// Color with smooth alpha, 16 bytes a block. Also called DXT5.
+    Bc3,
+    /// One channel, red, 8 bytes a block.
+    Bc4,
+    /// Two channels, red and green, 16 bytes a block.
+    Bc5,
+    /// High quality color and alpha, 16 bytes a block.
+    Bc7,
+}
+
+impl CompressedFormat {
+    /// Every format, in declaration order.
+    pub const ALL: [CompressedFormat; 6] = [
+        CompressedFormat::Bc1,
+        CompressedFormat::Bc2,
+        CompressedFormat::Bc3,
+        CompressedFormat::Bc4,
+        CompressedFormat::Bc5,
+        CompressedFormat::Bc7,
+    ];
+
+    /// How many bytes one 4 by 4 block takes.
+    pub fn block_size(self) -> usize {
+        match self {
+            CompressedFormat::Bc1 | CompressedFormat::Bc4 => 8,
+            _ => 16,
+        }
+    }
+
+    /// How many bytes a `width` by `height` picture takes. A partial block
+    /// at an edge takes a whole one.
+    pub fn data_size(self, width: u32, height: u32) -> usize {
+        let blocks = |pixels: u32| pixels.div_ceil(4).max(1) as usize;
+        blocks(width) * blocks(height) * self.block_size()
+    }
+}
+
+/// A texture a custom shader declares besides `image`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShaderTexture {
+    pub name: String,
+    pub kind: TextureKind,
+}
+
 /// What a backend reports about a shader it compiled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaderInfo {
@@ -189,6 +255,9 @@ pub struct ShaderInfo {
     /// Every [`DrawCall`] using the shader must supply exactly this many.
     pub uniform_size: u32,
     pub fields: Vec<UniformField>,
+    /// The textures the shader declares, in order. Every [`DrawCall`]
+    /// using the shader binds this many from [`Frame::textures`].
+    pub textures: Vec<ShaderTexture>,
 }
 
 /// A rectangle of pixels on a render target, measured from its top-left.
@@ -200,11 +269,48 @@ pub struct Scissor {
     pub height: u32,
 }
 
+/// Which color channels drawing may change. The rest keep what the
+/// target already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColorMask {
+    pub r: bool,
+    pub g: bool,
+    pub b: bool,
+    pub a: bool,
+}
+
+impl ColorMask {
+    /// Every channel may change, as drawing starts out.
+    pub const ALL: ColorMask = ColorMask {
+        r: true,
+        g: true,
+        b: true,
+        a: true,
+    };
+}
+
+impl Default for ColorMask {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+/// A texture sent to a custom shader, and how to sample it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoundTexture {
+    pub texture: TextureId,
+    pub filter: Filter,
+}
+
 /// A run of triangles that share a texture and drawing state.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DrawCall {
-    /// The texture to sample, or `None` for plain vertex colors.
+    /// The texture to sample, or `None` for plain vertex colors. Only an
+    /// array texture with the built-in shader, or a flat one, can be drawn
+    /// this way.
     pub texture: Option<TextureId>,
+    /// Which picture of an array texture to draw. Ignored for others.
+    pub layer: u32,
     pub filter: Filter,
     pub blend: BlendMode,
     /// Pixels outside this rectangle are left untouched. `None` draws
@@ -214,11 +320,20 @@ pub struct DrawCall {
     /// The value written by [`StencilMode::Write`] with a replace action,
     /// or compared against by [`StencilMode::Test`].
     pub stencil_value: u8,
+    /// The color channels the draw may change.
+    pub color_mask: ColorMask,
+    /// Whether to draw only the edges of the triangles, one pixel wide,
+    /// for debugging.
+    pub wireframe: bool,
     /// The custom shader to draw with, or `None` for the built-in one.
     pub shader: Option<ShaderId>,
     /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its
     /// length is the shader's [`ShaderInfo::uniform_size`].
     pub uniform_offset: u32,
+    /// Where the textures for the custom shader's own declarations start
+    /// in [`Frame::textures`]. There are as many as
+    /// [`ShaderInfo::textures`] lists.
+    pub texture_offset: u32,
     /// Index into [`Frame::vertices`] of the first vertex.
     pub first_vertex: u32,
     /// A multiple of three, since every three vertices form a triangle.
@@ -250,6 +365,9 @@ pub struct Frame<'a> {
     pub calls: &'a [DrawCall],
     /// Uniform data for the calls that use a custom shader.
     pub uniforms: &'a [u8],
+    /// Textures for the calls whose custom shader declares its own. `None`
+    /// is one the game has not sent, which reads as white.
+    pub textures: &'a [Option<BoundTexture>],
     /// Run in order. A later pass may sample a target drawn by an
     /// earlier one.
     pub passes: &'a [Pass],
@@ -277,6 +395,28 @@ pub trait Backend {
     fn create_texture(&mut self, width: u32, height: u32, rgba: &[u8])
     -> Result<TextureId, String>;
 
+    /// As `create_texture`, with a full chain of mipmaps made from the
+    /// image: smaller copies the GPU uses when the image is drawn small.
+    /// They start out blended with [`Filter::Linear`] and a sharpness of 0,
+    /// and `update_texture` makes them again.
+    fn create_mipmapped_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<TextureId, String>;
+
+    /// Sets how a texture with mipmaps blends between them, or `None` to
+    /// draw only the full-size image. Positive `sharpness` chooses larger
+    /// mipmaps than the GPU would, and negative smaller ones. Does nothing
+    /// to a texture without mipmaps.
+    fn set_texture_mipmap_filter(
+        &mut self,
+        texture: TextureId,
+        filter: Option<Filter>,
+        sharpness: f32,
+    );
+
     /// Replaces the `width` by `height` region of a texture whose top-left
     /// corner is at `(x, y)`. `rgba` is laid out as in `create_texture`.
     fn update_texture(
@@ -289,10 +429,55 @@ pub trait Backend {
         rgba: &[u8],
     ) -> Result<(), String>;
 
+    /// Whether the GPU can read textures stored in `format`.
+    fn supports_compressed_format(&self, format: CompressedFormat) -> bool;
+
+    /// Creates a texture from compressed data, with one entry of `levels`
+    /// for the full-size picture and one for each mipmap after it, each
+    /// half the size of the one before and exactly
+    /// [`CompressedFormat::data_size`] long. It cannot be updated. With
+    /// more than one level, its mipmaps start out blended as those of
+    /// `create_mipmapped_texture` do.
+    fn create_compressed_texture(
+        &mut self,
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        levels: &[&[u8]],
+    ) -> Result<TextureId, String>;
+
+    /// Creates an array or cube texture from `layers`, each laid out as in
+    /// `create_texture` and all `width` by `height` pixels. A cube has six
+    /// square layers, in the order +x, -x, +y, -y, +z, -z. A
+    /// [`TextureKind::Flat`] texture has one layer.
+    fn create_layered_texture(
+        &mut self,
+        kind: TextureKind,
+        width: u32,
+        height: u32,
+        layers: &[&[u8]],
+    ) -> Result<TextureId, String>;
+
     /// Creates a texture that can be drawn to by naming it as a
     /// [`Pass::target`], and sampled like any other. It starts out
     /// transparent, and keeps its contents between frames.
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String>;
+
+    /// As `create_render_target`, with a full chain of mipmaps that start
+    /// out blended as those of `create_mipmapped_texture` do. With
+    /// `automatic`, the mipmaps are made again whenever a frame has drawn
+    /// to the target; otherwise only by `generate_mipmaps`.
+    fn create_mipmapped_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        automatic: bool,
+    ) -> Result<TextureId, String>;
+
+    /// Makes a render target's mipmaps again from what it holds. Draws
+    /// still waiting in a frame are not included, so the caller renders
+    /// them first.
+    fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String>;
 
     /// Sets what a texture shows beyond its edges, along each axis. It
     /// applies to everything drawn with the texture from this frame on.
@@ -300,6 +485,10 @@ pub trait Backend {
 
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
+
+    /// Roughly how much GPU memory the textures that have not been
+    /// destroyed take, in bytes.
+    fn texture_memory(&self) -> u64;
 
     /// Compiles a custom fragment shader written in WGSL.
     ///
