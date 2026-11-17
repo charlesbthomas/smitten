@@ -5,13 +5,43 @@
 use std::collections::HashSet;
 
 use smitten_core::backend::BackendEvent;
-use smitten_core::{GamepadAxis, GamepadButton, JoystickId, Key, MouseButton, TouchId};
+use smitten_core::{
+    GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MouseButton, TouchId,
+};
 
 pub(crate) struct JoystickState {
     pub id: JoystickId,
-    pub name: String,
+    pub info: JoystickInfo,
+    /// Gamepad buttons held, for a joystick that is a gamepad.
     pub buttons: HashSet<GamepadButton>,
     pub axes: [f32; GamepadAxis::ALL.len()],
+    /// Raw buttons held, by number.
+    pub raw_buttons: Vec<bool>,
+    pub raw_axes: Vec<f32>,
+    pub hats: Vec<JoystickHat>,
+}
+
+impl JoystickState {
+    fn new(id: JoystickId, info: JoystickInfo) -> Self {
+        Self {
+            id,
+            raw_buttons: vec![false; info.button_count],
+            raw_axes: vec![0.0; info.axis_count],
+            hats: vec![JoystickHat::Centered; info.hat_count],
+            info,
+            buttons: HashSet::new(),
+            axes: [0.0; GamepadAxis::ALL.len()],
+        }
+    }
+}
+
+/// Stores `value` at `index`, growing `list` if a device reports more
+/// inputs than it said it had.
+fn set_at<T: Clone + Default>(list: &mut Vec<T>, index: usize, value: T) {
+    if index >= list.len() {
+        list.resize(index + 1, T::default());
+    }
+    list[index] = value;
 }
 
 /// A finger that is on the screen.
@@ -36,6 +66,10 @@ pub(crate) struct InputState {
     pub joysticks: Vec<JoystickState>,
     /// In the order they touched the screen.
     pub touches: Vec<TouchState>,
+    /// Whether held keys send repeated `key_pressed` callbacks.
+    pub key_repeat: bool,
+    /// GUIDs of the gamepad mappings the game added, in order.
+    pub added_mappings: Vec<String>,
 }
 
 impl Default for InputState {
@@ -51,6 +85,8 @@ impl Default for InputState {
             image_cursor: None,
             joysticks: Vec::new(),
             touches: Vec::new(),
+            key_repeat: false,
+            added_mappings: Vec::new(),
         }
     }
 }
@@ -111,14 +147,9 @@ impl InputState {
             BackendEvent::TouchReleased { id, .. } => {
                 self.touches.retain(|touch| touch.id != *id);
             }
-            BackendEvent::JoystickAdded { id, name } => {
+            BackendEvent::JoystickAdded { id, info } => {
                 if self.joystick(*id).is_none() {
-                    self.joysticks.push(JoystickState {
-                        id: *id,
-                        name: name.clone(),
-                        buttons: HashSet::new(),
-                        axes: [0.0; GamepadAxis::ALL.len()],
-                    });
+                    self.joysticks.push(JoystickState::new(*id, info.clone()));
                 }
             }
             BackendEvent::JoystickRemoved { id } => {
@@ -139,9 +170,27 @@ impl InputState {
                     joystick.axes[axis.index()] = *value;
                 }
             }
+            BackendEvent::JoystickPressed { id, button }
+            | BackendEvent::JoystickReleased { id, button } => {
+                let down = matches!(event, BackendEvent::JoystickPressed { .. });
+                if let Some(joystick) = self.joystick_mut(*id) {
+                    set_at(&mut joystick.raw_buttons, *button, down);
+                }
+            }
+            BackendEvent::JoystickAxis { id, axis, value } => {
+                if let Some(joystick) = self.joystick_mut(*id) {
+                    set_at(&mut joystick.raw_axes, *axis, *value);
+                }
+            }
+            BackendEvent::JoystickHat { id, hat, direction } => {
+                if let Some(joystick) = self.joystick_mut(*id) {
+                    set_at(&mut joystick.hats, *hat, *direction);
+                }
+            }
             BackendEvent::Quit
             | BackendEvent::Resized { .. }
             | BackendEvent::TextInput(_)
+            | BackendEvent::TextEdited { .. }
             | BackendEvent::WheelMoved { .. }
             | BackendEvent::Focus(_)
             | BackendEvent::MouseFocus(_)
@@ -208,9 +257,19 @@ mod tests {
         let mut input = InputState::default();
         input.apply(&BackendEvent::JoystickAdded {
             id: PAD,
-            name: "Test Pad".to_string(),
+            info: pad_info(),
         });
         input
+    }
+
+    fn pad_info() -> JoystickInfo {
+        JoystickInfo {
+            name: "Test Pad".to_string(),
+            axis_count: 2,
+            button_count: 4,
+            hat_count: 1,
+            ..JoystickInfo::default()
+        }
     }
 
     #[test]
@@ -319,7 +378,7 @@ mod tests {
         });
 
         let pad = input.joystick(PAD).expect("the pad is connected");
-        assert_eq!(pad.name, "Test Pad");
+        assert_eq!(pad.info.name, "Test Pad");
         assert!(pad.buttons.contains(&GamepadButton::A));
         assert_eq!(pad.axes[GamepadAxis::LeftX.index()], -0.5);
         assert_eq!(pad.axes[GamepadAxis::LeftY.index()], 0.0);
@@ -353,9 +412,65 @@ mod tests {
         let mut input = connected();
         input.apply(&BackendEvent::JoystickAdded {
             id: PAD,
-            name: "Test Pad".to_string(),
+            info: pad_info(),
         });
 
         assert_eq!(input.joysticks.len(), 1);
+    }
+
+    #[test]
+    fn raw_buttons_axes_and_hats_are_tracked_per_joystick() {
+        let mut input = connected();
+        let pad = input.joystick(PAD).unwrap();
+        assert_eq!(pad.raw_buttons, [false; 4]);
+        assert_eq!(pad.raw_axes, [0.0; 2]);
+        assert_eq!(pad.hats, [JoystickHat::Centered]);
+
+        input.apply(&BackendEvent::JoystickPressed { id: PAD, button: 2 });
+        input.apply(&BackendEvent::JoystickAxis {
+            id: PAD,
+            axis: 1,
+            value: 0.25,
+        });
+        input.apply(&BackendEvent::JoystickHat {
+            id: PAD,
+            hat: 0,
+            direction: JoystickHat::LeftUp,
+        });
+        let pad = input.joystick(PAD).unwrap();
+        assert_eq!(pad.raw_buttons, [false, false, true, false]);
+        assert_eq!(pad.raw_axes, [0.0, 0.25]);
+        assert_eq!(pad.hats, [JoystickHat::LeftUp]);
+
+        input.apply(&BackendEvent::JoystickReleased { id: PAD, button: 2 });
+        assert!(!input.joystick(PAD).unwrap().raw_buttons[2]);
+    }
+
+    #[test]
+    fn inputs_beyond_the_reported_counts_are_still_tracked() {
+        let mut input = connected();
+        input.apply(&BackendEvent::JoystickPressed { id: PAD, button: 6 });
+        let pad = input.joystick(PAD).unwrap();
+        assert_eq!(pad.raw_buttons.len(), 7);
+        assert!(pad.raw_buttons[6]);
+    }
+
+    #[test]
+    fn hat_bits_round_trip_and_opposites_cancel() {
+        for hat in [
+            JoystickHat::Centered,
+            JoystickHat::Up,
+            JoystickHat::Right,
+            JoystickHat::Down,
+            JoystickHat::Left,
+            JoystickHat::RightUp,
+            JoystickHat::RightDown,
+            JoystickHat::LeftUp,
+            JoystickHat::LeftDown,
+        ] {
+            assert_eq!(JoystickHat::from_bits(hat.bits()), hat);
+        }
+        assert_eq!(JoystickHat::from_bits(1 | 4), JoystickHat::Centered);
+        assert_eq!(JoystickHat::from_bits(1 | 4 | 2), JoystickHat::Right);
     }
 }

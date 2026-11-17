@@ -242,7 +242,7 @@ impl Pong {
     }
 
     fn update_paddles(&mut self, dt: f32) {
-        let pads = joystick::joysticks();
+        let pads = joystick::gamepads();
         let left = control(&[Key::W], &[Key::S], pads.first());
         self.left.move_by(left * PADDLE_SPEED * dt);
 

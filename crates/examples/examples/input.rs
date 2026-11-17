@@ -45,7 +45,7 @@ impl Input {
         if keyboard::is_any_down(&[Key::Down, Key::S]) {
             dy += 1.0;
         }
-        for pad in joystick::joysticks() {
+        for pad in joystick::gamepads() {
             let (stick_x, stick_y) = (
                 pad.gamepad_axis(GamepadAxis::LeftX),
                 pad.gamepad_axis(GamepadAxis::LeftY),
@@ -61,7 +61,7 @@ impl Input {
     }
 
     fn update_title(&self) {
-        let pad = joystick::joysticks()
+        let pad = joystick::gamepads()
             .first()
             .map_or("none".to_string(), Joystick::name);
         window::set_title(&format!(
@@ -74,6 +74,8 @@ impl Input {
 impl Game for Input {
     fn load() -> Self {
         graphics::set_background_color(Color::rgb(0.1, 0.12, 0.16));
+        // Holding Backspace keeps deleting.
+        keyboard::set_key_repeat(true);
         let game = Input {
             x: 400.0,
             y: 300.0,
