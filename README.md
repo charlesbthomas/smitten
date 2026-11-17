@@ -69,6 +69,7 @@ cargo run --example pong
 cargo run --example topple
 cargo run --example lantern
 cargo run --example design
+cargo run --example graphics_extras
 cargo run --release --example benchmark
 ```
 

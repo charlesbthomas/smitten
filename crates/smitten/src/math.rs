@@ -16,6 +16,27 @@
 
 use std::cell::RefCell;
 
+pub use crate::graphics::Transform;
+
+/// Makes a [`Transform`] from LÖVE's `newTransform` arguments: move the
+/// origin by `(-ox, -oy)`, shear by `(kx, ky)`, scale by `(sx, sy)`,
+/// rotate by `angle` radians, then place it at `(x, y)`.
+/// [`Transform::new`] makes one that changes nothing.
+#[allow(clippy::too_many_arguments)] // Mirrors love.math.newTransform.
+pub fn new_transform(
+    x: f32,
+    y: f32,
+    angle: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+    kx: f32,
+    ky: f32,
+) -> Transform {
+    Transform::from_transformation(x, y, angle, sx, sy, ox, oy, kx, ky)
+}
+
 /// A source of random numbers with its own seed, the equivalent of LÖVE's
 /// `RandomGenerator`.
 ///

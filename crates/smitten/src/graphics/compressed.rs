@@ -1,0 +1,305 @@
+//! Images stored compressed for the GPU, read from DDS files.
+
+use std::fmt;
+use std::path::Path;
+
+use smitten_core::backend::CompressedFormat;
+
+use super::ImageError;
+
+/// Pixels compressed in a form the GPU reads directly, the equivalent of
+/// LÖVE's `CompressedImageData`. Load one with
+/// [`graphics::new_compressed_data`](super::new_compressed_data) and draw
+/// it with [`Image::from_compressed_data`](super::Image::from_compressed_data),
+/// or let [`graphics::new_image`](super::new_image) load a `.dds` file.
+///
+/// A compressed image takes a quarter to an eighth of the GPU memory of an
+/// ordinary one and loads without decoding, but its pixels cannot be read
+/// or changed. Smitten reads DDS files in the BC formats desktop GPUs
+/// support, with any mipmaps they hold.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CompressedImageData {
+    format: CompressedFormat,
+    width: u32,
+    height: u32,
+    /// The full-size picture, then each mipmap.
+    levels: Vec<Vec<u8>>,
+}
+
+impl CompressedImageData {
+    /// Reads compressed pixels from the bytes of a DDS file.
+    pub fn from_bytes(bytes: &[u8]) -> Result<CompressedImageData, ImageError> {
+        parse_dds(bytes).map_err(ImageError::Invalid)
+    }
+
+    /// Loads a DDS file.
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes.
+    pub fn from_file(path: impl AsRef<Path>) -> Result<CompressedImageData, ImageError> {
+        let path = path.as_ref();
+        let bytes = crate::filesystem::read(path).map_err(|source| ImageError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        parse_dds(&bytes).map_err(|message| ImageError::Decode {
+            path: path.to_path_buf(),
+            message,
+        })
+    }
+
+    /// How the pixels are compressed.
+    pub fn format(&self) -> CompressedFormat {
+        self.format
+    }
+
+    /// Width in pixels.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Height in pixels.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Size in pixels as `(width, height)`.
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// How many mipmap levels the data holds, counting the full-size
+    /// picture: 1 for none.
+    pub fn mipmap_count(&self) -> u32 {
+        self.levels.len() as u32
+    }
+
+    /// The compressed bytes of each level, the full-size picture first.
+    pub(crate) fn levels(&self) -> Vec<&[u8]> {
+        self.levels.iter().map(Vec::as_slice).collect()
+    }
+}
+
+impl fmt::Debug for CompressedImageData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CompressedImageData")
+            .field("format", &self.format)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("mipmaps", &self.levels.len())
+            .finish()
+    }
+}
+
+/// Whether `bytes` look like a DDS file.
+pub(crate) fn is_dds(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"DDS ")
+}
+
+const HEADER_SIZE: usize = 128;
+const DX10_HEADER_SIZE: usize = 20;
+/// `dwFlags`: the mipmap count is filled in.
+const DDSD_MIPMAPCOUNT: u32 = 0x2_0000;
+/// The pixel format's `dwFlags`: `dwFourCC` is filled in.
+const DDPF_FOURCC: u32 = 0x4;
+/// `dwCaps2`: the file is a cube map.
+const DDSCAPS2_CUBEMAP: u32 = 0x200;
+/// `dwCaps2`: the file is a volume.
+const DDSCAPS2_VOLUME: u32 = 0x20_0000;
+/// The DX10 header's `resourceDimension` for a 2D texture.
+const DIMENSION_TEXTURE2D: u32 = 3;
+/// The DX10 header's `miscFlag`: the file is a cube map.
+const MISC_TEXTURECUBE: u32 = 0x4;
+
+fn parse_dds(bytes: &[u8]) -> Result<CompressedImageData, String> {
+    if !is_dds(bytes) || bytes.len() < HEADER_SIZE {
+        return Err("not a DDS file".to_string());
+    }
+    let word = |offset: usize| {
+        bytes
+            .get(offset..offset + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .unwrap_or(0)
+    };
+    let flags = word(8);
+    let height = word(12);
+    let width = word(16);
+    let mipmaps = if flags & DDSD_MIPMAPCOUNT != 0 {
+        word(28).max(1)
+    } else {
+        1
+    };
+    let format_flags = word(80);
+    let four_cc = &bytes[84..88];
+    let caps2 = word(112);
+    if caps2 & (DDSCAPS2_CUBEMAP | DDSCAPS2_VOLUME) != 0 {
+        return Err("cube map and volume DDS files are not supported".to_string());
+    }
+    if format_flags & DDPF_FOURCC == 0 {
+        return Err("only compressed DDS files are supported, not raw pixels".to_string());
+    }
+
+    let mut data_start = HEADER_SIZE;
+    let format = match four_cc {
+        b"DXT1" => CompressedFormat::Bc1,
+        b"DXT2" | b"DXT3" => CompressedFormat::Bc2,
+        b"DXT4" | b"DXT5" => CompressedFormat::Bc3,
+        b"ATI1" | b"BC4U" => CompressedFormat::Bc4,
+        b"ATI2" | b"BC5U" => CompressedFormat::Bc5,
+        b"DX10" => {
+            if bytes.len() < HEADER_SIZE + DX10_HEADER_SIZE {
+                return Err("the DDS file ends inside its header".to_string());
+            }
+            data_start += DX10_HEADER_SIZE;
+            let dimension = word(132);
+            let misc = word(136);
+            let array_size = word(140);
+            if dimension != DIMENSION_TEXTURE2D || misc & MISC_TEXTURECUBE != 0 || array_size > 1 {
+                return Err(
+                    "only single 2D images are supported, not arrays, cubes or volumes".to_string(),
+                );
+            }
+            // DXGI_FORMAT values. The sRGB variants are read as plain
+            // colors, as LÖVE does without gamma correction.
+            match word(128) {
+                71 | 72 => CompressedFormat::Bc1,
+                74 | 75 => CompressedFormat::Bc2,
+                77 | 78 => CompressedFormat::Bc3,
+                80 => CompressedFormat::Bc4,
+                83 => CompressedFormat::Bc5,
+                98 | 99 => CompressedFormat::Bc7,
+                other => return Err(format!("DXGI format {other} is not supported")),
+            }
+        }
+        other => {
+            return Err(format!(
+                "compression {:?} is not supported",
+                String::from_utf8_lossy(other)
+            ));
+        }
+    };
+    if width == 0 || height == 0 {
+        return Err("the image has no pixels".to_string());
+    }
+    // A chain longer than the image allows is cut short.
+    let full_chain = 32 - width.max(height).leading_zeros();
+    let mipmaps = mipmaps.min(full_chain);
+
+    let mut levels = Vec::with_capacity(mipmaps as usize);
+    let mut offset = data_start;
+    for level in 0..mipmaps {
+        let size = format.data_size((width >> level).max(1), (height >> level).max(1));
+        let Some(data) = bytes.get(offset..offset + size) else {
+            if level == 0 {
+                return Err("the DDS file ends before its pixels do".to_string());
+            }
+            // Keep the levels that are there.
+            break;
+        };
+        levels.push(data.to_vec());
+        offset += size;
+    }
+    Ok(CompressedImageData {
+        format,
+        width,
+        height,
+        levels,
+    })
+}
+
+/// Builds the bytes of a DDS file, for tests.
+#[cfg(test)]
+pub(crate) fn dds_file(four_cc: &[u8; 4], width: u32, height: u32, levels: &[&[u8]]) -> Vec<u8> {
+    let mut file = vec![0; HEADER_SIZE];
+    file[..4].copy_from_slice(b"DDS ");
+    let mut put = |offset: usize, value: u32| {
+        file[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    };
+    put(4, 124);
+    put(8, 0x1007 | DDSD_MIPMAPCOUNT);
+    put(12, height);
+    put(16, width);
+    put(28, levels.len() as u32);
+    put(76, 32);
+    put(80, DDPF_FOURCC);
+    file[84..88].copy_from_slice(four_cc);
+    for level in levels {
+        file.extend_from_slice(level);
+    }
+    file
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dxt1_file_with_mipmaps_is_read_level_by_level() {
+        // 8 by 8 is four blocks, 4 by 4 one, and 2 by 2 and 1 by 1 one each.
+        let levels: [&[u8]; 4] = [&[1; 32], &[2; 8], &[3; 8], &[4; 8]];
+        let data = CompressedImageData::from_bytes(&dds_file(b"DXT1", 8, 8, &levels)).unwrap();
+        assert_eq!(data.format(), CompressedFormat::Bc1);
+        assert_eq!(data.dimensions(), (8, 8));
+        assert_eq!(data.mipmap_count(), 4);
+        assert_eq!(data.levels(), levels);
+    }
+
+    #[test]
+    fn each_four_cc_names_its_format() {
+        for (four_cc, format) in [
+            (b"DXT3", CompressedFormat::Bc2),
+            (b"DXT5", CompressedFormat::Bc3),
+            (b"ATI1", CompressedFormat::Bc4),
+            (b"ATI2", CompressedFormat::Bc5),
+        ] {
+            let level = vec![0; format.block_size()];
+            let data =
+                CompressedImageData::from_bytes(&dds_file(four_cc, 4, 4, &[&level])).unwrap();
+            assert_eq!(data.format(), format);
+        }
+    }
+
+    #[test]
+    fn a_dx10_header_names_bc7() {
+        let mut file = dds_file(b"DX10", 4, 4, &[]);
+        let mut header = Vec::new();
+        for value in [98u32, DIMENSION_TEXTURE2D, 0, 1, 0] {
+            header.extend_from_slice(&value.to_le_bytes());
+        }
+        file.extend_from_slice(&header);
+        file.extend_from_slice(&[7; 16]);
+        let data = CompressedImageData::from_bytes(&file).unwrap();
+        assert_eq!(data.format(), CompressedFormat::Bc7);
+        assert_eq!(data.levels(), [&[7; 16][..]]);
+    }
+
+    #[test]
+    fn odd_sizes_round_up_to_whole_blocks() {
+        assert_eq!(CompressedFormat::Bc1.data_size(5, 3), 2 * 8);
+        assert_eq!(CompressedFormat::Bc3.data_size(1, 1), 16);
+        assert_eq!(CompressedFormat::Bc7.data_size(9, 8), 3 * 2 * 16);
+    }
+
+    #[test]
+    fn missing_mipmaps_are_dropped_but_missing_pixels_are_an_error() {
+        let short = dds_file(b"DXT1", 8, 8, &[&[0; 32], &[0; 8]]);
+        let mut header_says_four = short.clone();
+        header_says_four[28..32].copy_from_slice(&4u32.to_le_bytes());
+        assert_eq!(
+            CompressedImageData::from_bytes(&header_says_four)
+                .unwrap()
+                .mipmap_count(),
+            2
+        );
+        let truncated = &short[..HEADER_SIZE + 10];
+        assert!(CompressedImageData::from_bytes(truncated).is_err());
+    }
+
+    #[test]
+    fn other_files_are_refused_with_a_reason() {
+        assert!(CompressedImageData::from_bytes(b"\x89PNG").is_err());
+        let error = CompressedImageData::from_bytes(&dds_file(b"ETC1", 4, 4, &[&[0; 8]]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("ETC1"), "{error}");
+    }
+}
