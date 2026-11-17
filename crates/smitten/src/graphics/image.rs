@@ -30,7 +30,10 @@ pub(crate) struct Inner {
     filter: Cell<Filter>,
     wrap: Cell<(Wrap, Wrap)>,
     /// How many mipmap levels the texture has, 1 for none.
-    mipmap_count: u32,
+    mipmap_count: Cell<u32>,
+    /// Whether the pixels came from compressed data, which cannot be
+    /// replaced in place.
+    compressed: Cell<bool>,
     mipmap_filter: Cell<Option<(Filter, f32)>>,
     _counted: Counted,
 }
@@ -85,7 +88,8 @@ impl Image {
                     height: Cell::new(height),
                     filter: Cell::new(ctx.gfx.default_filter),
                     wrap: Cell::default(),
-                    mipmap_count,
+                    mipmap_count: Cell::new(mipmap_count),
+                    compressed: Cell::new(false),
                     mipmap_filter: Cell::new(settings.mipmaps.then_some((Filter::Linear, 0.0))),
                     _counted: Counted::new(Kind::Image),
                 }),
@@ -109,7 +113,8 @@ impl Image {
                 height: Cell::new(height),
                 filter: Cell::new(filter),
                 wrap: Cell::default(),
-                mipmap_count: 1,
+                mipmap_count: Cell::new(1),
+                compressed: Cell::new(false),
                 mipmap_filter: Cell::new(None),
                 _counted: Counted::new(kind),
             }),
@@ -180,7 +185,8 @@ impl Image {
                     height: Cell::new(height),
                     filter: Cell::new(ctx.gfx.default_filter),
                     wrap: Cell::default(),
-                    mipmap_count,
+                    mipmap_count: Cell::new(mipmap_count),
+                    compressed: Cell::new(true),
                     mipmap_filter: Cell::new((mipmap_count > 1).then_some((Filter::Linear, 0.0))),
                     _counted: Counted::new(Kind::Image),
                 }),
@@ -191,7 +197,7 @@ impl Image {
     /// How many mipmap levels the image has, counting the full-size image:
     /// 1 for an image made without mipmaps.
     pub fn mipmap_count(&self) -> u32 {
-        self.inner.mipmap_count
+        self.inner.mipmap_count.get()
     }
 
     /// How the image blends between its mipmaps, and their sharpness, or
@@ -208,7 +214,7 @@ impl Image {
     ///
     /// Does nothing to an image made without mipmaps.
     pub fn set_mipmap_filter(&self, filter: Option<Filter>, sharpness: f32) {
-        if self.inner.mipmap_count <= 1 {
+        if self.inner.mipmap_count.get() <= 1 {
             return;
         }
         self.inner
@@ -330,9 +336,8 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
         path: path.to_path_buf(),
         source,
     })?;
-    // A compressed file is used as it is, mipmaps and all, and is not
-    // loaded again when it changes.
-    if is_dds(&bytes) {
+    // A compressed file is used as it is, mipmaps and all.
+    let image = if is_dds(&bytes) {
         let data = CompressedImageData::from_bytes(&bytes).map_err(|error| match error {
             ImageError::Invalid(message) => ImageError::Decode {
                 path: path.to_path_buf(),
@@ -340,18 +345,19 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
             },
             other => other,
         })?;
-        return Image::from_compressed_data(&data);
-    }
-    let decoded = decode(&bytes).map_err(|message| ImageError::Decode {
-        path: path.to_path_buf(),
-        message,
-    })?;
-    let image = Image::from_rgba_with(
-        decoded.width(),
-        decoded.height(),
-        decoded.as_raw(),
-        settings,
-    )?;
+        Image::from_compressed_data(&data)?
+    } else {
+        let decoded = decode(&bytes).map_err(|message| ImageError::Decode {
+            path: path.to_path_buf(),
+            message,
+        })?;
+        Image::from_rgba_with(
+            decoded.width(),
+            decoded.height(),
+            decoded.as_raw(),
+            settings,
+        )?
+    };
     let file = crate::filesystem::resolve(path);
     context::with(|ctx| {
         ctx.reload
@@ -360,32 +366,78 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
     Ok(image)
 }
 
-/// Replaces an image's pixels with a newer version of its file.
+/// Replaces an image's pixels with a newer version of its file, which
+/// may be compressed.
 pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> Result<(), String> {
+    if is_dds(bytes) {
+        let data = CompressedImageData::from_bytes(bytes).map_err(|error| error.to_string())?;
+        let (width, height) = data.dimensions();
+        let texture =
+            backend.create_compressed_texture(data.format(), width, height, &data.levels())?;
+        replace_texture(
+            inner,
+            backend,
+            texture,
+            width,
+            height,
+            data.mipmap_count(),
+            true,
+        );
+        return Ok(());
+    }
     let decoded = decode(bytes)?;
     let (width, height) = (decoded.width(), decoded.height());
-    if (width, height) == (inner.width.get(), inner.height.get()) {
+    if (width, height) == (inner.width.get(), inner.height.get()) && !inner.compressed.get() {
         return backend.update_texture(inner.texture.get(), 0, 0, width, height, decoded.as_raw());
     }
-    // A different size needs a new texture. Quads made for the old size
-    // keep their old numbers until the game makes them again.
-    // The number of mipmaps changes with the size, so the image keeps
-    // whether it has them but not how many.
-    let texture = if inner.mipmap_count > 1 {
-        backend.create_mipmapped_texture(width, height, decoded.as_raw())?
+    // A different size, or an image that was compressed, needs a new
+    // texture. Quads made for the old size keep their old numbers until
+    // the game makes them again. An image with mipmaps keeps having them,
+    // as many as the new size allows.
+    let (texture, levels) = if inner.mipmap_count.get() > 1 {
+        let texture = backend.create_mipmapped_texture(width, height, decoded.as_raw())?;
+        (texture, 32 - width.max(height).leading_zeros())
     } else {
-        backend.create_texture(width, height, decoded.as_raw())?
+        (backend.create_texture(width, height, decoded.as_raw())?, 1)
     };
+    replace_texture(inner, backend, texture, width, height, levels, false);
+    Ok(())
+}
+
+/// Puts a new texture in place of an image's old one, carrying over how
+/// it wraps and blends its mipmaps.
+fn replace_texture(
+    inner: &Inner,
+    backend: &mut dyn Backend,
+    texture: TextureId,
+    width: u32,
+    height: u32,
+    levels: u32,
+    compressed: bool,
+) {
     let (horizontal, vertical) = inner.wrap.get();
     backend.set_texture_wrap(texture, horizontal, vertical);
-    if inner.mipmap_count > 1 {
-        let (filter, sharpness) = inner.mipmap_filter.get().unzip();
-        backend.set_texture_mipmap_filter(texture, filter, sharpness.unwrap_or(0.0));
+    if levels > 1 {
+        // An image that gains mipmaps starts out blending them, as a new
+        // one would.
+        let (filter, sharpness) = if inner.mipmap_count.get() > 1 {
+            inner.mipmap_filter.get().unzip()
+        } else {
+            (Some(Filter::Linear), Some(0.0))
+        };
+        let sharpness = sharpness.unwrap_or(0.0);
+        backend.set_texture_mipmap_filter(texture, filter, sharpness);
+        inner
+            .mipmap_filter
+            .set(filter.map(|filter| (filter, sharpness)));
+    } else {
+        inner.mipmap_filter.set(None);
     }
     backend.destroy_texture(inner.texture.replace(texture));
     inner.width.set(width);
     inner.height.set(height);
-    Ok(())
+    inner.mipmap_count.set(levels);
+    inner.compressed.set(compressed);
 }
 
 /// A rectangular part of an image, the equivalent of LÖVE's `Quad`.
