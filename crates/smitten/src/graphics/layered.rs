@@ -181,6 +181,26 @@ impl CubeImage {
         })
     }
 
+    /// Makes a cube image from one picture holding all six faces, laid out
+    /// as LÖVE accepts them and told apart by the picture's shape:
+    ///
+    /// - a row of six faces, 6 by 1, in the order +x, -x, +y, -y, +z, -z;
+    /// - a column of six, 1 by 6, in the same order;
+    /// - a cross lying down, 4 by 3: +y on top, then -x, +z, +x, -z across
+    ///   the middle, and -y below;
+    /// - a cross standing up, 3 by 4: as above, with -z at the bottom,
+    ///   upside down.
+    pub fn from_layout(picture: &ImageData) -> Result<CubeImage, ImageError> {
+        CubeImage::from_image_data(&split_cube_layout(picture)?)
+    }
+
+    /// Loads one image file holding all six faces, laid out as
+    /// [`CubeImage::from_layout`] describes.
+    pub fn from_layout_file(path: impl AsRef<Path>) -> Result<CubeImage, ImageError> {
+        let (width, height, rgba) = super::image::load_rgba(path.as_ref())?;
+        CubeImage::from_layout(&ImageData::from_rgba(width, height, rgba))
+    }
+
     /// Loads the six faces from image files, in the order +x, -x, +y, -y,
     /// +z, -z.
     pub fn from_files(paths: &[impl AsRef<Path>; 6]) -> Result<CubeImage, ImageError> {
@@ -214,10 +234,129 @@ impl CubeImage {
     }
 }
 
+/// Cuts a picture of all six faces of a cube into the faces, in the order
+/// +x, -x, +y, -y, +z, -z. See [`CubeImage::from_layout`].
+fn split_cube_layout(picture: &ImageData) -> Result<[ImageData; 6], ImageError> {
+    let (width, height) = picture.dimensions();
+    // Where each face sits, in face-sized cells, and whether it is upside
+    // down.
+    let (size, cells): (u32, [(u32, u32, bool); 6]) = if width == height * 6 {
+        (height, std::array::from_fn(|i| (i as u32, 0, false)))
+    } else if height == width * 6 {
+        (width, std::array::from_fn(|i| (0, i as u32, false)))
+    } else if width * 3 == height * 4 && width % 4 == 0 {
+        (
+            width / 4,
+            [
+                (2, 1, false),
+                (0, 1, false),
+                (1, 0, false),
+                (1, 2, false),
+                (1, 1, false),
+                (3, 1, false),
+            ],
+        )
+    } else if width * 4 == height * 3 && width % 3 == 0 {
+        (
+            width / 3,
+            [
+                (2, 1, false),
+                (0, 1, false),
+                (1, 0, false),
+                (1, 2, false),
+                (1, 1, false),
+                (1, 3, true),
+            ],
+        )
+    } else {
+        return Err(ImageError::Invalid(format!(
+            "a {width} by {height} picture is not a cube layout: \
+             it must be 6 by 1, 1 by 6, 4 by 3 or 3 by 4 faces"
+        )));
+    };
+    if size == 0 {
+        return Err(ImageError::Invalid("the picture has no pixels".to_string()));
+    }
+    let pixels = picture.as_bytes();
+    Ok(cells.map(|(column, row, upside_down)| {
+        let mut face = Vec::with_capacity(size as usize * size as usize * 4);
+        for y in 0..size {
+            for x in 0..size {
+                let (fx, fy) = if upside_down {
+                    (size - 1 - x, size - 1 - y)
+                } else {
+                    (x, y)
+                };
+                let px = column * size + fx;
+                let py = row * size + fy;
+                let start = (py as usize * width as usize + px as usize) * 4;
+                face.extend_from_slice(&pixels[start..start + 4]);
+            }
+        }
+        ImageData::from_rgba(size, size, face)
+    }))
+}
+
 impl fmt::Debug for CubeImage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CubeImage")
             .field("size", &self.inner.width)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture `columns` by `rows` faces of `size` pixels, where every
+    /// pixel's red says which cell it is in and green and blue say where
+    /// in the cell.
+    fn layout(columns: u32, rows: u32, size: u32) -> ImageData {
+        let (width, height) = (columns * size, rows * size);
+        let mut rgba = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let cell = (y / size) * columns + x / size;
+                rgba.extend_from_slice(&[cell as u8, (x % size) as u8, (y % size) as u8, 255]);
+            }
+        }
+        ImageData::from_rgba(width, height, rgba)
+    }
+
+    fn cell_of(face: &ImageData) -> u8 {
+        face.as_bytes()[0]
+    }
+
+    #[test]
+    fn strips_hold_the_faces_in_order() {
+        let faces = split_cube_layout(&layout(6, 1, 2)).unwrap();
+        assert_eq!(faces.each_ref().map(cell_of), [0, 1, 2, 3, 4, 5]);
+        let faces = split_cube_layout(&layout(1, 6, 2)).unwrap();
+        assert_eq!(faces.each_ref().map(cell_of), [0, 1, 2, 3, 4, 5]);
+        assert_eq!(faces[0].dimensions(), (2, 2));
+    }
+
+    #[test]
+    fn a_lying_cross_is_read_from_its_arms() {
+        // Cells are numbered across rows of four.
+        let faces = split_cube_layout(&layout(4, 3, 2)).unwrap();
+        assert_eq!(faces.each_ref().map(cell_of), [6, 4, 1, 9, 5, 7]);
+    }
+
+    #[test]
+    fn a_standing_cross_turns_its_last_face_the_right_way_up() {
+        // Cells are numbered across rows of three.
+        let faces = split_cube_layout(&layout(3, 4, 2)).unwrap();
+        assert_eq!(faces.each_ref().map(cell_of)[..5], [5, 3, 1, 7, 4]);
+        // -z is cell 10, read from its bottom-right corner first.
+        let back = faces[5].as_bytes();
+        assert_eq!(&back[..4], &[10, 1, 1, 255]);
+        assert_eq!(&back[12..16], &[10, 0, 0, 255]);
+    }
+
+    #[test]
+    fn other_shapes_are_refused() {
+        assert!(split_cube_layout(&layout(2, 2, 2)).is_err());
     }
 }

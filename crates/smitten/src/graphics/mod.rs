@@ -1740,3 +1740,13 @@ pub fn new_compressed_data(path: impl AsRef<Path>) -> CompressedImageData {
 pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
     context::with(|ctx| ctx.backend.supports_compressed_format(format))
 }
+
+/// Loads a [`CubeImage`] from one image file holding all six faces, the
+/// equivalent of `love.graphics.newCubeImage(path)`. The layouts it takes
+/// are listed at [`CubeImage::from_layout`].
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`CubeImage::from_layout_file`] to handle the failure instead.
+pub fn new_cube_image_from_layout(path: impl AsRef<Path>) -> CubeImage {
+    CubeImage::from_layout_file(path).unwrap_or_else(|error| panic!("{error}"))
+}
