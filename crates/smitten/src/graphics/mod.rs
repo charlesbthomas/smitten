@@ -13,22 +13,26 @@
 
 mod batch;
 mod canvas;
+mod compressed;
 pub(crate) mod image;
 mod image_data;
+mod layered;
 mod mesh;
 mod particles;
 mod screen;
 mod shader;
 mod shapes;
 mod sprite_batch;
+mod stats;
 mod text;
+mod text_object;
 mod transform;
 #[cfg(feature = "video")]
 mod video;
 
 use std::path::Path;
 
-use smitten_core::backend::{Backend, Frame, Pass, Scissor, TextureId, Vertex};
+use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId, Vertex};
 
 use crate::context;
 use smitten_core::StencilMode;
@@ -44,15 +48,20 @@ pub(crate) mod reloading {
     pub(crate) use super::text::{Inner as FontInner, reload as reload_font};
 }
 
-pub use canvas::Canvas;
-pub use image::{Image, ImageError, Quad};
+pub use canvas::{Canvas, MipmapMode};
+pub use compressed::CompressedImageData;
+pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
+pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
-pub use shader::{Shader, ShaderError, UniformValue};
+pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
+pub use smitten_core::backend::CompressedFormat;
 pub use sprite_batch::SpriteBatch;
+pub use stats::Stats;
 pub use text::{Align, Font, FontError};
+pub use text_object::Text;
 pub use transform::Transform;
 #[cfg(feature = "video")]
 pub use video::{Video, new_video, try_new_video};
@@ -149,7 +158,15 @@ impl GraphicsState {
             && self.surface.is_none()
         {
             // If the GPU refuses, the game draws straight to the window.
-            self.surface = Canvas::create(backend, width, height, 1.0, Filter::Nearest).ok();
+            self.surface = Canvas::create(
+                backend,
+                width,
+                height,
+                1.0,
+                Filter::Nearest,
+                MipmapMode::None,
+            )
+            .ok();
         }
         if self.surface.is_some() {
             // The window itself only shows the surface, between black bars.
@@ -225,6 +242,8 @@ impl GraphicsState {
         self.batch.set_shader(None);
         self.batch.blend = BlendMode::default();
         self.batch.stencil = StencilMode::Off;
+        self.batch.color_mask = ColorMask::ALL;
+        self.batch.wireframe = false;
         self.scissor = None;
         self.screen.design = None;
         let leftovers = (
@@ -403,15 +422,16 @@ impl GraphicsState {
             vertices: &self.batch.vertices,
             calls: &self.batch.calls,
             uniforms: &self.batch.uniforms,
+            textures: &self.batch.textures,
             passes: &self.batch.passes,
         }
     }
 
     fn set_shader(&mut self, shader: Option<Shader>) {
         match &shader {
-            Some(shader) => {
-                shader.with_data(|data| self.batch.set_shader(Some((shader.id(), data))))
-            }
+            Some(shader) => shader.with_data(|data, textures| {
+                self.batch.set_shader(Some((shader.id(), data, textures)))
+            }),
             None => self.batch.set_shader(None),
         }
         self.shader = shader;
@@ -420,7 +440,9 @@ impl GraphicsState {
     /// Picks up new values sent to `shader` if it is the one in use.
     pub(crate) fn refresh_shader(&mut self, shader: &Shader) {
         if self.shader.as_ref().is_some_and(|active| active.is(shader)) {
-            shader.with_data(|data| self.batch.set_shader(Some((shader.id(), data))));
+            shader.with_data(|data, textures| {
+                self.batch.set_shader(Some((shader.id(), data, textures)))
+            });
         }
     }
 
@@ -498,6 +520,19 @@ impl GraphicsState {
 
     /// Queues the part of `image` covered by `quad`, placed by `local`.
     fn push_image(&mut self, image: &Image, quad: &Quad, local: &Transform) {
+        self.push_texture(image.texture(), 0, image.filter(), quad, local);
+    }
+
+    /// Queues the part of layer `layer` of `texture` covered by `quad`,
+    /// placed by `local`.
+    fn push_texture(
+        &mut self,
+        texture: TextureId,
+        layer: u32,
+        filter: Filter,
+        quad: &Quad,
+        local: &Transform,
+    ) {
         let transform = self.device().then_inner(local);
         let color = color_array(self.color);
         let (u0, v0) = (quad.x / quad.sheet_width, quad.y / quad.sheet_height);
@@ -517,9 +552,10 @@ impl GraphicsState {
         let top_right = corner(quad.width, 0.0, u1, v0);
         let bottom_right = corner(quad.width, quad.height, u1, v1);
         let bottom_left = corner(0.0, quad.height, u0, v1);
-        self.batch.push(
-            Some(image.texture()),
-            image.filter(),
+        self.batch.push_layer(
+            Some(texture),
+            layer,
+            filter,
             &[
                 top_left,
                 top_right,
@@ -569,6 +605,29 @@ impl GraphicsState {
         self.scratch = vertices;
     }
 
+    /// Queues a laid-out [`Text`], placed by `local`.
+    fn push_text_object(&mut self, backend: &mut dyn Backend, text: &Text, local: &Transform) {
+        let transform = self.device().then_inner(local);
+        let tint = color_array(self.color);
+        let filter = text.font().filter();
+        let mut vertices = std::mem::take(&mut self.scratch);
+        let batch = &mut self.batch;
+        text.with_runs(backend, |texture, run| {
+            vertices.clear();
+            vertices.extend(run.iter().map(|vertex| {
+                let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
+                let [r, g, b, a] = vertex.color;
+                Vertex {
+                    position: [x, y],
+                    uv: vertex.uv,
+                    color: [r * tint[0], g * tint[1], b * tint[2], a * tint[3]],
+                }
+            }));
+            batch.push(Some(texture), filter, &vertices);
+        });
+        self.scratch = vertices;
+    }
+
     /// Queues `text` in the current font, placed by `local`.
     fn push_text(
         &mut self,
@@ -577,13 +636,27 @@ impl GraphicsState {
         wrap: Option<(f32, Align)>,
         local: &Transform,
     ) {
+        self.push_colored_text(backend, &[(Color::WHITE, text)], wrap, local);
+    }
+
+    /// Queues text made of `segments`, each tinted by its color as well as
+    /// the current one, in the current font, placed by `local`.
+    fn push_colored_text(
+        &mut self,
+        backend: &mut dyn Backend,
+        segments: &[(Color, &str)],
+        wrap: Option<(f32, Align)>,
+        local: &Transform,
+    ) {
+        let text = text::joined(segments);
+        let mut colors = text::GlyphColors::new(segments);
         let (default_filter, scale) = (self.default_filter, self.screen.draw_scale());
         let font = self
             .font
             .get_or_insert_with(|| Font::fallback(default_filter, scale))
             .clone();
         let transform = self.device().then_inner(local);
-        let color = color_array(self.color);
+        let tint = self.color;
         let filter = font.filter();
 
         // Glyphs usually share one atlas page, so collect each run of
@@ -591,7 +664,8 @@ impl GraphicsState {
         let mut run: Vec<Vertex> = Vec::with_capacity(text.len() * 6);
         let mut run_texture: Option<TextureId> = None;
         let batch = &mut self.batch;
-        font.layout(backend, text, wrap, |texture, rect, uv| {
+        font.layout(backend, &text, wrap, |character, texture, rect, uv| {
+            let color = color_array(multiply(tint, colors.color(character)));
             if run_texture != Some(texture) {
                 batch.push(run_texture, filter, &run);
                 run.clear();
@@ -620,6 +694,10 @@ impl GraphicsState {
         });
         batch.push(run_texture, filter, &run);
     }
+}
+
+fn multiply(a: Color, b: Color) -> Color {
+    Color::rgba(a.r * b.r, a.g * b.g, a.b * b.b, a.a * b.a)
 }
 
 fn color_array(color: Color) -> [f32; 4] {
@@ -956,6 +1034,53 @@ pub fn line_style() -> LineStyle {
     context::with(|ctx| ctx.gfx.line_style)
 }
 
+/// Chooses which color channels drawing may change, the equivalent of
+/// `love.graphics.setColorMask`. A channel left out keeps what is already
+/// there. Clearing the screen or a canvas ignores the mask.
+pub fn set_color_mask(r: bool, g: bool, b: bool, a: bool) {
+    context::with(|ctx| ctx.gfx.batch.color_mask = ColorMask { r, g, b, a });
+}
+
+/// Which color channels drawing may change, as `(r, g, b, a)`.
+pub fn color_mask() -> (bool, bool, bool, bool) {
+    context::with(|ctx| {
+        let mask = ctx.gfx.batch.color_mask;
+        (mask.r, mask.g, mask.b, mask.a)
+    })
+}
+
+/// Draws only the edges of every triangle from now on, one pixel wide,
+/// to see how shapes, images and text are built. For debugging, as in
+/// LÖVE.
+pub fn set_wireframe(enabled: bool) {
+    context::with(|ctx| ctx.gfx.batch.wireframe = enabled);
+}
+
+/// Whether wireframe drawing is on.
+pub fn is_wireframe() -> bool {
+    context::with(|ctx| ctx.gfx.batch.wireframe)
+}
+
+/// What the frame has drawn so far and how many images, canvases and
+/// fonts the game holds, the equivalent of `love.graphics.getStats`. Call
+/// it at the end of `draw` to see the whole frame.
+pub fn stats() -> Stats {
+    use stats::{Kind, alive};
+    context::with(|ctx| {
+        let counts = ctx.gfx.batch.counts;
+        Stats {
+            draw_calls: counts.draw_calls,
+            draw_calls_batched: counts.draw_calls_batched,
+            canvas_switches: counts.canvas_switches,
+            shader_switches: counts.shader_switches,
+            texture_memory: ctx.backend.texture_memory(),
+            images: alive(Kind::Image),
+            canvases: alive(Kind::Canvas),
+            fonts: alive(Kind::Font),
+        }
+    })
+}
+
 /// Returns the filter that newly created images start with.
 pub fn default_filter() -> Filter {
     context::with(|ctx| ctx.gfx.default_filter)
@@ -1004,6 +1129,41 @@ pub fn scale(sx: f32, sy: f32) {
 /// Resets the transform so positions are plain window pixels again.
 pub fn origin() {
     context::with(|ctx| ctx.gfx.transform = Transform::IDENTITY);
+}
+
+/// Shears everything drawn afterwards: x gains `kx` times y, and y gains
+/// `ky` times x.
+pub fn shear(kx: f32, ky: f32) {
+    context::with(|ctx| ctx.gfx.transform.shear(kx, ky));
+}
+
+/// Applies `transform` on top of the current transform, as if its calls
+/// had been made here.
+pub fn apply_transform(transform: &Transform) {
+    context::with(|ctx| ctx.gfx.transform.apply_transform(transform));
+}
+
+/// Replaces the current transform with `transform`.
+pub fn replace_transform(transform: &Transform) {
+    context::with(|ctx| ctx.gfx.transform = *transform);
+}
+
+/// The current transform, as set by [`translate`], [`apply_transform`]
+/// and the rest. [`push`] and [`pop`] save and restore it.
+pub fn transform() -> Transform {
+    context::with(|ctx| ctx.gfx.transform)
+}
+
+/// Where the point `(x, y)` lands on the screen, in units, under the
+/// current transform.
+pub fn transform_point(x: f32, y: f32) -> (f32, f32) {
+    context::with(|ctx| ctx.gfx.transform.transform_point(x, y))
+}
+
+/// Which point the current transform puts at `(x, y)` on the screen, such
+/// as where the mouse is in a scrolled and zoomed world.
+pub fn inverse_transform_point(x: f32, y: f32) -> (f32, f32) {
+    context::with(|ctx| ctx.gfx.transform.inverse_transform_point(x, y))
 }
 
 // ---------------------------------------------------------------------------
@@ -1184,7 +1344,7 @@ pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
 // ---------------------------------------------------------------------------
 // Images
 
-/// Loads an image file (PNG or JPEG).
+/// Loads an image file: PNG, JPEG, or DDS for compressed pixels.
 ///
 /// A relative path is looked up as [`crate::filesystem`] describes, which
 /// normally means inside the game's `assets` folder.
@@ -1195,9 +1355,27 @@ pub fn new_image(path: impl AsRef<Path>) -> Image {
     try_new_image(path).unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// Loads an image file (PNG or JPEG), returning an error if it fails.
+/// Loads an image file (PNG, JPEG, or DDS for compressed pixels),
+/// returning an error if it fails.
 pub fn try_new_image(path: impl AsRef<Path>) -> Result<Image, ImageError> {
-    image::load(path.as_ref())
+    image::load(path.as_ref(), ImageSettings::default())
+}
+
+/// Loads an image file with options such as mipmaps, the equivalent of
+/// `love.graphics.newImage(path, settings)`.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_with`] to handle the failure instead.
+pub fn new_image_with(path: impl AsRef<Path>, settings: ImageSettings) -> Image {
+    try_new_image_with(path, settings).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads an image file with options, returning an error if it fails.
+pub fn try_new_image_with(
+    path: impl AsRef<Path>,
+    settings: ImageSettings,
+) -> Result<Image, ImageError> {
+    image::load(path.as_ref(), settings)
 }
 
 /// Loads an image file into memory, where its pixels can be read and
@@ -1244,6 +1422,18 @@ pub fn draw_video(video: &Video, x: f32, y: f32) {
 #[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
 pub fn draw_video_ex(video: &Video, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
     draw_ex(video.image(), x, y, r, sx, sy, ox, oy);
+}
+
+/// Draws an image placed by `transform` instead of a position, rotation
+/// and scale, the equivalent of `love.graphics.draw(image, transform)`.
+pub fn draw_with(image: &Image, transform: &Transform) {
+    let quad = whole_image(image);
+    context::with(|ctx| ctx.gfx.push_image(image, &quad, transform));
+}
+
+/// Draws part of an image placed by `transform`.
+pub fn draw_quad_with(image: &Image, quad: &Quad, transform: &Transform) {
+    context::with(|ctx| ctx.gfx.push_image(image, quad, transform));
 }
 
 /// Draws the part of an image described by `quad` at `(x, y)`.
@@ -1462,5 +1652,196 @@ pub fn printf_ex(
     context::with(|ctx| {
         ctx.gfx
             .push_text(ctx.backend.as_mut(), text, Some((limit, align)), &local);
+    });
+}
+
+/// Draws text placed by `transform` instead of a position, rotation and
+/// scale.
+pub fn print_with(text: &str, transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text(ctx.backend.as_mut(), text, None, transform)
+    });
+}
+
+/// Draws wrapped text placed by `transform`.
+pub fn printf_with(text: &str, limit: f32, align: Align, transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text(ctx.backend.as_mut(), text, Some((limit, align)), transform);
+    });
+}
+
+/// Makes a [`Text`] in `font` holding `text`, the equivalent of
+/// `love.graphics.newText`. Pass an empty string to start with nothing.
+pub fn new_text(font: &Font, text: &str) -> Text {
+    Text::new(font, text)
+}
+
+/// Draws a [`Text`] with its top-left corner at `(x, y)` in the current
+/// color.
+pub fn draw_text(text: &Text, x: f32, y: f32) {
+    draw_text_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a [`Text`] with the full set of LÖVE's `draw` arguments. See
+/// [`draw_ex`] for what they mean.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
+pub fn draw_text_ex(text: &Text, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
+    draw_text_with(text, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy));
+}
+
+/// Draws a [`Text`] placed by `transform`.
+pub fn draw_text_with(text: &Text, transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text_object(ctx.backend.as_mut(), text, transform)
+    });
+}
+
+/// Draws layer `layer` of an [`ArrayImage`], counting from 0, with its
+/// top-left corner at `(x, y)`. The equivalent of
+/// `love.graphics.drawLayer`.
+///
+/// Panics if there is no such layer, or if a custom shader is active: a
+/// shader reads an array image by declaring a `texture_2d_array<f32>` and
+/// being sent it with [`Shader::send_texture`].
+pub fn draw_layer(image: &ArrayImage, layer: u32, x: f32, y: f32) {
+    draw_layer_ex(image, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a layer of an [`ArrayImage`] with the full set of LÖVE's `draw`
+/// arguments. See [`draw_ex`] for what they mean.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.drawLayer.
+pub fn draw_layer_ex(
+    image: &ArrayImage,
+    layer: u32,
+    x: f32,
+    y: f32,
+    r: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+) {
+    let (width, height) = (image.width() as f32, image.height() as f32);
+    let quad = Quad::new(0.0, 0.0, width, height, width, height);
+    draw_layer_quad_with(
+        image,
+        layer,
+        &quad,
+        &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
+    );
+}
+
+/// Draws part of a layer of an [`ArrayImage`], placed by `transform`.
+pub fn draw_layer_quad_with(image: &ArrayImage, layer: u32, quad: &Quad, transform: &Transform) {
+    assert!(
+        layer < image.layer_count(),
+        "layer {layer} does not exist: the array image has {} layers",
+        image.layer_count()
+    );
+    context::with(|ctx| {
+        assert!(
+            ctx.gfx.shader.is_none(),
+            "graphics::draw_layer cannot be used with a custom shader active; \
+             send the array image to the shader with Shader::send_texture instead"
+        );
+        ctx.gfx
+            .push_texture(image.texture(), layer, image.filter(), quad, transform);
+    });
+}
+
+/// Loads an image file for each layer of an [`ArrayImage`], the
+/// equivalent of `love.graphics.newArrayImage`. They must all be the same
+/// size.
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`ArrayImage::from_files`] to handle the failure instead.
+pub fn new_array_image(paths: &[impl AsRef<Path>]) -> ArrayImage {
+    ArrayImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads the six faces of a [`CubeImage`] from image files, in the order
+/// +x, -x, +y, -y, +z, -z. The equivalent of `love.graphics.newCubeImage`
+/// with six files.
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`CubeImage::from_files`] to handle the failure instead.
+pub fn new_cube_image(paths: &[impl AsRef<Path>; 6]) -> CubeImage {
+    CubeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a DDS file of compressed pixels, the equivalent of
+/// `love.image.newCompressedData`. Draw it with
+/// [`Image::from_compressed_data`], or load it straight into an image
+/// with [`new_image`].
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`CompressedImageData::from_file`] to handle the failure instead.
+pub fn new_compressed_data(path: impl AsRef<Path>) -> CompressedImageData {
+    CompressedImageData::from_file(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Whether the GPU can draw images compressed in `format`, the
+/// equivalent of `love.graphics.getImageFormats`.
+pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
+    context::with(|ctx| ctx.backend.supports_compressed_format(format))
+}
+
+/// Loads a [`CubeImage`] from one image file holding all six faces, the
+/// equivalent of `love.graphics.newCubeImage(path)`. The layouts it takes
+/// are listed at [`CubeImage::from_layout`].
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`CubeImage::from_layout_file`] to handle the failure instead.
+pub fn new_cube_image_from_layout(path: impl AsRef<Path>) -> CubeImage {
+    CubeImage::from_layout_file(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Draws text made of colored parts, the equivalent of
+/// `love.graphics.print(coloredtext, x, y)`: each part is tinted by its
+/// color as well as the current one.
+///
+/// ```no_run
+/// use smitten::{Color, graphics};
+///
+/// graphics::print_colored(&[(Color::WHITE, "Score: "), (Color::rgb(1.0, 0.8, 0.2), "120")], 10.0, 10.0);
+/// ```
+pub fn print_colored(segments: &[(Color, &str)], x: f32, y: f32) {
+    let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    print_colored_with(segments, &local);
+}
+
+/// Draws colored text placed by `transform`.
+pub fn print_colored_with(segments: &[(Color, &str)], transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_colored_text(ctx.backend.as_mut(), segments, None, transform);
+    });
+}
+
+/// Draws text made of colored parts, wrapped to `limit` units and aligned
+/// within that width, the equivalent of `love.graphics.printf(coloredtext,
+/// ...)`.
+pub fn printf_colored(segments: &[(Color, &str)], x: f32, y: f32, limit: f32, align: Align) {
+    let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    printf_colored_with(segments, limit, align, &local);
+}
+
+/// Draws wrapped colored text placed by `transform`.
+pub fn printf_colored_with(
+    segments: &[(Color, &str)],
+    limit: f32,
+    align: Align,
+    transform: &Transform,
+) {
+    context::with(|ctx| {
+        ctx.gfx.push_colored_text(
+            ctx.backend.as_mut(),
+            segments,
+            Some((limit, align)),
+            transform,
+        );
     });
 }

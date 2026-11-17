@@ -4,6 +4,7 @@ use std::ops::Deref;
 use smitten_core::Filter;
 use smitten_core::backend::Backend;
 
+use super::stats::Kind;
 use super::{Image, ImageData};
 use crate::context;
 
@@ -30,6 +31,20 @@ pub struct Canvas {
     image: Image,
     pixels: (u32, u32),
     scale: f32,
+    mipmaps: MipmapMode,
+}
+
+/// Whether a canvas has mipmaps and when they are made, the equivalent of
+/// the `mipmaps` setting of LÖVE's `newCanvas`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MipmapMode {
+    /// No mipmaps, as a canvas starts out.
+    #[default]
+    None,
+    /// Mipmaps made again every frame the canvas is drawn to.
+    Auto,
+    /// Mipmaps made only when [`Canvas::generate_mipmaps`] is called.
+    Manual,
 }
 
 impl Canvas {
@@ -57,6 +72,25 @@ impl Canvas {
                 height,
                 dpi_scale,
                 ctx.gfx.default_filter,
+                MipmapMode::None,
+            )
+        })
+    }
+
+    /// Creates a transparent canvas of `width` by `height` units, as sharp
+    /// as the screen, with mipmaps: smaller copies of what is drawn to it,
+    /// used when the canvas is drawn small so it does not shimmer. See
+    /// [`MipmapMode`] for when they are made, and
+    /// [`Image::set_mipmap_filter`] for how they blend.
+    pub fn with_mipmaps(width: u32, height: u32, mode: MipmapMode) -> Result<Canvas, String> {
+        context::with(|ctx| {
+            Canvas::create(
+                &mut *ctx.backend,
+                width,
+                height,
+                ctx.gfx.screen.draw_scale(),
+                ctx.gfx.default_filter,
+                mode,
             )
         })
     }
@@ -67,16 +101,49 @@ impl Canvas {
         height: u32,
         scale: f32,
         filter: Filter,
+        mipmaps: MipmapMode,
     ) -> Result<Canvas, String> {
         let pixels = (
             (width as f32 * scale).ceil() as u32,
             (height as f32 * scale).ceil() as u32,
         );
-        let texture = backend.create_render_target(pixels.0, pixels.1)?;
+        let texture = match mipmaps {
+            MipmapMode::None => backend.create_render_target(pixels.0, pixels.1)?,
+            MipmapMode::Auto => backend.create_mipmapped_render_target(pixels.0, pixels.1, true)?,
+            MipmapMode::Manual => {
+                backend.create_mipmapped_render_target(pixels.0, pixels.1, false)?
+            }
+        };
+        let image = Image::from_texture(texture, width, height, filter, Kind::Canvas);
+        if mipmaps != MipmapMode::None {
+            image.mark_mipmapped(32 - pixels.0.max(pixels.1).max(1).leading_zeros());
+        }
         Ok(Canvas {
-            image: Image::from_texture(texture, width, height, filter),
+            image,
             pixels,
             scale,
+            mipmaps,
+        })
+    }
+
+    /// Whether the canvas has mipmaps and when they are made.
+    pub fn mipmap_mode(&self) -> MipmapMode {
+        self.mipmaps
+    }
+
+    /// Makes the canvas's mipmaps again from what has been drawn to it so
+    /// far, the equivalent of `Canvas:generateMipmaps`. Only needed with
+    /// [`MipmapMode::Manual`].
+    ///
+    /// Like [`Canvas::new_image_data`], this draws what is queued for every
+    /// canvas straight away.
+    pub fn generate_mipmaps(&self) -> Result<(), String> {
+        if self.mipmaps == MipmapMode::None {
+            return Err("the canvas was made without mipmaps".to_string());
+        }
+        context::with(|ctx| {
+            ctx.gfx.flush_canvases(&mut *ctx.backend);
+            ctx.backend.generate_mipmaps(self.texture())
         })
     }
 
