@@ -1,8 +1,15 @@
 //! Collects a frame's triangles and groups them into as few draw calls as
 //! the draw order allows.
 
-use smitten_core::backend::{DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex};
+use smitten_core::backend::{
+    BoundTexture, ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex,
+};
 use smitten_core::{BlendMode, Color, Filter, StencilMode};
+
+use super::stats::FrameCounts;
+
+/// A custom shader with its uniform data and the textures sent to it.
+pub(crate) type ShaderState<'a> = (ShaderId, &'a [u8], &'a [Option<BoundTexture>]);
 
 #[derive(Default)]
 pub(crate) struct Batch {
@@ -16,14 +23,23 @@ pub(crate) struct Batch {
     pub scissor: Option<Scissor>,
     pub stencil: StencilMode,
     pub stencil_value: u8,
+    pub color_mask: ColorMask,
+    pub wireframe: bool,
     /// Uniform data for the queued calls that use a custom shader.
     pub uniforms: Vec<u8>,
+    /// Textures for the queued calls whose shader declares its own.
+    pub textures: Vec<Option<BoundTexture>>,
     shader: Option<ShaderId>,
-    /// The active shader's uniform data, copied into `uniforms` the first
-    /// time something is drawn with it.
+    /// The active shader's uniform data and textures, copied into
+    /// `uniforms` and `textures` the first time something is drawn with
+    /// it.
     shader_data: Vec<u8>,
-    /// Where that copy is, once it has been made.
-    shader_offset: Option<u32>,
+    shader_textures: Vec<Option<BoundTexture>>,
+    /// Where those copies are, once they have been made.
+    shader_offset: Option<(u32, u32)>,
+    /// What has been queued since the frame began, for the game's
+    /// statistics. Unlike the queue, it survives drawing canvases early.
+    pub counts: FrameCounts,
 }
 
 impl Batch {
@@ -33,7 +49,9 @@ impl Batch {
         self.calls.clear();
         self.passes.clear();
         self.uniforms.clear();
+        self.textures.clear();
         self.shader_offset = None;
+        self.counts = FrameCounts::default();
     }
 
     /// Forgets the passes queued for canvases, once they have been drawn
@@ -55,13 +73,15 @@ impl Batch {
         self.calls = calls;
     }
 
-    /// Draws what is queued from now on with `shader` and this uniform
-    /// data, or with the built-in shader for `None`.
-    pub fn set_shader(&mut self, shader: Option<(ShaderId, &[u8])>) {
+    /// Draws what is queued from now on with `shader`, this uniform data
+    /// and these textures, or with the built-in shader for `None`.
+    pub fn set_shader(&mut self, shader: Option<ShaderState>) {
         self.shader_data.clear();
+        self.shader_textures.clear();
         self.shader_offset = None;
-        self.shader = shader.map(|(id, data)| {
+        self.shader = shader.map(|(id, data, textures)| {
             self.shader_data.extend_from_slice(data);
+            self.shader_textures.extend_from_slice(textures);
             id
         });
     }
@@ -106,9 +126,9 @@ impl Batch {
         });
     }
 
-    /// Queues triangles that ignore the scissor, stencil and shader in
-    /// force and use `blend`. For the framework's own drawing, such as
-    /// showing the game's picture in the window.
+    /// Queues triangles that ignore the scissor, stencil, shader, color
+    /// mask and wireframe in force and use `blend`. For the framework's
+    /// own drawing, such as showing the game's picture in the window.
     pub fn push_plain(
         &mut self,
         texture: Option<TextureId>,
@@ -121,14 +141,34 @@ impl Batch {
             self.scissor.take(),
             std::mem::replace(&mut self.stencil, StencilMode::Off),
             self.shader.take(),
+            std::mem::take(&mut self.color_mask),
+            std::mem::take(&mut self.wireframe),
         );
         self.push(texture, filter, triangles);
-        (self.blend, self.scissor, self.stencil, self.shader) = saved;
+        (
+            self.blend,
+            self.scissor,
+            self.stencil,
+            self.shader,
+            self.color_mask,
+            self.wireframe,
+        ) = saved;
     }
 
     /// Queues triangles, three vertices each, to draw on top of everything
     /// queued so far.
     pub fn push(&mut self, texture: Option<TextureId>, filter: Filter, triangles: &[Vertex]) {
+        self.push_layer(texture, 0, filter, triangles);
+    }
+
+    /// As `push`, drawing picture `layer` of an array texture.
+    pub fn push_layer(
+        &mut self,
+        texture: Option<TextureId>,
+        layer: u32,
+        filter: Filter,
+        triangles: &[Vertex],
+    ) {
         debug_assert!(triangles.len().is_multiple_of(3));
         if triangles.is_empty() {
             return;
@@ -150,6 +190,9 @@ impl Batch {
             .last()
             .is_none_or(|pass| pass.target != self.target)
         {
+            if !self.passes.is_empty() {
+                self.counts.canvas_switches += 1;
+            }
             self.passes.push(Pass {
                 target: self.target,
                 clear: None,
@@ -160,14 +203,15 @@ impl Batch {
         }
         let pass = self.passes.last_mut().expect("a pass was just ensured");
 
-        let uniform_offset = match (self.shader, self.shader_offset) {
-            (None, _) => 0,
-            (Some(_), Some(offset)) => offset,
+        let (uniform_offset, texture_offset) = match (self.shader, self.shader_offset) {
+            (None, _) => (0, 0),
+            (Some(_), Some(offsets)) => offsets,
             (Some(_), None) => {
-                let offset = self.uniforms.len() as u32;
+                let offsets = (self.uniforms.len() as u32, self.textures.len() as u32);
                 self.uniforms.extend_from_slice(&self.shader_data);
-                self.shader_offset = Some(offset);
-                offset
+                self.textures.extend_from_slice(&self.shader_textures);
+                self.shader_offset = Some(offsets);
+                offsets
             }
         };
 
@@ -179,26 +223,44 @@ impl Batch {
             Some(last)
                 if pass.call_count > 0
                     && last.texture == texture
+                    && last.layer == layer
                     && last.filter == filter
                     && last.blend == self.blend
                     && last.scissor == self.scissor
                     && last.stencil == self.stencil
                     && last.stencil_value == self.stencil_value
+                    && last.color_mask == self.color_mask
+                    && last.wireframe == self.wireframe
                     && last.shader == self.shader
-                    && last.uniform_offset == uniform_offset =>
+                    && last.uniform_offset == uniform_offset
+                    && last.texture_offset == texture_offset =>
             {
                 last.vertex_count += vertex_count;
+                self.counts.draw_calls_batched += 1;
             }
             _ => {
+                self.counts.draw_calls += 1;
+                if self
+                    .counts
+                    .last_shader
+                    .is_some_and(|last| last != self.shader)
+                {
+                    self.counts.shader_switches += 1;
+                }
+                self.counts.last_shader = Some(self.shader);
                 self.calls.push(DrawCall {
                     texture,
+                    layer,
                     filter,
                     blend: self.blend,
                     scissor: self.scissor,
                     stencil: self.stencil,
                     stencil_value: self.stencil_value,
+                    color_mask: self.color_mask,
+                    wireframe: self.wireframe,
                     shader: self.shader,
                     uniform_offset,
+                    texture_offset,
                     first_vertex,
                     vertex_count,
                 });
@@ -263,6 +325,55 @@ mod tests {
         batch.push(None, Filter::Nearest, &TRIANGLE);
 
         assert_eq!(batch.calls.len(), 1);
+    }
+
+    #[test]
+    fn a_color_mask_or_wireframe_starts_a_new_call_that_plain_draws_ignore() {
+        let mut batch = Batch::default();
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.color_mask = ColorMask {
+            a: false,
+            ..ColorMask::ALL
+        };
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.wireframe = true;
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push_plain(None, Filter::Linear, BlendMode::Replace, &TRIANGLE);
+
+        let states: Vec<_> = batch
+            .calls
+            .iter()
+            .map(|call| (call.color_mask.a, call.wireframe))
+            .collect();
+        assert_eq!(
+            states,
+            [(true, false), (false, false), (false, true), (true, false)]
+        );
+        // The game's settings are back once the plain draw is queued.
+        assert!(batch.wireframe);
+        assert!(!batch.color_mask.a);
+    }
+
+    #[test]
+    fn counts_follow_what_was_queued_until_cleared() {
+        let mut batch = Batch::default();
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.set_shader(Some((ShaderId(3), &[], &[])));
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.set_target(Some(TextureId(9)));
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.set_shader(None);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.forget_canvas_passes();
+
+        let counts = batch.counts;
+        assert_eq!(counts.draw_calls, 4);
+        assert_eq!(counts.draw_calls_batched, 1);
+        assert_eq!(counts.canvas_switches, 1);
+        assert_eq!(counts.shader_switches, 2);
+        batch.clear();
+        assert_eq!(batch.counts.draw_calls, 0);
     }
 
     #[test]
@@ -411,10 +522,10 @@ mod tests {
         let mut batch = Batch::default();
         let shader = ShaderId(3);
         batch.push(None, Filter::Linear, &TRIANGLE);
-        batch.set_shader(Some((shader, &[1, 1, 1, 1])));
+        batch.set_shader(Some((shader, &[1, 1, 1, 1], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.push(None, Filter::Linear, &TRIANGLE);
-        batch.set_shader(Some((shader, &[2, 2, 2, 2])));
+        batch.set_shader(Some((shader, &[2, 2, 2, 2], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.set_shader(None);
         batch.push(None, Filter::Linear, &TRIANGLE);
@@ -439,8 +550,8 @@ mod tests {
     #[test]
     fn values_set_but_never_drawn_with_are_not_queued() {
         let mut batch = Batch::default();
-        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
-        batch.set_shader(Some((ShaderId(3), &[2, 2, 2, 2])));
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1], &[])));
+        batch.set_shader(Some((ShaderId(3), &[2, 2, 2, 2], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
 
         assert_eq!(batch.uniforms, [2, 2, 2, 2]);
@@ -449,7 +560,7 @@ mod tests {
     #[test]
     fn a_shader_stays_active_after_the_frame_is_cleared() {
         let mut batch = Batch::default();
-        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1], &[])));
         batch.push(None, Filter::Linear, &TRIANGLE);
         batch.clear();
         batch.push(None, Filter::Linear, &TRIANGLE);
@@ -499,7 +610,7 @@ mod tests {
             }),
             ..Batch::default()
         };
-        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1])));
+        batch.set_shader(Some((ShaderId(3), &[1, 1, 1, 1], &[])));
         batch.push_plain(None, Filter::Linear, BlendMode::Replace, &TRIANGLE);
         batch.push(None, Filter::Linear, &TRIANGLE);
 

@@ -33,6 +33,23 @@ pub fn is_down(button: MouseButton) -> bool {
     context::with(|ctx| ctx.input.mouse_buttons.contains(&button))
 }
 
+/// Returns whether any of `buttons` is held, as LÖVE's
+/// `love.mouse.isDown` does when given several.
+pub fn is_any_down(buttons: &[MouseButton]) -> bool {
+    context::with(|ctx| {
+        buttons
+            .iter()
+            .any(|button| ctx.input.mouse_buttons.contains(button))
+    })
+}
+
+/// Returns whether the platform can change the cursor's look with
+/// [`set_cursor`] and [`set_image_cursor`], the equivalent of
+/// `love.mouse.isCursorSupported`. It is `false` on phones and tablets.
+pub fn is_cursor_supported() -> bool {
+    context::with(|ctx| ctx.backend.cursor_supported())
+}
+
 /// Shows or hides the cursor while it is over the window.
 pub fn set_visible(visible: bool) {
     context::with(|ctx| {

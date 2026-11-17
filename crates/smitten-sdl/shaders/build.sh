@@ -6,3 +6,4 @@ set -eu
 cd "$(dirname "$0")"
 glslangValidator -V sprite.vert -o sprite.vert.spv
 glslangValidator -V sprite.frag -o sprite.frag.spv
+glslangValidator -V sprite_array.frag -o sprite_array.frag.spv

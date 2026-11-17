@@ -29,10 +29,19 @@
 //! [`Source::set_filter`] muffles or thins a source. [`set_effect`] defines
 //! a named effect, such as a [`Reverb`] or an [`Echo`], and
 //! [`Source::set_effect`] sends a source through it.
+//!
+//! # Making and recording sound
+//!
+//! [`new_queueable_source`] plays sound the game makes as it goes, such as
+//! a synthesizer, a voice chat or a [`Decoder`](crate::sound::Decoder)'s
+//! pieces changed on the way. [`recording_devices`] lists the microphones,
+//! whose [`RecordingDevice`] hands back what it hears as
+//! [`SoundData`](crate::sound::SoundData).
 
 pub(crate) mod decode;
 mod effects;
 mod mixer;
+mod record;
 mod spatial;
 
 use std::fmt;
@@ -41,12 +50,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::context;
 use decode::Decoder;
-use mixer::{Data, Mixer, Stream, Voice};
+use mixer::{Data, Mixer, Queue, Stream, Voice};
 
 pub use effects::{
     Chorus, Compressor, Distortion, Echo, Effect, Equalizer, Filter, FilterType, Flanger, Reverb,
     RingModulator, Waveform,
 };
+pub use record::{RecordingDevice, recording_devices};
 pub use spatial::DistanceModel;
 
 /// How a sound is held in memory.
@@ -57,12 +67,22 @@ pub enum SourceType {
     Static,
     /// Decoded as it plays. Uses little memory however long the sound is.
     Stream,
+    /// Plays buffers of samples the game hands it with [`Source::queue`],
+    /// for sound made as the game runs. Made with
+    /// [`new_queueable_source`].
+    Queue,
 }
 
 /// The mixer shared by the game and the audio thread.
 #[derive(Clone, Default)]
 pub(crate) struct AudioState {
     mixer: Arc<Mutex<Mixer>>,
+    /// What each recording device has captured, shared by every handle
+    /// to it.
+    recordings: std::collections::HashMap<
+        smitten_core::backend::RecordingDeviceId,
+        Arc<Mutex<record::Capture>>,
+    >,
     /// Whether the output device has been asked for yet.
     started: bool,
 }
@@ -116,6 +136,12 @@ impl Source {
                 Data::Static(Arc::new(decoder.decode_all()))
             }
             SourceType::Stream => Data::Stream(Stream::new(bytes).map_err(AudioError::Decode)?),
+            SourceType::Queue => {
+                return Err(AudioError::Decode(
+                    "a queueable source is made with audio::new_queueable_source, not from a file"
+                        .to_owned(),
+                ));
+            }
         };
         let mixer = shared_mixer();
         let id = lock(&mixer).add(Voice::new(data));
@@ -136,6 +162,42 @@ impl Source {
             id,
             kind: SourceType::Static,
         }
+    }
+
+    /// Creates a source that plays the file a [`Decoder`] reads, the
+    /// equivalent of `love.audio.newSource(decoder, type)`. The source
+    /// starts from the beginning of the file, wherever the decoder is.
+    ///
+    /// [`Decoder`]: crate::sound::Decoder
+    pub fn from_decoder(
+        decoder: &crate::sound::Decoder,
+        kind: SourceType,
+    ) -> Result<Source, AudioError> {
+        Source::from_bytes(decoder.bytes().clone(), kind)
+    }
+
+    /// Adds sound to the end of a queueable source, to play once what is
+    /// already queued has played. The samples are copied.
+    ///
+    /// Returns `false`, and queues nothing, if the source already holds as
+    /// many buffers as it was made with; wait for
+    /// [`Source::free_buffer_count`] to rise. A source that ran out of
+    /// sound has stopped, so call [`Source::play`] again after queueing.
+    ///
+    /// Panics if this is not a queueable source, or if `data` does not
+    /// have the source's sample rate and channel count.
+    pub fn queue(&self, data: &crate::sound::SoundData) -> bool {
+        let frames = data.to_decoded().frames;
+        let queued = self
+            .mixer()
+            .queue(self.id, frames, data.rate(), data.channel_count());
+        queued.unwrap_or_else(|message| panic!("{message}"))
+    }
+
+    /// How many more buffers a queueable source can take before
+    /// [`Source::queue`] refuses them. Zero for other sources.
+    pub fn free_buffer_count(&self) -> usize {
+        self.mixer().free_buffers(self.id)
     }
 
     fn mixer(&self) -> MutexGuard<'_, Mixer> {
@@ -195,7 +257,8 @@ impl Source {
         self.mixer().is_playing(self.id)
     }
 
-    /// Sets whether the sound starts over when it reaches the end.
+    /// Sets whether the sound starts over when it reaches the end. A
+    /// queueable source never loops.
     pub fn set_looping(&self, looping: bool) {
         self.mixer().set_looping(self.id, looping);
     }
@@ -227,7 +290,8 @@ impl Source {
         self.mixer().pitch(self.id)
     }
 
-    /// Moves playback to `seconds` from the start.
+    /// Moves playback to `seconds` from the start. A queueable source
+    /// cannot seek.
     pub fn seek(&self, seconds: f64) {
         self.mixer().seek(self.id, seconds);
     }
@@ -438,6 +502,8 @@ pub enum AudioError {
     },
     /// The data is not audio Smitten can decode.
     Decode(String),
+    /// A recording device could not be opened.
+    Device(String),
 }
 
 impl fmt::Display for AudioError {
@@ -447,6 +513,7 @@ impl fmt::Display for AudioError {
                 write!(f, "could not read sound {}: {source}", path.display())
             }
             AudioError::Decode(message) => write!(f, "could not load sound: {message}"),
+            AudioError::Device(message) => write!(f, "could not record sound: {message}"),
         }
     }
 }
@@ -455,7 +522,7 @@ impl std::error::Error for AudioError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             AudioError::Read { source, .. } => Some(source),
-            AudioError::Decode(_) => None,
+            AudioError::Decode(_) | AudioError::Device(_) => None,
         }
     }
 }
@@ -496,6 +563,46 @@ pub fn try_new_source(path: impl AsRef<Path>, kind: SourceType) -> Result<Source
         );
     });
     Ok(source)
+}
+
+/// Creates a source that plays sound the game makes as it runs, the
+/// equivalent of `love.audio.newQueueableSource`. Hand it buffers with
+/// [`Source::queue`] and call [`Source::play`].
+///
+/// Every buffer must have `rate` samples per second and `channels`
+/// channels. At most `buffer_count` buffers wait at once; more than one
+/// lets the game queue the next before the current one runs out.
+///
+/// ```no_run
+/// use smitten::audio;
+/// use smitten::sound::SoundData;
+///
+/// let source = audio::new_queueable_source(44_100, 1, 4);
+/// while source.free_buffer_count() > 0 {
+///     let mut tone = SoundData::new(1_024, 44_100, 1);
+///     for (i, sample) in tone.samples_mut().iter_mut().enumerate() {
+///         *sample = (i as f32 * 0.06).sin() * 0.2;
+///     }
+///     source.queue(&tone);
+/// }
+/// source.play();
+/// ```
+///
+/// Panics if `rate` is zero or `channels` is not 1 or 2.
+pub fn new_queueable_source(rate: u32, channels: u16, buffer_count: usize) -> Source {
+    assert!(rate > 0, "a sound's sample rate must be above zero");
+    assert!(
+        channels == 1 || channels == 2,
+        "a sound must have 1 or 2 channels, not {channels}"
+    );
+    let data = Data::Queue(Queue::new(rate, channels, buffer_count));
+    let mixer = shared_mixer();
+    let id = lock(&mixer).add(Voice::new(data));
+    Source {
+        mixer,
+        id,
+        kind: SourceType::Queue,
+    }
 }
 
 /// A sound loaded from a file, with every copy made of it, for

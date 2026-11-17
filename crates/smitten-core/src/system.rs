@@ -77,3 +77,19 @@ pub enum MessageBoxKind {
     Warning,
     Error,
 }
+
+/// Which way up a display is, as LÖVE's `DisplayOrientation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DisplayOrientation {
+    /// It could not be found out.
+    #[default]
+    Unknown,
+    /// Wider than tall, the usual way up.
+    Landscape,
+    /// Wider than tall, upside down.
+    LandscapeFlipped,
+    /// Taller than wide, the usual way up.
+    Portrait,
+    /// Taller than wide, upside down.
+    PortraitFlipped,
+}

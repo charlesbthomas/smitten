@@ -500,3 +500,350 @@ fn an_acceleration_does_not_depend_on_mass_or_the_meter() {
         assert!((spin - 1.5).abs() < 0.02, "spin was {spin}");
     }
 }
+
+#[test]
+fn a_revolute_motor_turns_at_its_speed_within_its_torque() {
+    let world = World::new(0.0, 0.0);
+    let base = world.new_body(400.0, 300.0, BodyType::Static);
+    let wheel = world.new_body(400.0, 300.0, BodyType::Dynamic);
+    wheel.add_circle(30.0);
+    let joint = world.new_revolute_joint(&base, &wheel, 400.0, 300.0, false);
+    assert_eq!(joint.kind(), JointType::Revolute);
+    assert!(!joint.is_motor_enabled());
+
+    // On, but with no torque, the motor does nothing.
+    joint.set_motor_enabled(true);
+    joint.set_motor_speed(3.0);
+    run(&world, 0.5);
+    assert!(wheel.angular_velocity().abs() < 0.01);
+
+    joint.set_max_motor_torque(1.0e6);
+    run(&world, 1.0);
+    assert!(
+        (wheel.angular_velocity() - 3.0).abs() < 0.05,
+        "turned at {}",
+        wheel.angular_velocity()
+    );
+    assert!((joint.joint_speed() - 3.0).abs() < 0.05);
+
+    // A weak motor speeds up slowly: torque over inertia.
+    let world2 = World::new(0.0, 0.0);
+    let base2 = world2.new_body(0.0, 0.0, BodyType::Static);
+    let wheel2 = world2.new_body(0.0, 0.0, BodyType::Dynamic);
+    wheel2.add_circle(30.0);
+    let weak = world2.new_revolute_joint(&base2, &wheel2, 0.0, 0.0, false);
+    weak.set_motor_enabled(true);
+    weak.set_motor_speed(100.0);
+    let torque = wheel2.inertia() * 2.0;
+    weak.set_max_motor_torque(torque);
+    run(&world2, 1.0);
+    assert!((wheel2.angular_velocity() - 2.0).abs() < 0.2);
+    assert!((weak.motor_torque() - torque).abs() < torque * 0.1);
+}
+
+#[test]
+fn revolute_limits_stop_the_turn_measured_from_the_start() {
+    let world = World::new(0.0, 600.0);
+    let base = world.new_body(400.0, 300.0, BodyType::Static);
+    base.set_angle(1.0);
+    let arm = world.new_body(450.0, 300.0, BodyType::Dynamic);
+    arm.add_rectangle(100.0, 10.0);
+    arm.set_angle(0.5);
+    let joint = world.new_revolute_joint(&base, &arm, 400.0, 300.0, false);
+    assert!(joint.joint_angle().abs() < 1e-4);
+    joint.set_limits(-0.25, 0.25);
+    joint.set_limits_enabled(true);
+    assert!(joint.are_limits_enabled());
+    assert_eq!(joint.limits(), (-0.25, 0.25));
+    run(&world, 2.0);
+    assert!((joint.joint_angle() - 0.25).abs() < 0.03);
+    assert!((arm.angle() - 0.75).abs() < 0.03);
+
+    joint.set_limits_enabled(false);
+    run(&world, 2.0);
+    assert!(joint.joint_angle() > 0.5);
+}
+
+#[test]
+fn a_prismatic_motor_and_limits_drive_and_stop_a_slider() {
+    let world = World::new(0.0, 0.0);
+    let base = world.new_body(100.0, 300.0, BodyType::Static);
+    let slider = world.new_body(100.0, 300.0, BodyType::Dynamic);
+    slider.add_rectangle(20.0, 20.0);
+    let joint = world.new_prismatic_joint(&base, &slider, 100.0, 300.0, 1.0, 0.0, false);
+    joint.set_motor_enabled(true);
+    joint.set_motor_speed(50.0);
+    joint.set_max_motor_force(1.0e6);
+    run(&world, 1.0);
+    assert!((joint.joint_speed() - 50.0).abs() < 1.0);
+    assert!((joint.joint_translation() - 50.0).abs() < 3.0);
+
+    joint.set_limits(-10.0, 80.0);
+    joint.set_limits_enabled(true);
+    run(&world, 2.0);
+    assert!(
+        (joint.joint_translation() - 80.0).abs() < 1.0,
+        "{}",
+        joint.joint_translation()
+    );
+}
+
+#[test]
+fn reaction_force_holds_up_a_hanging_body() {
+    let world = World::new(0.0, 600.0);
+    let ceiling = world.new_body(400.0, 100.0, BodyType::Static);
+    let weight = world.new_body(400.0, 200.0, BodyType::Dynamic);
+    weight.add_circle(10.0);
+    let revolute = world.new_revolute_joint(&ceiling, &weight, 400.0, 100.0, false);
+    run(&world, 1.0);
+    let (fx, fy) = revolute.reaction_force();
+    assert!(fx.abs() < 1.0);
+    assert!((fy + weight.mass() * 600.0).abs() < weight.mass() * 30.0);
+    revolute.destroy();
+
+    let rope = world.new_rope_joint(&ceiling, &weight, 400.0, 100.0, 400.0, 200.0, 100.0, false);
+    run(&world, 1.0);
+    let (fx, fy) = rope.reaction_force();
+    assert!(fx.abs() < 1.0);
+    assert!((fy + weight.mass() * 600.0).abs() < weight.mass() * 60.0);
+    assert!(rope.max_length() == 100.0);
+}
+
+#[test]
+fn a_distance_joint_holds_its_length_both_ways() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(100.0, 100.0, BodyType::Dynamic);
+    a.add_circle(5.0);
+    let b = world.new_body(200.0, 100.0, BodyType::Dynamic);
+    b.add_circle(5.0);
+    let joint = world.new_distance_joint(&a, &b, 100.0, 100.0, 200.0, 100.0, false);
+    assert_eq!(joint.kind(), JointType::Distance);
+    assert!((joint.length() - 100.0).abs() < 1e-3);
+    b.set_linear_velocity(-200.0, 0.0);
+    run(&world, 0.5);
+    assert!((distance(a.position(), b.position()) - 100.0).abs() < 2.0);
+    b.set_linear_velocity(200.0, 50.0);
+    run(&world, 0.5);
+    assert!((distance(a.position(), b.position()) - 100.0).abs() < 2.0);
+    joint.set_length(60.0);
+    run(&world, 1.0);
+    assert!((distance(a.position(), b.position()) - 60.0).abs() < 2.0);
+}
+
+#[test]
+fn a_wheel_joint_rides_on_a_spring_and_can_be_driven() {
+    let (world, _floor) = world_with_floor();
+    let car = world.new_body(400.0, 440.0, BodyType::Dynamic);
+    car.add_rectangle(120.0, 20.0);
+    let wheel = world.new_body(400.0, 470.0, BodyType::Dynamic);
+    wheel.add_circle(20.0).set_friction(1.0);
+    let joint = world.new_wheel_joint(&car, &wheel, 400.0, 470.0, 0.0, 1.0, false);
+    assert!((joint.frequency() - 2.0).abs() < 1e-3);
+    assert!((joint.damping_ratio() - 0.7).abs() < 1e-3);
+    run(&world, 2.0);
+    // The suspension squashes a little under the car's weight, and the
+    // wheel turns freely, staying under the car.
+    assert!(joint.joint_translation() < 0.0);
+    assert!((wheel.x() - car.x()).abs() < 1.0);
+
+    joint.set_motor_enabled(true);
+    joint.set_motor_speed(5.0);
+    joint.set_max_motor_torque(1.0e7);
+    let start = car.x();
+    run(&world, 1.0);
+    assert!(car.x() - start > 20.0);
+}
+
+#[test]
+fn a_mouse_joint_drags_a_body_to_its_target() {
+    let (world, _floor) = world_with_floor();
+    let crate_ = world.new_body(300.0, 480.0, BodyType::Dynamic);
+    crate_.add_rectangle(40.0, 40.0);
+    let count = world.body_count();
+    let joint = world.new_mouse_joint(&crate_, 300.0, 480.0);
+    assert_eq!(world.body_count(), count, "the ground body stays hidden");
+    assert_eq!(world.bodies().len(), count);
+    assert_eq!(joint.bodies(), vec![crate_.clone()]);
+    joint.set_target(500.0, 200.0);
+    assert_eq!(joint.target(), (500.0, 200.0));
+    run(&world, 2.0);
+    assert!(distance(crate_.position(), (500.0, 200.0)) < 10.0);
+    joint.destroy();
+    run(&world, 3.0);
+    assert!(crate_.y() > 470.0);
+}
+
+#[test]
+fn a_friction_joint_slows_things_seen_from_above() {
+    let world = World::new(0.0, 0.0);
+    let ground = world.new_body(0.0, 0.0, BodyType::Static);
+    let puck = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    puck.add_circle(10.0);
+    let joint = world.new_friction_joint(&ground, &puck, 0.0, 0.0, false);
+    puck.set_linear_velocity(100.0, 0.0);
+    run(&world, 0.5);
+    // No force yet, so no friction.
+    assert!((puck.linear_velocity().0 - 100.0).abs() < 0.5);
+    // A force of half its weight-per-meter slows it at a known rate.
+    joint.set_max_force(puck.mass() * 100.0);
+    joint.set_max_torque(1.0);
+    run(&world, 0.5);
+    assert!((puck.linear_velocity().0 - 50.0).abs() < 5.0);
+    run(&world, 1.0);
+    assert!(puck.linear_velocity().0.abs() < 1.0);
+}
+
+#[test]
+fn a_motor_joint_steers_a_body_to_an_offset() {
+    let world = World::new(0.0, 0.0);
+    let anchor = world.new_body(100.0, 100.0, BodyType::Static);
+    let follower = world.new_body(150.0, 100.0, BodyType::Dynamic);
+    follower.add_rectangle(10.0, 10.0);
+    let joint = world.new_motor_joint(&anchor, &follower, 0.3, false);
+    assert_eq!(joint.linear_offset(), (50.0, 0.0));
+    joint.set_linear_offset(0.0, 80.0);
+    joint.set_angular_offset(1.0);
+    run(&world, 2.0);
+    assert!(distance(follower.position(), (100.0, 180.0)) < 2.0);
+    assert!((follower.angle() - 1.0).abs() < 0.05);
+    assert!((joint.correction_factor() - 0.3).abs() < 1e-4);
+}
+
+#[test]
+fn joints_know_their_bodies_anchors_and_data() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    let b = world.new_body(10.0, 0.0, BodyType::Dynamic);
+    let joint = world.new_spring_joint(&a, &b, 0.0, 0.0, 10.0, 0.0, 5.0, 1.0);
+    assert_eq!(joint.kind(), JointType::Spring);
+    assert_eq!(joint.bodies(), vec![a.clone(), b.clone()]);
+    assert_eq!(joint.anchors(), ((0.0, 0.0), (10.0, 0.0)));
+    assert!(joint.collide_connected());
+    assert_eq!(
+        (joint.length(), joint.stiffness(), joint.damping()),
+        (10.0, 5.0, 1.0)
+    );
+    joint.set_user_data(42);
+    assert_eq!(joint.user_data(), 42);
+    assert_eq!(joint.kind(), JointType::Spring);
+    assert_eq!(world.joints(), vec![joint.clone()]);
+    assert_eq!(a.joints(), vec![joint.clone()]);
+    assert_eq!(world.joint_count(), 1);
+}
+
+#[test]
+#[should_panic(expected = "a Weld joint has no motor")]
+fn asking_a_joint_for_what_it_lacks_panics() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    let b = world.new_body(10.0, 0.0, BodyType::Dynamic);
+    world.new_weld_joint(&a, &b, false).set_motor_speed(1.0);
+}
+
+#[test]
+fn pre_solve_can_make_a_one_way_platform() {
+    let world = World::new(0.0, 600.0);
+    let platform = world.new_body(400.0, 300.0, BodyType::Static);
+    let top = platform.add_rectangle(400.0, 20.0);
+    let seen = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = seen.clone();
+    world.set_pre_solve(move |contact| {
+        counter.set(counter.get() + 1);
+        let up = if contact.a == top {
+            contact.normal.1
+        } else {
+            -contact.normal.1
+        };
+        // The normal points from the platform into the other: up, out of
+        // its top, is negative y.
+        if up > -0.5 {
+            contact.enabled = false;
+        }
+    });
+    assert!(world.has_pre_solve());
+    // Thrown up from below, the ball passes through and lands on top.
+    let ball = world.new_body(400.0, 400.0, BodyType::Dynamic);
+    ball.add_circle(10.0);
+    ball.set_linear_velocity(0.0, -700.0);
+    run(&world, 3.0);
+    assert!(seen.get() > 0);
+    assert!((ball.y() - 280.0).abs() < 2.0, "ball at {}", ball.y());
+}
+
+#[test]
+fn pre_solve_can_change_friction_for_one_contact() {
+    let (world, _floor) = world_with_floor();
+    let block = world.new_body(400.0, 480.0, BodyType::Dynamic);
+    block
+        .add_rectangle(40.0, 40.0)
+        .set_friction(1.0)
+        .set_user_data(7);
+    run(&world, 0.5);
+    world.set_pre_solve(|contact| {
+        if contact.a_data == 7 || contact.b_data == 7 {
+            contact.friction = 0.0;
+        }
+    });
+    block.set_linear_velocity(100.0, 0.0);
+    run(&world, 0.5);
+    assert!(
+        block.linear_velocity().0 > 95.0,
+        "{:?}",
+        block.linear_velocity()
+    );
+    world.clear_pre_solve();
+    run(&world, 0.5);
+    assert!(block.linear_velocity().0 < 1.0);
+}
+
+#[test]
+fn touching_reports_the_push_that_holds_things_up() {
+    let (world, floor) = world_with_floor();
+    let block = world.new_body(400.0, 480.0, BodyType::Dynamic);
+    block.add_rectangle(40.0, 40.0);
+    run(&world, 1.0);
+    let touches = world.touching();
+    assert_eq!(touches.len(), 1);
+    let touch = &touches[0];
+    assert!(touch.involves(&block) && touch.involves(&floor));
+    let weight = block.mass() * 600.0;
+    assert!((touch.normal_impulse / STEP - weight).abs() < weight * 0.05);
+    assert!(touch.tangent_impulse.abs() < 1e-3);
+}
+
+#[test]
+fn box_queries_find_fixtures_by_their_bounding_boxes() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(100.0, 100.0, BodyType::Dynamic);
+    let ball = a.add_circle(10.0);
+    let b = world.new_body(300.0, 100.0, BodyType::Static);
+    let wall = b.add_rectangle(20.0, 200.0);
+    // Found before any update.
+    assert_eq!(
+        world.fixtures_in_box(80.0, 80.0, 120.0, 120.0),
+        vec![ball.clone()]
+    );
+    let mut both = world.fixtures_in_box(0.0, 0.0, 400.0, 95.0);
+    both.sort_by_key(|fixture| fixture.bounding_box().0 as i32);
+    assert_eq!(both, vec![ball.clone(), wall.clone()]);
+    assert!(world.fixtures_in_box(150.0, 150.0, 250.0, 250.0).is_empty());
+    assert_eq!(wall.bounding_box(), (290.0, 0.0, 310.0, 200.0));
+    // The corners may come in either order.
+    assert_eq!(world.fixtures_in_box(120.0, 120.0, 80.0, 80.0), vec![ball]);
+}
+
+#[test]
+fn ray_cast_all_finds_every_fixture_nearest_first() {
+    let world = World::new(0.0, 0.0);
+    let far = world
+        .new_body(300.0, 0.0, BodyType::Static)
+        .add_rectangle(10.0, 10.0);
+    let near = world
+        .new_body(100.0, 0.0, BodyType::Static)
+        .add_rectangle(10.0, 10.0);
+    world.update(STEP);
+    let hits = world.ray_cast_all(0.0, 0.0, 400.0, 0.0);
+    assert_eq!(hits.len(), 2);
+    assert_eq!((&hits[0].fixture, &hits[1].fixture), (&near, &far));
+    assert!((hits[0].x - 95.0).abs() < 0.01);
+}
