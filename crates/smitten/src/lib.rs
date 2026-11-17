@@ -48,8 +48,8 @@ pub mod window;
 
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, CompareMode, Config, Cursor, Filter, GamepadAxis, GamepadButton, Key,
-    MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
+    BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
+    GamepadButton, Key, MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
 };
 
 use smitten_core::backend::BackendEvent;
@@ -156,6 +156,11 @@ pub trait Game: Sized + 'static {
     /// Called when the window is minimized or hidden, and when it comes
     /// back.
     fn visible(&mut self, _visible: bool) {}
+
+    /// Called when the display the window is on turns, as when a phone
+    /// is rotated, the equivalent of `love.displayrotated`. The safe area
+    /// (see [`window::safe_area`]) may have moved too.
+    fn display_rotated(&mut self, _orientation: DisplayOrientation) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
     fn quit(&mut self) -> bool {
@@ -405,5 +410,6 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::Focus(focused) => game.focus(focused),
         BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
         BackendEvent::Visible(visible) => game.visible(visible),
+        BackendEvent::DisplayRotated(orientation) => game.display_rotated(orientation),
     }
 }

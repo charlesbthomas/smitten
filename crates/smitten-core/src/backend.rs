@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
-    MouseButton, PowerInfo, StencilMode, TouchId, WindowState, Wrap,
+    BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickId,
+    Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -114,6 +114,8 @@ pub enum BackendEvent {
     MouseFocus(bool),
     /// The window was shown, or was hidden or minimized.
     Visible(bool),
+    /// The display the window is on turned to a new orientation.
+    DisplayRotated(DisplayOrientation),
 }
 
 /// A corner of a triangle, in pixels from the top-left of the drawable.
@@ -480,4 +482,12 @@ pub trait Backend {
     /// to be drawn: 1.0 on an ordinary display, 2.0 on one with twice the
     /// pixels in each direction.
     fn dpi_scale(&self) -> f32;
+
+    /// The part of the drawable that is not covered by notches, rounded
+    /// corners or system bars, as `(x, y, width, height)` in pixels from
+    /// its top-left. The whole drawable where nothing covers it.
+    fn safe_area(&self) -> (i32, i32, u32, u32);
+
+    /// Which way up the display the window is on is.
+    fn display_orientation(&self) -> DisplayOrientation;
 }

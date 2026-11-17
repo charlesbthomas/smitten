@@ -145,7 +145,8 @@ impl InputState {
             | BackendEvent::WheelMoved { .. }
             | BackendEvent::Focus(_)
             | BackendEvent::MouseFocus(_)
-            | BackendEvent::Visible(_) => {}
+            | BackendEvent::Visible(_)
+            | BackendEvent::DisplayRotated(_) => {}
         }
     }
 }

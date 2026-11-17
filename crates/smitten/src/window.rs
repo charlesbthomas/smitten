@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use crate::MessageBoxKind;
 use crate::context;
-use crate::graphics::ImageError;
+use crate::graphics::{ImageData, ImageError};
+use crate::{DisplayOrientation, MessageBoxKind};
 
 /// Sets the window title.
 pub fn set_title(title: &str) {
@@ -264,5 +264,59 @@ pub fn try_set_icon(path: impl AsRef<Path>) -> Result<(), ImageError> {
 /// Sets the window's icon from raw pixels: `width * height` of them, four
 /// bytes each (red, green, blue, alpha), in rows from the top.
 pub fn set_icon_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<(), ImageError> {
-    context::with(|ctx| ctx.backend.set_icon(width, height, rgba)).map_err(ImageError::Upload)
+    context::with(|ctx| {
+        ctx.backend.set_icon(width, height, rgba)?;
+        ctx.icon = Some(ImageData::from_rgba(width, height, rgba.to_vec()));
+        Ok(())
+    })
+    .map_err(ImageError::Upload)
+}
+
+/// The window's icon as last set, by [`set_icon`], its siblings or
+/// [`crate::Config::icon`], the equivalent of `love.window.getIcon`.
+/// `None` if the game has not set one.
+pub fn icon() -> Option<ImageData> {
+    context::with(|ctx| ctx.icon.clone())
+}
+
+/// The part of the window that nothing covers, as `(x, y, width,
+/// height)` in units from its top-left, the equivalent of
+/// `love.window.getSafeArea`.
+///
+/// On a phone with a notch, rounded corners or an on-screen home bar,
+/// keep buttons and text inside this. Elsewhere it is the whole window,
+/// the same size as [`dimensions`]. It can change when the window is
+/// resized or the display rotates.
+pub fn safe_area() -> (f32, f32, f32, f32) {
+    context::with(|ctx| {
+        let (x, y, width, height) = ctx.backend.safe_area();
+        let dpi = ctx.gfx.screen.dpi;
+        (
+            x as f32 / dpi,
+            y as f32 / dpi,
+            width as f32 / dpi,
+            height as f32 / dpi,
+        )
+    })
+}
+
+/// Which way up the display the window is on is, the equivalent of
+/// `love.window.getDisplayOrientation`. A desktop display reports the
+/// orientation its shape suggests, or [`DisplayOrientation::Unknown`]
+/// where the system cannot tell. See
+/// [`crate::Game::display_rotated`] to be told when it changes.
+pub fn display_orientation() -> DisplayOrientation {
+    context::with(|ctx| ctx.backend.display_orientation())
+}
+
+/// Converts a length in units to pixels, the equivalent of
+/// `love.window.toPixels`: it multiplies by [`dpi_scale`].
+pub fn to_pixels(units: f32) -> f32 {
+    units * dpi_scale()
+}
+
+/// Converts a length in pixels to units, the equivalent of
+/// `love.window.fromPixels`: it divides by [`dpi_scale`].
+pub fn from_pixels(pixels: f32) -> f32 {
+    pixels / dpi_scale()
 }

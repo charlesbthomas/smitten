@@ -206,6 +206,10 @@ fn main() {
 | `love.touchpressed(id, x, y, dx, dy, pressure)` | `Game::touch_pressed(id, x, y, dx, dy, pressure)` | Also `touch_moved` and `touch_released`. A canceled touch counts as released. |
 | `love.mouse.newCursor(path, hotx, hoty)` / `setCursor(cursor)` | `mouse::new_cursor(path, hot_x, hot_y)` / `mouse::set_image_cursor(&cursor)` | `ImageCursor::from_image_data` takes an `ImageData`. `mouse::image_cursor()` is `getCursor`. One image pixel per screen pixel. |
 | `love.filesystem.mount(archive, mountpoint)` / `unmount(archive)` | `filesystem::mount(archive, mount_point)` / `filesystem::unmount(archive)` | Zip archives or directories. `mount_after` is `appendToPath = true`. Images, fonts, shaders and sounds load from mounted files too. |
+| `love.window.getIcon()` | `window::icon()` | `Option<ImageData>`, `None` until the game sets one. |
+| `love.window.getSafeArea()` | `window::safe_area()` | `(x, y, width, height)` in units. The whole window on desktop. |
+| `love.window.getDisplayOrientation()` / `love.displayrotated(index, orientation)` | `window::display_orientation()` / `Game::display_rotated(orientation)` | For the display the window is on, so there is no index. Desktops report what the display's shape suggests. |
+| `love.window.toPixels(value)` / `fromPixels(value)` | `window::to_pixels(value)` / `window::from_pixels(value)` | Multiply or divide by `window::dpi_scale()`. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

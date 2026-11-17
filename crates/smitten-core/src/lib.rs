@@ -23,4 +23,4 @@ pub use filter::{Filter, Wrap};
 pub use input::{GamepadAxis, GamepadButton, JoystickId, MouseButton, TouchId};
 pub use key::Key;
 pub use stencil::{CompareMode, StencilAction, StencilMode};
-pub use system::{Cursor, MessageBoxKind, PowerInfo, PowerState, WindowState};
+pub use system::{Cursor, DisplayOrientation, MessageBoxKind, PowerInfo, PowerState, WindowState};

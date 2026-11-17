@@ -21,8 +21,8 @@ use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId,
 };
 use smitten_core::{
-    Config, Cursor, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind, MouseButton,
-    PowerInfo, PowerState, TouchId, WindowState, Wrap,
+    Config, Cursor, DisplayOrientation, GamepadAxis, GamepadButton, JoystickId, Key,
+    MessageBoxKind, MouseButton, PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -802,6 +802,36 @@ impl Backend for SdlBackend {
         let scale = unsafe { SDL_GetWindowDisplayScale(self.window) };
         if scale > 0.0 { scale } else { 1.0 }
     }
+
+    fn safe_area(&self) -> (i32, i32, u32, u32) {
+        let mut rect = SDL_Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
+        // SAFETY: the window is alive and the out-pointer is valid.
+        if !unsafe { SDL_GetWindowSafeArea(self.window, &mut rect) } {
+            let (width, height) = self.size_in_pixels();
+            return (0, 0, width, height);
+        }
+        // SDL reports window coordinates; Smitten works in pixels.
+        let scale = self.pixel_density();
+        let pixels = |value: i32| (value as f32 * scale).round();
+        (
+            pixels(rect.x) as i32,
+            pixels(rect.y) as i32,
+            pixels(rect.w).max(0.0) as u32,
+            pixels(rect.h).max(0.0) as u32,
+        )
+    }
+
+    fn display_orientation(&self) -> DisplayOrientation {
+        // SAFETY: the window is alive.
+        let orientation =
+            unsafe { SDL_GetCurrentDisplayOrientation(SDL_GetDisplayForWindow(self.window)) };
+        display_orientation(orientation)
+    }
 }
 
 impl SdlBackend {
@@ -817,6 +847,15 @@ impl SdlBackend {
             let kind = SDL_EventType(event.r#type);
             if kind == SDL_EVENT_QUIT {
                 Some(BackendEvent::Quit)
+            } else if kind == SDL_EVENT_DISPLAY_ORIENTATION {
+                // Only the display the game is on matters to it.
+                if event.display.displayID != SDL_GetDisplayForWindow(self.window) {
+                    return None;
+                }
+                let orientation = SDL_DisplayOrientation(event.display.data1);
+                Some(BackendEvent::DisplayRotated(display_orientation(
+                    orientation,
+                )))
             } else if kind == SDL_EVENT_WINDOW_FOCUS_GAINED {
                 Some(BackendEvent::Focus(true))
             } else if kind == SDL_EVENT_WINDOW_FOCUS_LOST {
@@ -1007,6 +1046,16 @@ impl SdlBackend {
         // SAFETY: the window is alive.
         let density = unsafe { SDL_GetWindowPixelDensity(self.window) };
         if density > 0.0 { density } else { 1.0 }
+    }
+}
+
+fn display_orientation(orientation: SDL_DisplayOrientation) -> DisplayOrientation {
+    match orientation {
+        SDL_ORIENTATION_LANDSCAPE => DisplayOrientation::Landscape,
+        SDL_ORIENTATION_LANDSCAPE_FLIPPED => DisplayOrientation::LandscapeFlipped,
+        SDL_ORIENTATION_PORTRAIT => DisplayOrientation::Portrait,
+        SDL_ORIENTATION_PORTRAIT_FLIPPED => DisplayOrientation::PortraitFlipped,
+        _ => DisplayOrientation::Unknown,
     }
 }
 
