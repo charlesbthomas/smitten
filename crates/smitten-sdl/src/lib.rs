@@ -985,6 +985,21 @@ impl SdlBackend {
                     // SDL's range is -32768 to 32767.
                     value: (f32::from(event.gaxis.value) / 32767.0).clamp(-1.0, 1.0),
                 })
+            } else if kind == SDL_EVENT_DROP_FILE {
+                if event.drop.data.is_null() {
+                    return None;
+                }
+                let path =
+                    PathBuf::from(CStr::from_ptr(event.drop.data).to_string_lossy().as_ref());
+                // SDL reports window coordinates; Smitten works in pixels.
+                let scale = self.pixel_density();
+                let (x, y) = (event.drop.x * scale, event.drop.y * scale);
+                // SDL drops directories as files, so tell them apart here.
+                Some(if path.is_dir() {
+                    BackendEvent::DirectoryDropped { path, x, y }
+                } else {
+                    BackendEvent::FileDropped { path, x, y }
+                })
             } else {
                 None
             }
