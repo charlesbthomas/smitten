@@ -193,6 +193,15 @@ impl Fixture {
         })
     }
 
+    /// The smallest box around the fixture, as `(left, top, right,
+    /// bottom)` in world coordinates.
+    pub fn bounding_box(&self) -> (f32, f32, f32, f32) {
+        self.read(|collider| {
+            let aabb = collider.compute_aabb();
+            (aabb.mins.x, aabb.mins.y, aabb.maxs.x, aabb.maxs.y)
+        })
+    }
+
     /// A number the game attached to the fixture, 0 until one is set.
     pub fn user_data(&self) -> u64 {
         self.read(|collider| collider.user_data as u64)

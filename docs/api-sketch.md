@@ -142,8 +142,8 @@ fn main() {
 | *(none)* | `body.apply_acceleration(x, y)`, `body.apply_angular_acceleration(a)` | A push in pixels (or radians) per second squared that does not depend on the body's mass or the world's meter. |
 | `body:getInertia()` | `body.inertia()` | |
 | *(tables keyed by body)* | `HashMap<Body, T>` | `Body`, `Fixture` and `Joint` are `Eq + Hash`. |
-| `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | |
-| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring and prismatic joints. |
+| `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | `ray_cast_all` for every hit, nearest first. |
+| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring, distance, prismatic, wheel, mouse, friction and motor joints. Gear and pulley joints are missing. |
 | `love.graphics.ellipse("fill", x, y, rx, ry)` | `graphics::ellipse(DrawMode::Fill, x, y, rx, ry)` | |
 | `love.graphics.arc("line", "open", x, y, r, a1, a2)` | `graphics::arc(DrawMode::Line, ArcType::Open, x, y, r, a1, a2)` | `Pie`, `Open` or `Closed`. |
 | `love.graphics.rectangle("fill", x, y, w, h, rx, ry)` | `graphics::rounded_rectangle(DrawMode::Fill, x, y, w, h, rx, ry)` | |
@@ -206,6 +206,19 @@ fn main() {
 | `love.touchpressed(id, x, y, dx, dy, pressure)` | `Game::touch_pressed(id, x, y, dx, dy, pressure)` | Also `touch_moved` and `touch_released`. A canceled touch counts as released. |
 | `love.mouse.newCursor(path, hotx, hoty)` / `setCursor(cursor)` | `mouse::new_cursor(path, hot_x, hot_y)` / `mouse::set_image_cursor(&cursor)` | `ImageCursor::from_image_data` takes an `ImageData`. `mouse::image_cursor()` is `getCursor`. One image pixel per screen pixel. |
 | `love.filesystem.mount(archive, mountpoint)` / `unmount(archive)` | `filesystem::mount(archive, mount_point)` / `filesystem::unmount(archive)` | Zip archives or directories. `mount_after` is `appendToPath = true`. Images, fonts, shaders and sounds load from mounted files too. |
+| `world:queryBoundingBox(x1, y1, x2, y2, callback)` | `world.fixtures_in_box(x1, y1, x2, y2)` | A list, by bounding box as in LÖVE. `fixture.bounding_box()` is `getBoundingBox`. |
+| `world:setCallbacks(nil, nil, preSolve)` | `world.set_pre_solve(\|contact\| ...)` | A closure. Set `contact.enabled = false` for a one-way platform, or change its `friction` and `restitution`. It must not call into the world. |
+| `world:setCallbacks(nil, nil, nil, postSolve)` / `world:getContacts()` | `world.touching()` after each update | Each `Touch` carries `normal_impulse` and `tangent_impulse`. |
+| `joint:setMotorEnabled(true)` / `setMotorSpeed(s)` / `setMaxMotorTorque(t)` | `joint.set_motor_enabled(true)` / `set_motor_speed(s)` / `set_max_motor_torque(t)` | Revolute, prismatic (`set_max_motor_force`) and wheel joints. `motor_torque()` reads what it applied. |
+| `joint:setLimitsEnabled(true)` / `setLimits(lo, hi)` | `joint.set_limits_enabled(true)` / `joint.set_limits(lo, hi)` | Revolute and prismatic joints, measured from where the joint was made. |
+| `joint:getJointAngle()` / `getJointTranslation()` / `getJointSpeed()` | `joint.joint_angle()` / `joint_translation()` / `joint_speed()` | |
+| `joint:getType()` / `getBodies()` / `getAnchors()` | `joint.kind()` / `joint.bodies()` / `joint.anchors()` | `kind()` is a `JointType`. Asking a joint for what its kind lacks panics. |
+| `joint:getReactionForce(1 / dt)` / `getReactionTorque(1 / dt)` | `joint.reaction_force()` / `joint.reaction_torque()` | Already per second, for the last update. |
+| `ropejoint:setMaxLength(l)` / `distancejoint:setLength(l)` | `joint.set_max_length(l)` / `joint.set_length(l)` | `set_length` also moves a spring joint's rest length; `set_stiffness` and `set_damping` tune it. |
+| `love.physics.newMouseJoint(body, x, y)` / `setTarget(x, y)` | `world.new_mouse_joint(&body, x, y)` / `joint.set_target(x, y)` | `set_frequency`, `set_damping_ratio` and `set_max_force` as in LÖVE. |
+| `wheeljoint:setSpringFrequency(f)` / `setSpringDampingRatio(r)` | `joint.set_frequency(f)` / `joint.set_damping_ratio(r)` | The same names as the mouse joint's. |
+| `motorjoint:setLinearOffset(x, y)` / `setAngularOffset(a)` | `joint.set_linear_offset(x, y)` / `joint.set_angular_offset(a)` | Unlimited force and torque until `set_max_force` and `set_max_torque` say otherwise. |
+| `world:getJoints()` / `body:getJoints()` | `world.joints()` / `body.joints()` | Also `world.joint_count()`. |
 | `love.filesystem.openFile(name, mode)` / `newFile(name, mode)` | `filesystem::open_file(name, FileMode::Read)` | A `File` implements `Read`, `BufRead`, `Write` and `Seek`. `read_bytes`, `read_all`, `write_bytes`, `tell`, `size` and `is_eof` mirror LÖVE's methods, and `lines` comes from `BufRead`. Closed when dropped. `setBuffer` is left out: reads and writes are always buffered. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
