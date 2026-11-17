@@ -206,6 +206,11 @@ fn main() {
 | `love.touchpressed(id, x, y, dx, dy, pressure)` | `Game::touch_pressed(id, x, y, dx, dy, pressure)` | Also `touch_moved` and `touch_released`. A canceled touch counts as released. |
 | `love.mouse.newCursor(path, hotx, hoty)` / `setCursor(cursor)` | `mouse::new_cursor(path, hot_x, hot_y)` / `mouse::set_image_cursor(&cursor)` | `ImageCursor::from_image_data` takes an `ImageData`. `mouse::image_cursor()` is `getCursor`. One image pixel per screen pixel. |
 | `love.filesystem.mount(archive, mountpoint)` / `unmount(archive)` | `filesystem::mount(archive, mount_point)` / `filesystem::unmount(archive)` | Zip archives or directories. `mount_after` is `appendToPath = true`. Images, fonts, shaders and sounds load from mounted files too. |
+| `love.math.newTransform(x, y, r, sx, sy, ox, oy, kx, ky)` | `math::new_transform(x, y, r, sx, sy, ox, oy, kx, ky)` | Or `Transform::new()`. `translate`, `rotate`, `scale`, `shear`, `set_transformation`, `reset`, `inverse`, `transform_point`, `inverse_transform_point` keep their names. `transform:apply(other)` is `apply_transform(&other)`, or `outer * inner`. |
+| `transform:getMatrix()` / `setMatrix(...)` | `transform.matrix()` / `transform.set_matrix(rows)` | A 3 by 3 matrix in rows, since the transform is 2D. |
+| `love.graphics.applyTransform(t)` / `replaceTransform(t)` / `shear(kx, ky)` | `graphics::apply_transform(&t)` / `replace_transform(&t)` / `shear(kx, ky)` | `graphics::transform()` returns the current one. |
+| `love.graphics.transformPoint(x, y)` / `inverseTransformPoint(x, y)` | `graphics::transform_point(x, y)` / `inverse_transform_point(x, y)` | In units, under the current transform. |
+| `love.graphics.draw(image, transform)` / `print(text, transform)` | `graphics::draw_with(&image, &transform)` / `print_with(text, &transform)` | Also `draw_quad_with` and `printf_with`. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

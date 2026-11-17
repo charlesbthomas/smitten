@@ -1002,6 +1002,41 @@ pub fn origin() {
     context::with(|ctx| ctx.gfx.transform = Transform::IDENTITY);
 }
 
+/// Shears everything drawn afterwards: x gains `kx` times y, and y gains
+/// `ky` times x.
+pub fn shear(kx: f32, ky: f32) {
+    context::with(|ctx| ctx.gfx.transform.shear(kx, ky));
+}
+
+/// Applies `transform` on top of the current transform, as if its calls
+/// had been made here.
+pub fn apply_transform(transform: &Transform) {
+    context::with(|ctx| ctx.gfx.transform.apply_transform(transform));
+}
+
+/// Replaces the current transform with `transform`.
+pub fn replace_transform(transform: &Transform) {
+    context::with(|ctx| ctx.gfx.transform = *transform);
+}
+
+/// The current transform, as set by [`translate`], [`apply_transform`]
+/// and the rest. [`push`] and [`pop`] save and restore it.
+pub fn transform() -> Transform {
+    context::with(|ctx| ctx.gfx.transform)
+}
+
+/// Where the point `(x, y)` lands on the screen, in units, under the
+/// current transform.
+pub fn transform_point(x: f32, y: f32) -> (f32, f32) {
+    context::with(|ctx| ctx.gfx.transform.transform_point(x, y))
+}
+
+/// Which point the current transform puts at `(x, y)` on the screen, such
+/// as where the mouse is in a scrolled and zoomed world.
+pub fn inverse_transform_point(x: f32, y: f32) -> (f32, f32) {
+    context::with(|ctx| ctx.gfx.transform.inverse_transform_point(x, y))
+}
+
 // ---------------------------------------------------------------------------
 // Shapes
 
@@ -1226,6 +1261,18 @@ pub fn draw_ex(image: &Image, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32,
     draw_quad_ex(image, &whole_image(image), x, y, r, sx, sy, ox, oy);
 }
 
+/// Draws an image placed by `transform` instead of a position, rotation
+/// and scale, the equivalent of `love.graphics.draw(image, transform)`.
+pub fn draw_with(image: &Image, transform: &Transform) {
+    let quad = whole_image(image);
+    context::with(|ctx| ctx.gfx.push_image(image, &quad, transform));
+}
+
+/// Draws part of an image placed by `transform`.
+pub fn draw_quad_with(image: &Image, quad: &Quad, transform: &Transform) {
+    context::with(|ctx| ctx.gfx.push_image(image, quad, transform));
+}
+
 /// Draws the part of an image described by `quad` at `(x, y)`.
 pub fn draw_quad(image: &Image, quad: &Quad, x: f32, y: f32) {
     draw_quad_ex(image, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
@@ -1442,5 +1489,22 @@ pub fn printf_ex(
     context::with(|ctx| {
         ctx.gfx
             .push_text(ctx.backend.as_mut(), text, Some((limit, align)), &local);
+    });
+}
+
+/// Draws text placed by `transform` instead of a position, rotation and
+/// scale.
+pub fn print_with(text: &str, transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text(ctx.backend.as_mut(), text, None, transform)
+    });
+}
+
+/// Draws wrapped text placed by `transform`.
+pub fn printf_with(text: &str, limit: f32, align: Align, transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text(ctx.backend.as_mut(), text, Some((limit, align)), transform);
     });
 }
