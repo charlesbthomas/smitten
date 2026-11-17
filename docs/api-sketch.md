@@ -224,6 +224,8 @@ fn main() {
 | `love.graphics.drawLayer(array, layer, x, y)` | `graphics::draw_layer(&array, layer, x, y)` | Layers count from 0. `draw_layer_ex` and `draw_layer_quad_with` take the other forms. Not with a custom shader active: send the array to the shader instead. |
 | `love.graphics.newCubeImage({px, nx, py, ny, pz, nz})` | `graphics::new_cube_image(&[px, nx, py, ny, pz, nz])` | Six square faces, in LÖVE's order. A single image with all six faces laid out is not supported yet. |
 | `shader:send("sky", cubeimage)` | `shader.send_texture("sky", &cube)` | The shader declares `var sky: texture_cube<f32>;` with no binding and samples it with `sky_sampler`. Also `texture_2d<f32>` for an `Image` or `Canvas`, and `texture_2d_array<f32>` for an `ArrayImage`. One not sent reads as white. |
+| `love.image.newCompressedData(path)` / `love.graphics.newImage(compresseddata)` | `graphics::new_compressed_data(path)` / `Image::from_compressed_data(&data)` | DDS files in BC1 to BC5 and BC7 (DXT1, DXT3, DXT5 and the rest), with their mipmaps. `new_image` loads a `.dds` file too, but does not reload it when it changes. KTX, ASTC and ETC files are not supported yet. |
+| `love.graphics.getImageFormats()` | `graphics::is_compressed_format_supported(CompressedFormat::Bc7)` | One format at a time. |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

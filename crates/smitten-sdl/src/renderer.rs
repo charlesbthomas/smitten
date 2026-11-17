@@ -12,8 +12,8 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, ColorMask, DrawCall, Frame, Scissor, ShaderId, ShaderInfo, TextureId,
-    TextureKind, Vertex,
+    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, Scissor, ShaderId, ShaderInfo,
+    TextureId, TextureKind, Vertex,
 };
 use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
 
@@ -65,6 +65,9 @@ struct Texture {
     /// How mipmaps are sampled, once the texture has them.
     mipmaps: Option<Mipmaps>,
     kind: TextureKind,
+    /// Whether the pixels are compressed, which means they cannot be
+    /// replaced.
+    compressed: bool,
 }
 
 /// How a texture with mipmaps blends between them.
@@ -266,6 +269,113 @@ impl Renderer {
                 levels,
                 mipmaps,
                 kind: TextureKind::Flat,
+                compressed: false,
+            },
+        );
+        Ok(TextureId(id))
+    }
+
+    pub fn supports_compressed_format(&self, format: CompressedFormat) -> bool {
+        // SAFETY: the device is alive.
+        unsafe {
+            SDL_GPUTextureSupportsFormat(
+                self.device,
+                compressed_format(format),
+                SDL_GPU_TEXTURETYPE_2D,
+                SDL_GPU_TEXTUREUSAGE_SAMPLER,
+            )
+        }
+    }
+
+    pub fn create_compressed_texture(
+        &mut self,
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        levels: &[&[u8]],
+    ) -> Result<TextureId, String> {
+        if width == 0 || height == 0 {
+            return Err("an image must be at least 1x1 pixels".to_string());
+        }
+        if levels.is_empty() || levels.len() as u32 > mipmap_levels(width, height) {
+            return Err(format!(
+                "a {width}x{height} image cannot have {} mipmap levels",
+                levels.len()
+            ));
+        }
+        for (level, data) in levels.iter().enumerate() {
+            let (level_width, level_height) = level_size(width, height, level as u32);
+            let expected = format.data_size(level_width, level_height);
+            if data.len() != expected {
+                return Err(format!(
+                    "level {level} of a {width}x{height} {format:?} image needs {expected} bytes, got {}",
+                    data.len()
+                ));
+            }
+        }
+        if !self.supports_compressed_format(format) {
+            return Err(format!("this GPU cannot read {format:?} images"));
+        }
+        let level_count = levels.len() as u32;
+        let mipmaps = (level_count > 1).then_some(Mipmaps {
+            filter: Filter::Linear,
+            sharpness: 0f32.to_bits(),
+        });
+        if let Some(mipmaps) = mipmaps {
+            self.ensure_samplers((Wrap::Clamp, Wrap::Clamp), Some(mipmaps))?;
+        }
+        // SAFETY: the device is alive, and each level was just checked to
+        // hold exactly its size.
+        let handle = unsafe {
+            let handle = SDL_CreateGPUTexture(
+                self.device,
+                &SDL_GPUTextureCreateInfo {
+                    r#type: SDL_GPU_TEXTURETYPE_2D,
+                    format: compressed_format(format),
+                    usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                    width,
+                    height,
+                    layer_count_or_depth: 1,
+                    num_levels: level_count,
+                    sample_count: SDL_GPU_SAMPLECOUNT_1,
+                    ..Default::default()
+                },
+            );
+            if handle.is_null() {
+                return Err(format!("could not create a texture: {}", sdl_error()));
+            }
+            for (level, data) in levels.iter().enumerate() {
+                let (level_width, level_height) = level_size(width, height, level as u32);
+                let region = Region {
+                    level: level as u32,
+                    width: level_width,
+                    height: level_height,
+                    ..Region::default()
+                };
+                if let Err(message) = upload(self.device, handle, region, data) {
+                    SDL_ReleaseGPUTexture(self.device, handle);
+                    return Err(message);
+                }
+            }
+            handle
+        };
+        let id = self.next_texture_id;
+        self.next_texture_id += 1;
+        self.textures.insert(
+            id,
+            Texture {
+                handle,
+                width,
+                height,
+                is_target: false,
+                stencil: ptr::null_mut(),
+                stencil_fresh: false,
+                wrap: (Wrap::Clamp, Wrap::Clamp),
+                bytes: levels.iter().map(|level| level.len() as u64).sum(),
+                levels: level_count,
+                mipmaps,
+                kind: TextureKind::Flat,
+                compressed: true,
             },
         );
         Ok(TextureId(id))
@@ -315,6 +425,7 @@ impl Renderer {
                 levels: 1,
                 mipmaps: None,
                 kind,
+                compressed: false,
             },
         );
         Ok(TextureId(id))
@@ -377,6 +488,7 @@ impl Renderer {
                 levels: 1,
                 mipmaps: None,
                 kind: TextureKind::Flat,
+                compressed: false,
             },
         );
         Ok(TextureId(id))
@@ -394,8 +506,8 @@ impl Renderer {
         let Some(&target) = self.textures.get(&texture.0) else {
             return Err("the texture no longer exists".to_string());
         };
-        if target.kind != TextureKind::Flat {
-            return Err("only a flat texture can be updated".to_string());
+        if target.kind != TextureKind::Flat || target.compressed {
+            return Err("only a flat, uncompressed texture can be updated".to_string());
         }
         if width == 0 || height == 0 {
             return Ok(());
@@ -1561,6 +1673,23 @@ impl SamplerKey {
     }
 }
 
+/// The SDL format for a compressed format.
+fn compressed_format(format: CompressedFormat) -> SDL_GPUTextureFormat {
+    match format {
+        CompressedFormat::Bc1 => SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM,
+        CompressedFormat::Bc2 => SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM,
+        CompressedFormat::Bc3 => SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM,
+        CompressedFormat::Bc4 => SDL_GPU_TEXTUREFORMAT_BC4_R_UNORM,
+        CompressedFormat::Bc5 => SDL_GPU_TEXTUREFORMAT_BC5_RG_UNORM,
+        CompressedFormat::Bc7 => SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
+    }
+}
+
+/// The size of mipmap `level` of a `width` by `height` texture.
+fn level_size(width: u32, height: u32, level: u32) -> (u32, u32) {
+    ((width >> level).max(1), (height >> level).max(1))
+}
+
 /// How many mipmap levels a full chain for a `width` by `height` texture
 /// has, down to 1 by 1.
 fn mipmap_levels(width: u32, height: u32) -> u32 {
@@ -1708,6 +1837,17 @@ unsafe fn new_layered_texture(
     }
 }
 
+/// Where in a texture an upload goes.
+#[derive(Clone, Copy, Default)]
+struct Region {
+    layer: u32,
+    level: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
 /// Copies `rgba` into a region of `texture`.
 ///
 /// # Safety
@@ -1722,6 +1862,31 @@ unsafe fn upload_region(
     y: u32,
     width: u32,
     height: u32,
+    rgba: &[u8],
+) -> Result<(), String> {
+    let region = Region {
+        layer,
+        level: 0,
+        x,
+        y,
+        width,
+        height,
+    };
+    // SAFETY: as the caller promised.
+    unsafe { upload(device, texture, region, rgba) }
+}
+
+/// Copies `data` into `region` of `texture`, as tightly packed rows of
+/// pixels or of compressed blocks.
+///
+/// # Safety
+/// `device` and `texture` must be alive, the region must lie inside the
+/// texture, and `data` must hold exactly the region's pixels in the
+/// texture's format.
+unsafe fn upload(
+    device: *mut SDL_GPUDevice,
+    texture: *mut SDL_GPUTexture,
+    region: Region,
     rgba: &[u8],
 ) -> Result<(), String> {
     let size = u32::try_from(rgba.len()).map_err(|_| "the image is too large".to_string())?;
@@ -1757,19 +1922,22 @@ unsafe fn upload_region(
         let pass = SDL_BeginGPUCopyPass(commands);
         SDL_UploadToGPUTexture(
             pass,
+            // Zero means the rows are tightly packed, which also suits
+            // compressed blocks.
             &SDL_GPUTextureTransferInfo {
                 transfer_buffer: transfer,
                 offset: 0,
-                pixels_per_row: width,
-                rows_per_layer: height,
+                pixels_per_row: 0,
+                rows_per_layer: 0,
             },
             &SDL_GPUTextureRegion {
                 texture,
-                layer,
-                x,
-                y,
-                w: width,
-                h: height,
+                mip_level: region.level,
+                layer: region.layer,
+                x: region.x,
+                y: region.y,
+                w: region.width,
+                h: region.height,
                 d: 1,
                 ..Default::default()
             },

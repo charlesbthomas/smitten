@@ -194,6 +194,52 @@ pub enum TextureKind {
     Cube,
 }
 
+/// A way of storing pixels compressed in blocks of 4 by 4, which the GPU
+/// reads without unpacking first. These are the BC formats, also called
+/// DXT or S3TC, that desktop GPUs read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompressedFormat {
+    /// Color with on-or-off alpha, 8 bytes a block. Also called DXT1.
+    Bc1,
+    /// Color with sharp alpha, 16 bytes a block. Also called DXT3.
+    Bc2,
+    /// Color with smooth alpha, 16 bytes a block. Also called DXT5.
+    Bc3,
+    /// One channel, red, 8 bytes a block.
+    Bc4,
+    /// Two channels, red and green, 16 bytes a block.
+    Bc5,
+    /// High quality color and alpha, 16 bytes a block.
+    Bc7,
+}
+
+impl CompressedFormat {
+    /// Every format, in declaration order.
+    pub const ALL: [CompressedFormat; 6] = [
+        CompressedFormat::Bc1,
+        CompressedFormat::Bc2,
+        CompressedFormat::Bc3,
+        CompressedFormat::Bc4,
+        CompressedFormat::Bc5,
+        CompressedFormat::Bc7,
+    ];
+
+    /// How many bytes one 4 by 4 block takes.
+    pub fn block_size(self) -> usize {
+        match self {
+            CompressedFormat::Bc1 | CompressedFormat::Bc4 => 8,
+            _ => 16,
+        }
+    }
+
+    /// How many bytes a `width` by `height` picture takes. A partial block
+    /// at an edge takes a whole one.
+    pub fn data_size(self, width: u32, height: u32) -> usize {
+        let blocks = |pixels: u32| pixels.div_ceil(4).max(1) as usize;
+        blocks(width) * blocks(height) * self.block_size()
+    }
+}
+
 /// A texture a custom shader declares besides `image`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaderTexture {
@@ -382,6 +428,23 @@ pub trait Backend {
         height: u32,
         rgba: &[u8],
     ) -> Result<(), String>;
+
+    /// Whether the GPU can read textures stored in `format`.
+    fn supports_compressed_format(&self, format: CompressedFormat) -> bool;
+
+    /// Creates a texture from compressed data, with one entry of `levels`
+    /// for the full-size picture and one for each mipmap after it, each
+    /// half the size of the one before and exactly
+    /// [`CompressedFormat::data_size`] long. It cannot be updated. With
+    /// more than one level, its mipmaps start out blended as those of
+    /// `create_mipmapped_texture` do.
+    fn create_compressed_texture(
+        &mut self,
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        levels: &[&[u8]],
+    ) -> Result<TextureId, String>;
 
     /// Creates an array or cube texture from `layers`, each laid out as in
     /// `create_texture` and all `width` by `height` pixels. A cube has six

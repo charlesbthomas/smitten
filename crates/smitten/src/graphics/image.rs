@@ -9,6 +9,8 @@ use smitten_core::{Filter, Wrap};
 use crate::context;
 use crate::reload::Asset;
 
+use super::CompressedImageData;
+use super::compressed::is_dds;
 use super::stats::{Counted, Kind};
 
 /// A picture that can be drawn, the equivalent of LÖVE's `Image`.
@@ -155,6 +157,37 @@ impl Image {
         });
     }
 
+    /// Creates an image from compressed pixels, the equivalent of
+    /// `love.graphics.newImage(compresseddata)`. Mipmaps in the data are
+    /// used, blended as [`Image::set_mipmap_filter`] describes. Fails if
+    /// the GPU cannot read the format, which
+    /// [`graphics::is_compressed_format_supported`](super::is_compressed_format_supported)
+    /// tells beforehand.
+    ///
+    /// Its pixels cannot be replaced.
+    pub fn from_compressed_data(data: &CompressedImageData) -> Result<Image, ImageError> {
+        context::with(|ctx| {
+            let (width, height) = data.dimensions();
+            let texture = ctx
+                .backend
+                .create_compressed_texture(data.format(), width, height, &data.levels())
+                .map_err(ImageError::Upload)?;
+            let mipmap_count = data.mipmap_count();
+            Ok(Image {
+                inner: Rc::new(Inner {
+                    texture: Cell::new(texture),
+                    width: Cell::new(width),
+                    height: Cell::new(height),
+                    filter: Cell::new(ctx.gfx.default_filter),
+                    wrap: Cell::default(),
+                    mipmap_count,
+                    mipmap_filter: Cell::new((mipmap_count > 1).then_some((Filter::Linear, 0.0))),
+                    _counted: Counted::new(Kind::Image),
+                }),
+            })
+        })
+    }
+
     /// How many mipmap levels the image has, counting the full-size image:
     /// 1 for an image made without mipmaps.
     pub fn mipmap_count(&self) -> u32 {
@@ -297,6 +330,18 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
         path: path.to_path_buf(),
         source,
     })?;
+    // A compressed file is used as it is, mipmaps and all, and is not
+    // loaded again when it changes.
+    if is_dds(&bytes) {
+        let data = CompressedImageData::from_bytes(&bytes).map_err(|error| match error {
+            ImageError::Invalid(message) => ImageError::Decode {
+                path: path.to_path_buf(),
+                message,
+            },
+            other => other,
+        })?;
+        return Image::from_compressed_data(&data);
+    }
     let decoded = decode(&bytes).map_err(|message| ImageError::Decode {
         path: path.to_path_buf(),
         message,

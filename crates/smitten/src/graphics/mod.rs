@@ -13,6 +13,7 @@
 
 mod batch;
 mod canvas;
+mod compressed;
 pub(crate) mod image;
 mod image_data;
 mod layered;
@@ -46,6 +47,7 @@ pub(crate) mod reloading {
 }
 
 pub use canvas::Canvas;
+pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
 pub use layered::{ArrayImage, CubeImage};
@@ -53,6 +55,7 @@ pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
+pub use smitten_core::backend::CompressedFormat;
 pub use sprite_batch::SpriteBatch;
 pub use stats::Stats;
 pub use text::{Align, Font, FontError};
@@ -1309,7 +1312,7 @@ pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
 // ---------------------------------------------------------------------------
 // Images
 
-/// Loads an image file (PNG or JPEG).
+/// Loads an image file: PNG, JPEG, or DDS for compressed pixels.
 ///
 /// A relative path is looked up as [`crate::filesystem`] describes, which
 /// normally means inside the game's `assets` folder.
@@ -1320,7 +1323,8 @@ pub fn new_image(path: impl AsRef<Path>) -> Image {
     try_new_image(path).unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// Loads an image file (PNG or JPEG), returning an error if it fails.
+/// Loads an image file (PNG, JPEG, or DDS for compressed pixels),
+/// returning an error if it fails.
 pub fn try_new_image(path: impl AsRef<Path>) -> Result<Image, ImageError> {
     image::load(path.as_ref(), ImageSettings::default())
 }
@@ -1718,4 +1722,21 @@ pub fn new_array_image(paths: &[impl AsRef<Path>]) -> ArrayImage {
 /// [`CubeImage::from_files`] to handle the failure instead.
 pub fn new_cube_image(paths: &[impl AsRef<Path>; 6]) -> CubeImage {
     CubeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a DDS file of compressed pixels, the equivalent of
+/// `love.image.newCompressedData`. Draw it with
+/// [`Image::from_compressed_data`], or load it straight into an image
+/// with [`new_image`].
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`CompressedImageData::from_file`] to handle the failure instead.
+pub fn new_compressed_data(path: impl AsRef<Path>) -> CompressedImageData {
+    CompressedImageData::from_file(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Whether the GPU can draw images compressed in `format`, the
+/// equivalent of `love.graphics.getImageFormats`.
+pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
+    context::with(|ctx| ctx.backend.supports_compressed_format(format))
 }

@@ -18,7 +18,8 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
-    AudioFill, Backend, BackendEvent, CursorId, Frame, ShaderId, ShaderInfo, TextureId, TextureKind,
+    AudioFill, Backend, BackendEvent, CompressedFormat, CursorId, Frame, ShaderId, ShaderInfo,
+    TextureId, TextureKind,
 };
 use smitten_core::{
     Config, Cursor, Filter, GamepadAxis, GamepadButton, JoystickId, Key, MessageBoxKind,
@@ -483,6 +484,21 @@ impl Backend for SdlBackend {
     ) -> Result<TextureId, String> {
         self.renderer
             .create_layered_texture(kind, width, height, layers)
+    }
+
+    fn supports_compressed_format(&self, format: CompressedFormat) -> bool {
+        self.renderer.supports_compressed_format(format)
+    }
+
+    fn create_compressed_texture(
+        &mut self,
+        format: CompressedFormat,
+        width: u32,
+        height: u32,
+        levels: &[&[u8]],
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_compressed_texture(format, width, height, levels)
     }
 
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
