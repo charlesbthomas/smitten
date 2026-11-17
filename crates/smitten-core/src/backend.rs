@@ -128,6 +128,9 @@ pub enum BackendEvent {
         x: f32,
         y: f32,
     },
+    /// The system is running out of memory and the game should free what
+    /// it can, or it may be closed.
+    LowMemory,
 }
 
 /// A corner of a triangle, in pixels from the top-left of the drawable.

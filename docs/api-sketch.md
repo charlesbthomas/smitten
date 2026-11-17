@@ -251,6 +251,9 @@ fn main() {
 | `world:getJoints()` / `body:getJoints()` | `world.joints()` / `body.joints()` | Also `world.joint_count()`. |
 | `love.filesystem.openFile(name, mode)` / `newFile(name, mode)` | `filesystem::open_file(name, FileMode::Read)` | A `File` implements `Read`, `BufRead`, `Write` and `Seek`. `read_bytes`, `read_all`, `write_bytes`, `tell`, `size` and `is_eof` mirror LÖVE's methods, and `lines` comes from `BufRead`. Closed when dropped. `setBuffer` is left out: reads and writes are always buffered. |
 | `love.filedropped(file, x, y)` / `love.directorydropped(path, x, y)` | `Game::file_dropped(path, x, y)` / `Game::directory_dropped(path, x, y)` | An absolute `&Path` instead of a `DroppedFile`. `filesystem` functions take it as it is, and `filesystem::mount` makes a dropped directory readable. |
+| `love.event.push(name, ...)` / `love.handlers[name]` | `event::push(value)` / `Game::custom_event(event)` | Any type can be pushed, usually an enum of the game's own. `CustomEvent::downcast` gets it back. Delivered at the start of the next frame, after the platform's events. |
+| `love.event.clear()` | `event::clear()` | Clears the game's own pushed events. |
+| `love.lowmemory()` | `Game::low_memory()` | |
 | `love.timer.getDelta()` | `timer::delta()` | Getters drop the `get` prefix, as Rust style prefers. |
 | `love.event.quit()` | `event::quit()` | |
 | `love.errorhandler` | Built in | A panic shows the blue error screen with its message and location. It cannot be replaced yet. |

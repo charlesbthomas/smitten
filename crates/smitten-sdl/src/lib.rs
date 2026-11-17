@@ -921,6 +921,8 @@ impl SdlBackend {
             let kind = SDL_EventType(event.r#type);
             if kind == SDL_EVENT_QUIT {
                 Some(BackendEvent::Quit)
+            } else if kind == SDL_EVENT_LOW_MEMORY {
+                Some(BackendEvent::LowMemory)
             } else if kind == SDL_EVENT_WINDOW_FOCUS_GAINED {
                 Some(BackendEvent::Focus(true))
             } else if kind == SDL_EVENT_WINDOW_FOCUS_LOST {
