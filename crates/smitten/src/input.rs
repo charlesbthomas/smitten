@@ -197,7 +197,8 @@ impl InputState {
             | BackendEvent::Visible(_)
             | BackendEvent::FileDropped { .. }
             | BackendEvent::DirectoryDropped { .. }
-            | BackendEvent::LowMemory => {}
+            | BackendEvent::LowMemory
+            | BackendEvent::DisplayRotated(_) => {}
         }
     }
 }

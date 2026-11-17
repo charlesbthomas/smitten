@@ -13,7 +13,7 @@ use smitten_core::backend::Backend;
 use crate::audio::AudioState;
 use crate::event::EventQueue;
 use crate::filesystem::FilesystemState;
-use crate::graphics::GraphicsState;
+use crate::graphics::{GraphicsState, ImageData};
 use crate::input::InputState;
 use crate::reload::ReloadState;
 use crate::timer::TimerState;
@@ -28,6 +28,8 @@ pub(crate) struct Context {
     pub reload: ReloadState,
     pub events: EventQueue,
     pub quit_requested: bool,
+    /// The window's icon, as last set.
+    pub icon: Option<ImageData>,
 }
 
 thread_local! {
@@ -51,6 +53,7 @@ pub(crate) fn install(backend: Box<dyn Backend>, config: &Config) {
             reload: ReloadState::new(config.hot_reload),
             events: EventQueue::default(),
             quit_requested: false,
+            icon: None,
         });
     });
 }

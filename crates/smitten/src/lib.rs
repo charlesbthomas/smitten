@@ -51,9 +51,9 @@ pub mod window;
 
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, CompareMode, Config, Cursor, Filter, GamepadAxis, GamepadButton,
-    GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton, Scaling,
-    StencilAction, TouchId, Wrap,
+    BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
+    GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton,
+    Scaling, StencilAction, TouchId, Wrap,
 };
 
 use std::path::Path;
@@ -224,6 +224,11 @@ pub trait Game: Sized + 'static {
     /// to reclaim memory, so drop caches and anything that can be loaded
     /// again.
     fn low_memory(&mut self) {}
+
+    /// Called when the display the window is on turns, as when a phone
+    /// is rotated, the equivalent of `love.displayrotated`. The safe area
+    /// (see [`window::safe_area`]) may have moved too.
+    fn display_rotated(&mut self, _orientation: DisplayOrientation) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
     fn quit(&mut self) -> bool {
@@ -508,5 +513,6 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::FileDropped { path, x, y } => game.file_dropped(&path, x, y),
         BackendEvent::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
         BackendEvent::LowMemory => game.low_memory(),
+        BackendEvent::DisplayRotated(orientation) => game.display_rotated(orientation),
     }
 }

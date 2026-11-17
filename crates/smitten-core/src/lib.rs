@@ -26,4 +26,4 @@ pub use input::{
 };
 pub use key::Key;
 pub use stencil::{CompareMode, StencilAction, StencilMode};
-pub use system::{Cursor, MessageBoxKind, PowerInfo, PowerState, WindowState};
+pub use system::{Cursor, DisplayOrientation, MessageBoxKind, PowerInfo, PowerState, WindowState};
