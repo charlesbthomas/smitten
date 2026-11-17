@@ -54,6 +54,8 @@ pub use smitten_core::{
     StencilAction, TouchId, Wrap,
 };
 
+use std::path::Path;
+
 use smitten_core::backend::BackendEvent;
 
 /// The callbacks a game provides. Only [`Game::load`] is required.
@@ -179,6 +181,35 @@ pub trait Game: Sized + 'static {
     /// Called when the window is minimized or hidden, and when it comes
     /// back.
     fn visible(&mut self, _visible: bool) {}
+
+    /// Called when the player drops a file on the window, with its
+    /// absolute path and where it was dropped, the equivalent of
+    /// `love.filedropped`. Several files dropped together arrive one call
+    /// each.
+    ///
+    /// [`filesystem::read`] and friends take the absolute path as it is.
+    /// The file is not copied anywhere; save what the game needs to keep
+    /// with [`filesystem::write`].
+    ///
+    /// Not every platform reports where a drop happened. Where it is not
+    /// known, `(x, y)` is `(0, 0)`.
+    fn file_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
+
+    /// Called when the player drops a directory on the window, with its
+    /// absolute path and where it was dropped, the equivalent of
+    /// `love.directorydropped`.
+    ///
+    /// To read the files inside it like the game's own, mount it:
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # use smitten::filesystem;
+    /// # fn directory_dropped(path: &Path) {
+    /// filesystem::mount(path, "dropped").expect("the directory can be mounted");
+    /// let names = filesystem::directory_items("dropped");
+    /// # }
+    /// ```
+    fn directory_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
     fn quit(&mut self) -> bool {
@@ -358,6 +389,14 @@ fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
                 pressure,
             }
         }
+        BackendEvent::FileDropped { path, x, y } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::FileDropped { path, x, y }
+        }
+        BackendEvent::DirectoryDropped { path, x, y } => {
+            let (x, y) = view.to_units(x, y);
+            BackendEvent::DirectoryDropped { path, x, y }
+        }
         other => other,
     }
 }
@@ -449,5 +488,7 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::Focus(focused) => game.focus(focused),
         BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
         BackendEvent::Visible(visible) => game.visible(visible),
+        BackendEvent::FileDropped { path, x, y } => game.file_dropped(&path, x, y),
+        BackendEvent::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
     }
 }

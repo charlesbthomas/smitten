@@ -144,6 +144,20 @@ pub enum BackendEvent {
     MouseFocus(bool),
     /// The window was shown, or was hidden or minimized.
     Visible(bool),
+    /// A file was dropped on the window at `(x, y)` in pixels. `path` is
+    /// absolute.
+    FileDropped {
+        path: PathBuf,
+        x: f32,
+        y: f32,
+    },
+    /// A directory was dropped on the window at `(x, y)` in pixels.
+    /// `path` is absolute.
+    DirectoryDropped {
+        path: PathBuf,
+        x: f32,
+        y: f32,
+    },
 }
 
 /// A corner of a triangle, in pixels from the top-left of the drawable.
