@@ -27,6 +27,8 @@ mod stats;
 mod text;
 mod text_object;
 mod transform;
+#[cfg(feature = "video")]
+mod video;
 
 use std::path::Path;
 
@@ -61,6 +63,8 @@ pub use stats::Stats;
 pub use text::{Align, Font, FontError};
 pub use text_object::Text;
 pub use transform::Transform;
+#[cfg(feature = "video")]
+pub use video::{Video, new_video, try_new_video};
 
 /// Whether a shape is filled in or drawn as an outline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1402,6 +1406,22 @@ pub fn draw(image: &Image, x: f32, y: f32) {
 #[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
 pub fn draw_ex(image: &Image, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
     draw_quad_ex(image, &whole_image(image), x, y, r, sx, sy, ox, oy);
+}
+
+/// Draws a video's current picture at `(x, y)`, the equivalent of
+/// `love.graphics.draw(video, x, y)`. Drawing moves the picture on to
+/// the video's position.
+#[cfg(feature = "video")]
+pub fn draw_video(video: &Video, x: f32, y: f32) {
+    draw_video_ex(video, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a video with the full set of `draw` arguments, as [`draw_ex`]
+/// describes.
+#[cfg(feature = "video")]
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
+pub fn draw_video_ex(video: &Video, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
+    draw_ex(video.image(), x, y, r, sx, sy, ox, oy);
 }
 
 /// Draws an image placed by `transform` instead of a position, rotation

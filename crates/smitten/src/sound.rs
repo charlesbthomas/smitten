@@ -5,12 +5,16 @@
 //! samples to draw a waveform or react to loudness, or write them to make
 //! sounds in code, then play them with
 //! [`Source::from_sound_data`](crate::audio::Source::from_sound_data).
+//!
+//! A [`Decoder`] reads a file a piece at a time instead, handing back a
+//! short [`SoundData`] each time, for working through a long sound without
+//! holding all of it.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::audio::AudioError;
-use crate::audio::decode::{Decoded, Decoder};
+use crate::audio::decode::{self, Decoded, Frame};
 
 /// A sound's samples, the equivalent of LÖVE's `SoundData`.
 ///
@@ -45,19 +49,14 @@ impl SoundData {
     /// Decodes the contents of an audio file. Files with more than two
     /// channels keep only their front left and right.
     pub fn from_bytes(bytes: impl Into<Arc<[u8]>>) -> Result<SoundData, AudioError> {
-        let decoded = Decoder::open(bytes.into())
+        let decoded = decode::Decoder::open(bytes.into())
             .map_err(AudioError::Decode)?
             .decode_all();
-        let samples = if decoded.channels == 1 {
-            decoded.frames.iter().map(|frame| frame[0]).collect()
-        } else {
-            decoded.frames.iter().flatten().copied().collect()
-        };
-        Ok(SoundData {
-            samples,
-            rate: decoded.rate,
-            channels: decoded.channels,
-        })
+        Ok(SoundData::from_frames(
+            &decoded.frames,
+            decoded.rate,
+            decoded.channels,
+        ))
     }
 
     /// Samples per second.
@@ -122,6 +121,30 @@ impl SoundData {
         index * usize::from(self.channels) + usize::from(channel)
     }
 
+    /// Wraps samples that are already interleaved.
+    pub(crate) fn from_samples(samples: Vec<f32>, rate: u32, channels: u16) -> SoundData {
+        SoundData {
+            samples,
+            rate,
+            channels,
+        }
+    }
+
+    /// Makes a sound from frames as the decoder gives them, which hold a
+    /// mono sample twice.
+    fn from_frames(frames: &[Frame], rate: u32, channels: u16) -> SoundData {
+        let samples = if channels == 1 {
+            frames.iter().map(|frame| frame[0]).collect()
+        } else {
+            frames.iter().flatten().copied().collect()
+        };
+        SoundData {
+            samples,
+            rate,
+            channels,
+        }
+    }
+
     /// The samples in the form the mixer plays.
     pub(crate) fn to_decoded(&self) -> Decoded {
         let frames = if self.channels == 1 {
@@ -169,10 +192,234 @@ pub fn try_new_sound_data(path: impl AsRef<Path>) -> Result<SoundData, AudioErro
     SoundData::from_bytes(bytes)
 }
 
+/// How many samples per channel a [`Decoder`] made by [`new_decoder`]
+/// hands back at a time. At 44.1 kHz this is about a tenth of a second.
+pub const DEFAULT_DECODER_BUFFER_SIZE: usize = 4_096;
+
+/// Reads a sound file a piece at a time, the equivalent of LÖVE's
+/// `Decoder`.
+///
+/// Each call to [`Decoder::decode`] returns the next piece as a
+/// [`SoundData`], which suits analysing a long sound or feeding a
+/// [queueable source](crate::audio::new_queueable_source) with sound that
+/// has been changed on the way.
+pub struct Decoder {
+    bytes: Arc<[u8]>,
+    inner: decode::Decoder,
+    buffer_size: usize,
+    /// Frames decoded but not handed back yet.
+    pending: Vec<Frame>,
+    /// Frames still to throw away, to reach a seek target in a file that
+    /// cannot seek.
+    discard: u64,
+    /// The index of the next frame `decode` hands back.
+    position: u64,
+    ended: bool,
+}
+
+impl Decoder {
+    /// Starts reading the contents of an audio file. Each piece is
+    /// `buffer_size` samples per channel long, apart from the last.
+    ///
+    /// Note that LÖVE measures the buffer in bytes instead.
+    pub fn from_bytes(
+        bytes: impl Into<Arc<[u8]>>,
+        buffer_size: usize,
+    ) -> Result<Decoder, AudioError> {
+        let bytes = bytes.into();
+        let inner = decode::Decoder::open(bytes.clone()).map_err(AudioError::Decode)?;
+        Ok(Decoder {
+            bytes,
+            inner,
+            buffer_size: buffer_size.max(1),
+            pending: Vec::new(),
+            discard: 0,
+            position: 0,
+            ended: false,
+        })
+    }
+
+    /// Returns the next piece of the sound, or `None` once it has all been
+    /// read.
+    pub fn decode(&mut self) -> Option<SoundData> {
+        while self.pending.len() < self.buffer_size && !self.ended {
+            let before = self.pending.len();
+            if !self.inner.decode_next(&mut self.pending) {
+                self.ended = true;
+            }
+            let fresh = (self.pending.len() - before) as u64;
+            let thrown = fresh.min(self.discard);
+            self.pending.drain(before..before + thrown as usize);
+            self.discard -= thrown;
+        }
+        if self.pending.is_empty() {
+            return None;
+        }
+        let take = self.pending.len().min(self.buffer_size);
+        let piece =
+            SoundData::from_frames(&self.pending[..take], self.rate(), self.channel_count());
+        self.pending.drain(..take);
+        self.position += take as u64;
+        Some(piece)
+    }
+
+    /// Moves to `seconds` from the start, so the next piece begins there.
+    pub fn seek(&mut self, seconds: f64) {
+        let frame = (seconds.max(0.0) * f64::from(self.rate())).floor() as u64;
+        self.pending.clear();
+        self.ended = false;
+        self.discard = 0;
+        if !self.inner.seek(frame) {
+            // Not seekable: read forward from the start instead.
+            if let Ok(inner) = decode::Decoder::open(self.bytes.clone()) {
+                self.inner = inner;
+                self.discard = frame;
+            }
+        }
+        self.position = frame;
+    }
+
+    /// Goes back to the start of the sound.
+    pub fn rewind(&mut self) {
+        self.seek(0.0);
+    }
+
+    /// Where the next piece starts, in seconds from the start.
+    pub fn tell(&self) -> f64 {
+        self.position as f64 / f64::from(self.rate())
+    }
+
+    /// Samples per second.
+    pub fn rate(&self) -> u32 {
+        self.inner.rate()
+    }
+
+    /// 1 for mono or 2 for stereo. Files with more channels count as
+    /// stereo, since only their front left and right are kept.
+    pub fn channel_count(&self) -> u16 {
+        self.inner.channels()
+    }
+
+    /// How many samples per channel each piece holds.
+    pub fn buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+
+    /// The length in seconds, when the file states it.
+    pub fn duration(&self) -> Option<f64> {
+        let frames = self.inner.total_frames()?;
+        Some(frames as f64 / f64::from(self.rate()))
+    }
+
+    /// The file being read, for starting a source that plays it.
+    pub(crate) fn bytes(&self) -> &Arc<[u8]> {
+        &self.bytes
+    }
+}
+
+impl Clone for Decoder {
+    /// Makes a decoder for the same file, back at its start, as
+    /// `Decoder:clone` does in LÖVE.
+    fn clone(&self) -> Self {
+        Decoder::from_bytes(self.bytes.clone(), self.buffer_size)
+            .expect("a sound that opened once can be opened again")
+    }
+}
+
+impl std::fmt::Debug for Decoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Decoder")
+            .field("rate", &self.rate())
+            .field("channels", &self.channel_count())
+            .field("buffer_size", &self.buffer_size)
+            .field("position", &self.position)
+            .finish()
+    }
+}
+
+/// Opens a sound file for reading a piece at a time, the equivalent of
+/// `love.sound.newDecoder(path, bufferSize)`. Each piece is `buffer_size`
+/// samples per channel, such as [`DEFAULT_DECODER_BUFFER_SIZE`].
+///
+/// A relative path is looked up as [`crate::filesystem`] describes. Panics
+/// with the file name if it cannot be opened; use [`try_new_decoder`] to
+/// handle the failure instead.
+pub fn new_decoder(path: impl AsRef<Path>, buffer_size: usize) -> Decoder {
+    let path = path.as_ref();
+    try_new_decoder(path, buffer_size).unwrap_or_else(|error| match error {
+        AudioError::Decode(message) => {
+            panic!("could not load sound {}: {message}", path.display())
+        }
+        error => panic!("{error}"),
+    })
+}
+
+/// Opens a sound file for reading a piece at a time, returning an error
+/// if it fails.
+pub fn try_new_decoder(path: impl AsRef<Path>, buffer_size: usize) -> Result<Decoder, AudioError> {
+    let path = path.as_ref();
+    let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Decoder::from_bytes(bytes, buffer_size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::decode::tests::wav;
+    use crate::audio::decode::tests::{ramp, wav};
+
+    #[test]
+    fn a_decoder_hands_back_pieces_of_the_buffer_size() {
+        let file = wav(22_050, 1, &ramp(10_000));
+        let whole = SoundData::from_bytes(file.clone()).unwrap();
+        let mut decoder = Decoder::from_bytes(file, 3_000).unwrap();
+        assert_eq!(decoder.rate(), 22_050);
+        assert_eq!(decoder.channel_count(), 1);
+        assert!((decoder.duration().unwrap() - 10_000.0 / 22_050.0).abs() < 1e-9);
+
+        let mut lengths = Vec::new();
+        let mut samples = Vec::new();
+        while let Some(piece) = decoder.decode() {
+            lengths.push(piece.sample_count());
+            samples.extend_from_slice(piece.samples());
+        }
+        assert_eq!(lengths, [3_000, 3_000, 3_000, 1_000]);
+        assert_eq!(samples, whole.samples());
+        assert!(decoder.decode().is_none());
+        assert!((decoder.tell() - 10_000.0 / 22_050.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_decoder_seeks_and_rewinds() {
+        let file = wav(10_000, 1, &ramp(10_000));
+        let whole = SoundData::from_bytes(file.clone()).unwrap();
+        let mut decoder = Decoder::from_bytes(file, 500).unwrap();
+        decoder.seek(0.25);
+        assert!((decoder.tell() - 0.25).abs() < 1e-9);
+        let piece = decoder.decode().unwrap();
+        assert_eq!(piece.samples(), &whole.samples()[2_500..3_000]);
+
+        decoder.rewind();
+        let piece = decoder.decode().unwrap();
+        assert_eq!(piece.samples(), &whole.samples()[..500]);
+
+        // A clone starts again from the beginning.
+        decoder.decode();
+        let mut copy = decoder.clone();
+        assert_eq!(copy.decode().unwrap().samples(), &whole.samples()[..500]);
+    }
+
+    #[test]
+    fn a_stereo_decoder_keeps_both_channels() {
+        let mut decoder =
+            Decoder::from_bytes(wav(8_000, 2, &[16_384, -16_384, 0, 8_192]), 10).unwrap();
+        let piece = decoder.decode().unwrap();
+        assert_eq!(piece.channel_count(), 2);
+        assert_eq!(piece.sample_count(), 2);
+        assert!(piece.sample(0, 0) > 0.4 && piece.sample(0, 1) < -0.4);
+    }
 
     #[test]
     fn a_mono_file_keeps_one_channel() {

@@ -7,7 +7,7 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["sdl-from-source", "physics"]
+default = ["sdl-from-source", "physics", "video"]
 # Build SDL3 from source with CMake so `cargo run` needs no system SDL install.
 # Turn this off to link against an SDL3 that is already installed.
 sdl-from-source = ["smitten-sdl/from-source"]
@@ -17,6 +17,9 @@ sdl-static = ["smitten-sdl/static"]
 # The `physics` module. Turn it off to leave the Rapier engine out of a
 # game that does not use it.
 physics = ["dep:rapier2d"]
+# The `video` module and `graphics::Video`. Turn it off to leave the
+# Theora decoder out of a game that plays no video.
+video = ["dep:theora-rs", "dep:ogg"]
 
 [dependencies]
 smitten-core.workspace = true
@@ -26,3 +29,6 @@ fontdue = "0.9"
 symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "mp3", "flac"] }
 rapier2d = { version = "0.36.1", optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Pinned: a young crate, checked to decode the same pixels as FFmpeg.
+theora-rs = { version = "=0.1.0", optional = true }
+ogg = { version = "0.9", optional = true }

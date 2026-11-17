@@ -397,6 +397,18 @@ pub const AUDIO_SAMPLE_RATE: u32 = 48_000;
 /// Backends call this from an audio thread, so it must not block for long.
 pub type AudioFill = Box<dyn FnMut(&mut [f32]) + Send>;
 
+/// Takes audio a recording device has captured: interleaved samples from
+/// -1.0 to 1.0, at the rate and channel count asked for in
+/// [`Backend::start_recording`].
+///
+/// Backends call this from an audio thread, so it must not block for long.
+pub type RecordingSink = Box<dyn FnMut(&[f32]) + Send>;
+
+/// Names a microphone or other recording device. Stays the same while
+/// the device is connected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RecordingDeviceId(pub u32);
+
 /// What a platform must provide for Smitten to run on it.
 pub trait Backend {
     /// Returns the next pending event, if any, without blocking.
@@ -542,6 +554,26 @@ pub trait Backend {
     ///
     /// An error means the game runs without sound, which is not fatal.
     fn start_audio(&mut self, fill: AudioFill) -> Result<(), String>;
+
+    /// The recording devices, such as microphones, with their names, in
+    /// the order the system lists them.
+    fn recording_devices(&mut self) -> Vec<(RecordingDeviceId, String)>;
+
+    /// Starts recording from `device` at `rate` samples per second with
+    /// `channels` channels, 1 or 2, handing what it hears to `sink` as it
+    /// arrives. Recording again from a device that is already recording
+    /// replaces the earlier recording.
+    fn start_recording(
+        &mut self,
+        device: RecordingDeviceId,
+        rate: u32,
+        channels: u16,
+        sink: RecordingSink,
+    ) -> Result<(), String>;
+
+    /// Stops recording from `device`. Once this returns, its sink is no
+    /// longer called. Does nothing if it is not recording.
+    fn stop_recording(&mut self, device: RecordingDeviceId);
 
     /// Returns a directory the game may write to, creating it if needed.
     ///

@@ -44,6 +44,8 @@ pub mod sound;
 pub mod system;
 pub mod timer;
 pub mod touch;
+#[cfg(feature = "video")]
+pub mod video;
 pub mod window;
 
 pub use joystick::Joystick;

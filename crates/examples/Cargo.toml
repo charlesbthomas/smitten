@@ -14,4 +14,4 @@ sdl-from-source = ["smitten/sdl-from-source"]
 sdl-static = ["smitten/sdl-static"]
 
 [dependencies]
-smitten = { path = "../smitten", default-features = false, features = ["physics"] }
+smitten = { path = "../smitten", default-features = false, features = ["physics", "video"] }
