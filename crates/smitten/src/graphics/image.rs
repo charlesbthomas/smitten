@@ -256,6 +256,15 @@ impl Image {
         self.inner.texture.get()
     }
 
+    /// Records that the texture was made with `levels` mipmap levels,
+    /// blended as a new image's are.
+    pub(crate) fn mark_mipmapped(&self, levels: u32) {
+        self.inner.mipmap_count.set(levels);
+        if levels > 1 {
+            self.inner.mipmap_filter.set(Some((Filter::Linear, 0.0)));
+        }
+    }
+
     pub(crate) fn keep_alive(&self) -> Rc<dyn std::any::Any> {
         self.inner.clone()
     }

@@ -68,6 +68,9 @@ struct Texture {
     /// Whether the pixels are compressed, which means they cannot be
     /// replaced.
     compressed: bool,
+    /// Whether a render target's mipmaps are made again after each run of
+    /// passes that draws to it.
+    auto_mipmaps: bool,
 }
 
 /// How a texture with mipmaps blends between them.
@@ -270,6 +273,7 @@ impl Renderer {
                 mipmaps,
                 kind: TextureKind::Flat,
                 compressed: false,
+                auto_mipmaps: false,
             },
         );
         Ok(TextureId(id))
@@ -376,6 +380,7 @@ impl Renderer {
                 mipmaps,
                 kind: TextureKind::Flat,
                 compressed: true,
+                auto_mipmaps: false,
             },
         );
         Ok(TextureId(id))
@@ -426,14 +431,35 @@ impl Renderer {
                 mipmaps: None,
                 kind,
                 compressed: false,
+                auto_mipmaps: false,
             },
         );
         Ok(TextureId(id))
     }
 
-    pub fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
+    /// Creates a render target, with a full chain of mipmaps unless
+    /// `mipmaps` is `None`. `Some(true)` makes them again whenever the
+    /// target has been drawn to.
+    pub fn create_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        mipmaps: Option<bool>,
+    ) -> Result<TextureId, String> {
         if width == 0 || height == 0 {
             return Err("a canvas must be at least 1x1 pixels".to_string());
+        }
+        let levels = if mipmaps.is_some() {
+            mipmap_levels(width, height)
+        } else {
+            1
+        };
+        let blend = mipmaps.is_some().then_some(Mipmaps {
+            filter: Filter::Linear,
+            sharpness: 0f32.to_bits(),
+        });
+        if let Some(blend) = blend {
+            self.ensure_samplers((Wrap::Clamp, Wrap::Clamp), Some(blend))?;
         }
         // SAFETY: the device is alive, and the passes are begun, ended and
         // submitted in the order SDL requires.
@@ -447,7 +473,7 @@ impl Renderer {
                     width,
                     height,
                     layer_count_or_depth: 1,
-                    num_levels: 1,
+                    num_levels: levels,
                     sample_count: SDL_GPU_SAMPLECOUNT_1,
                     ..Default::default()
                 },
@@ -468,6 +494,10 @@ impl Renderer {
                 if !pass.is_null() {
                     SDL_EndGPURenderPass(pass);
                 }
+                // The smaller levels start out transparent too.
+                if levels > 1 {
+                    SDL_GenerateMipmapsForGPUTexture(commands, handle);
+                }
                 SDL_SubmitGPUCommandBuffer(commands);
             }
             handle
@@ -484,11 +514,12 @@ impl Renderer {
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: u64::from(width) * u64::from(height) * 4,
-                levels: 1,
-                mipmaps: None,
+                bytes: mipmap_bytes(width, height, levels),
+                levels,
+                mipmaps: blend,
                 kind: TextureKind::Flat,
                 compressed: false,
+                auto_mipmaps: mipmaps == Some(true),
             },
         );
         Ok(TextureId(id))
@@ -602,6 +633,18 @@ impl Renderer {
     }
 
     /// The GPU memory taken by every texture the game holds, in bytes.
+    /// Makes a render target's mipmaps again from what it holds now.
+    pub fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {
+        let Some(&target) = self.textures.get(&texture.0) else {
+            return Err("the texture no longer exists".to_string());
+        };
+        if target.levels <= 1 || !target.is_target {
+            return Err("only a canvas made with mipmaps can make them".to_string());
+        }
+        // SAFETY: the texture is alive and was made to be drawn to.
+        unsafe { generate_mipmaps(self.device, target.handle) }
+    }
+
     pub fn texture_memory(&self) -> u64 {
         self.textures.values().map(|texture| texture.bytes).sum()
     }
@@ -1035,7 +1078,7 @@ impl Renderer {
                 self.resize_screen_stencil(screen_width, screen_height);
             }
 
-            for pass in frame.passes {
+            for (index, pass) in frame.passes.iter().enumerate() {
                 // A pass whose target is gone, or is not there to draw on
                 // this frame, is skipped.
                 // New stencil memory holds garbage, so its first pass
@@ -1118,6 +1161,18 @@ impl Renderer {
                     );
                 }
                 SDL_EndGPURenderPass(render_pass);
+                // A target that keeps its mipmaps up to date makes them
+                // once the passes drawing to it in a row are done.
+                if let Some(id) = pass.target
+                    && frame
+                        .passes
+                        .get(index + 1)
+                        .is_none_or(|next| next.target != pass.target)
+                    && let Some(target) = self.textures.get(&id.0)
+                    && target.auto_mipmaps
+                {
+                    SDL_GenerateMipmapsForGPUTexture(commands, target.handle);
+                }
             }
 
             SDL_SubmitGPUCommandBuffer(commands);

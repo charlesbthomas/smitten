@@ -46,7 +46,7 @@ pub(crate) mod reloading {
     pub(crate) use super::text::{Inner as FontInner, reload as reload_font};
 }
 
-pub use canvas::Canvas;
+pub use canvas::{Canvas, MipmapMode};
 pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
@@ -154,7 +154,15 @@ impl GraphicsState {
             && self.surface.is_none()
         {
             // If the GPU refuses, the game draws straight to the window.
-            self.surface = Canvas::create(backend, width, height, 1.0, Filter::Nearest).ok();
+            self.surface = Canvas::create(
+                backend,
+                width,
+                height,
+                1.0,
+                Filter::Nearest,
+                MipmapMode::None,
+            )
+            .ok();
         }
         if self.surface.is_some() {
             // The window itself only shows the surface, between black bars.

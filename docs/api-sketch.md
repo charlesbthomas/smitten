@@ -218,7 +218,8 @@ fn main() {
 | `love.graphics.setColorMask(r, g, b, a)` / `getColorMask()` | `graphics::set_color_mask(r, g, b, a)` / `graphics::color_mask()` | Booleans. Clearing ignores the mask. |
 | `love.graphics.setWireframe(true)` / `isWireframe()` | `graphics::set_wireframe(true)` / `graphics::is_wireframe()` | Triangle edges, one pixel wide. |
 | `love.graphics.getStats()` | `graphics::stats()` | A `Stats` struct with LÖVE's fields in `snake_case`. Draw counts start from zero each frame. |
-| `love.graphics.newImage(path, {mipmaps = true})` | `graphics::new_image_with(path, ImageSettings { mipmaps: true })` | Also `Image::from_rgba_with` and `Image::from_image_data_with`. Hot reloading keeps the mipmaps. Canvases cannot have mipmaps yet. |
+| `love.graphics.newImage(path, {mipmaps = true})` | `graphics::new_image_with(path, ImageSettings { mipmaps: true })` | Also `Image::from_rgba_with` and `Image::from_image_data_with`. Hot reloading keeps the mipmaps. |
+| `love.graphics.newCanvas(w, h, {mipmaps = "auto"})` / `canvas:generateMipmaps()` | `Canvas::with_mipmaps(w, h, MipmapMode::Auto)` / `canvas.generate_mipmaps()` | `Auto` makes them again each frame the canvas is drawn to; `Manual` only when asked. |
 | `image:setMipmapFilter("linear", sharpness)` / `getMipmapFilter()` / `getMipmapCount()` | `image.set_mipmap_filter(Some(Filter::Linear), sharpness)` / `mipmap_filter()` / `mipmap_count()` | `None` turns them off. Starts out `Linear` with a sharpness of 0. |
 | `love.graphics.newArrayImage({path1, path2})` | `graphics::new_array_image(&[path1, path2])` | `ArrayImage::from_image_data` takes `ImageData` layers. Every layer must be the same size. |
 | `love.graphics.drawLayer(array, layer, x, y)` | `graphics::draw_layer(&array, layer, x, y)` | Layers count from 0. `draw_layer_ex` and `draw_layer_quad_with` take the other forms. Not with a custom shader active: send the array to the shader instead. |

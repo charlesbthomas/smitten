@@ -502,7 +502,21 @@ impl Backend for SdlBackend {
     }
 
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
-        self.renderer.create_render_target(width, height)
+        self.renderer.create_render_target(width, height, None)
+    }
+
+    fn create_mipmapped_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        automatic: bool,
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_render_target(width, height, Some(automatic))
+    }
+
+    fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {
+        self.renderer.generate_mipmaps(texture)
     }
 
     fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap) {

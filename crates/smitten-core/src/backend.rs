@@ -463,6 +463,22 @@ pub trait Backend {
     /// transparent, and keeps its contents between frames.
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String>;
 
+    /// As `create_render_target`, with a full chain of mipmaps that start
+    /// out blended as those of `create_mipmapped_texture` do. With
+    /// `automatic`, the mipmaps are made again whenever a frame has drawn
+    /// to the target; otherwise only by `generate_mipmaps`.
+    fn create_mipmapped_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        automatic: bool,
+    ) -> Result<TextureId, String>;
+
+    /// Makes a render target's mipmaps again from what it holds. Draws
+    /// still waiting in a frame are not included, so the caller renders
+    /// them first.
+    fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String>;
+
     /// Sets what a texture shows beyond its edges, along each axis. It
     /// applies to everything drawn with the texture from this frame on.
     fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap);
