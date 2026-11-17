@@ -22,8 +22,9 @@ use smitten_core::backend::{
     RecordingSink, ShaderId, ShaderInfo, TextureId, TextureKind,
 };
 use smitten_core::{
-    Config, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickId, Key,
-    MessageBoxKind, MouseButton, PowerInfo, PowerState, TouchId, WindowState, Wrap,
+    Config, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
+    JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, PowerState, TouchId,
+    WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -37,6 +38,8 @@ pub struct SdlBackend {
     /// Opened gamepads by SDL joystick id. SDL only reports input from
     /// gamepads that are open.
     gamepads: HashMap<u32, *mut SDL_Gamepad>,
+    /// Every opened joystick by SDL joystick id, gamepads included.
+    joysticks: HashMap<u32, *mut SDL_Joystick>,
     /// Present once `start_audio` has succeeded. Dropping it stops playback.
     audio: Option<audio::AudioOutput>,
     /// The recording devices that are capturing.
@@ -165,6 +168,7 @@ impl SdlBackend {
                 device,
                 renderer: ManuallyDrop::new(renderer),
                 gamepads: HashMap::new(),
+                joysticks: HashMap::new(),
                 audio: None,
                 recordings: HashMap::new(),
                 audio_subsystem: None,
@@ -190,6 +194,9 @@ impl Drop for SdlBackend {
             self.audio_subsystem = None;
             for (_, gamepad) in self.gamepads.drain() {
                 SDL_CloseGamepad(gamepad);
+            }
+            for (_, joystick) in self.joysticks.drain() {
+                SDL_CloseJoystick(joystick);
             }
             for (_, cursor) in self.image_cursors.drain() {
                 SDL_DestroyCursor(cursor);
@@ -819,6 +826,120 @@ impl Backend for SdlBackend {
         unsafe { SDL_FlashWindow(self.window, operation) };
     }
 
+    fn layout_key(&self, key: Key) -> Option<Key> {
+        // SAFETY: a plain lookup in SDL's current keymap.
+        let keycode =
+            unsafe { SDL_GetKeyFromScancode(scancode_from_key(key), SDL_KMOD_NONE, false) };
+        key_from_keycode(keycode)
+    }
+
+    fn layout_position(&self, key: Key) -> Option<Key> {
+        // SAFETY: a plain lookup in SDL's current keymap. A null modifier
+        // pointer is allowed and means the result's modifiers are unwanted.
+        let scancode = unsafe { SDL_GetScancodeFromKey(keycode_from_key(key), ptr::null_mut()) };
+        key_from_scancode(scancode)
+    }
+
+    fn set_text_input(&mut self, enabled: bool) -> Result<(), String> {
+        // SAFETY: the window is alive.
+        let done = unsafe {
+            if enabled {
+                SDL_StartTextInput(self.window)
+            } else {
+                SDL_StopTextInput(self.window)
+            }
+        };
+        if done { Ok(()) } else { Err(sdl_error()) }
+    }
+
+    fn set_text_input_area(&mut self, area: Option<[f32; 4]>) -> Result<(), String> {
+        // SDL wants window coordinates; Smitten works in pixels.
+        let scale = self.pixel_density();
+        let rect = area.map(|[x, y, width, height]| SDL_Rect {
+            x: (x / scale).round() as i32,
+            y: (y / scale).round() as i32,
+            w: (width / scale).round() as i32,
+            h: (height / scale).round() as i32,
+        });
+        let rect_ptr = rect
+            .as_ref()
+            .map_or(ptr::null(), |rect| rect as *const SDL_Rect);
+        // SAFETY: the window is alive and the rectangle, if any, outlives
+        // the call. SDL copies it.
+        if unsafe { SDL_SetTextInputArea(self.window, rect_ptr, 0) } {
+            Ok(())
+        } else {
+            Err(sdl_error())
+        }
+    }
+
+    fn text_input_active(&self) -> bool {
+        // SAFETY: the window is alive.
+        unsafe { SDL_TextInputActive(self.window) }
+    }
+
+    fn has_screen_keyboard(&self) -> bool {
+        // SAFETY: a plain query.
+        unsafe { SDL_HasScreenKeyboardSupport() }
+    }
+
+    fn cursor_supported(&self) -> bool {
+        // Phones and tablets have no cursor to change.
+        !cfg!(any(target_os = "android", target_os = "ios"))
+    }
+
+    fn is_gamepad(&self, id: JoystickId) -> bool {
+        // SAFETY: a plain query; an unknown id gives false.
+        self.gamepads.contains_key(&id.0) || unsafe { SDL_IsGamepad(SDL_JoystickID(id.0)) }
+    }
+
+    fn add_gamepad_mappings(&mut self, mappings: &str) -> Result<usize, String> {
+        // SAFETY: SDL_GetPlatform returns a constant string.
+        let platform = unsafe { CStr::from_ptr(SDL_GetPlatform()) }.to_string_lossy();
+        let mut added = 0;
+        let mut first_error = None;
+        for line in mappings.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            // SDL's own file loader skips lines without a platform, which
+            // would drop a single mapping written by hand, so lines are
+            // added one at a time and only other platforms are skipped.
+            let for_platform = line
+                .split(',')
+                .find_map(|field| field.trim().strip_prefix("platform:"));
+            if for_platform.is_some_and(|other| !other.eq_ignore_ascii_case(&platform)) {
+                continue;
+            }
+            let line = c_string(line);
+            // SAFETY: the string outlives the call, and SDL copies it.
+            if unsafe { SDL_AddGamepadMapping(line.as_ptr()) } >= 0 {
+                added += 1;
+            } else if first_error.is_none() {
+                first_error = Some(sdl_error());
+            }
+        }
+        match first_error {
+            Some(message) if added == 0 => Err(message),
+            _ => Ok(added),
+        }
+    }
+
+    fn gamepad_mapping(&self, guid: &str) -> Option<String> {
+        let guid = c_string(guid);
+        // SAFETY: the GUID string outlives the call, and the mapping SDL
+        // returns is copied and then freed once.
+        unsafe {
+            let mapping = SDL_GetGamepadMappingForGUID(SDL_StringToGUID(guid.as_ptr()));
+            if mapping.is_null() {
+                return None;
+            }
+            let text = CStr::from_ptr(mapping).to_string_lossy().into_owned();
+            SDL_free(mapping.cast());
+            Some(text)
+        }
+    }
+
     fn gamepad_can_rumble(&self, id: JoystickId) -> bool {
         let Some(&gamepad) = self.gamepads.get(&id.0) else {
             return false;
@@ -1003,6 +1124,16 @@ impl SdlBackend {
                 }
                 let text = CStr::from_ptr(event.text.text).to_string_lossy();
                 Some(BackendEvent::TextInput(text.into_owned()))
+            } else if kind == SDL_EVENT_TEXT_EDITING {
+                if event.edit.text.is_null() {
+                    return None;
+                }
+                let text = CStr::from_ptr(event.edit.text).to_string_lossy();
+                Some(BackendEvent::TextEdited {
+                    text: text.into_owned(),
+                    start: event.edit.start.max(0) as usize,
+                    length: event.edit.length.max(0) as usize,
+                })
             } else if kind == SDL_EVENT_MOUSE_MOTION {
                 // SDL reports window coordinates; Smitten works in pixels.
                 let scale = self.pixel_density();
@@ -1087,32 +1218,69 @@ impl SdlBackend {
                         pressure,
                     }
                 })
-            } else if kind == SDL_EVENT_GAMEPAD_ADDED {
-                let which = event.gdevice.which;
-                if self.gamepads.contains_key(&which.0) {
+            } else if kind == SDL_EVENT_JOYSTICK_ADDED {
+                let which = event.jdevice.which;
+                if self.joysticks.contains_key(&which.0) {
                     return None;
                 }
-                let gamepad = SDL_OpenGamepad(which);
-                if gamepad.is_null() {
+                let joystick = SDL_OpenJoystick(which);
+                if joystick.is_null() {
                     return None;
                 }
-                self.gamepads.insert(which.0, gamepad);
-                let name = SDL_GetGamepadName(gamepad);
-                let name = if name.is_null() {
-                    "Gamepad".to_string()
-                } else {
-                    CStr::from_ptr(name).to_string_lossy().into_owned()
-                };
+                self.joysticks.insert(which.0, joystick);
                 Some(BackendEvent::JoystickAdded {
                     id: JoystickId(which.0),
-                    name,
+                    info: joystick_info(joystick),
                 })
-            } else if kind == SDL_EVENT_GAMEPAD_REMOVED {
-                let which = event.gdevice.which;
-                let gamepad = self.gamepads.remove(&which.0)?;
-                SDL_CloseGamepad(gamepad);
+            } else if kind == SDL_EVENT_JOYSTICK_REMOVED {
+                let which = event.jdevice.which;
+                if let Some(gamepad) = self.gamepads.remove(&which.0) {
+                    SDL_CloseGamepad(gamepad);
+                }
+                let joystick = self.joysticks.remove(&which.0)?;
+                SDL_CloseJoystick(joystick);
                 Some(BackendEvent::JoystickRemoved {
                     id: JoystickId(which.0),
+                })
+            } else if kind == SDL_EVENT_GAMEPAD_ADDED {
+                // This follows the joystick's own event, and also comes
+                // when a new mapping turns a joystick into a gamepad. The
+                // gamepad must be open for SDL to report its buttons.
+                let which = event.gdevice.which;
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.gamepads.entry(which.0)
+                {
+                    let gamepad = SDL_OpenGamepad(which);
+                    if !gamepad.is_null() {
+                        entry.insert(gamepad);
+                    }
+                }
+                None
+            } else if kind == SDL_EVENT_GAMEPAD_REMOVED {
+                if let Some(gamepad) = self.gamepads.remove(&event.gdevice.which.0) {
+                    SDL_CloseGamepad(gamepad);
+                }
+                None
+            } else if kind == SDL_EVENT_JOYSTICK_BUTTON_DOWN || kind == SDL_EVENT_JOYSTICK_BUTTON_UP
+            {
+                let id = JoystickId(event.jbutton.which.0);
+                let button = usize::from(event.jbutton.button);
+                Some(if event.jbutton.down {
+                    BackendEvent::JoystickPressed { id, button }
+                } else {
+                    BackendEvent::JoystickReleased { id, button }
+                })
+            } else if kind == SDL_EVENT_JOYSTICK_AXIS_MOTION {
+                Some(BackendEvent::JoystickAxis {
+                    id: JoystickId(event.jaxis.which.0),
+                    axis: usize::from(event.jaxis.axis),
+                    value: (f32::from(event.jaxis.value) / 32767.0).clamp(-1.0, 1.0),
+                })
+            } else if kind == SDL_EVENT_JOYSTICK_HAT_MOTION {
+                Some(BackendEvent::JoystickHat {
+                    id: JoystickId(event.jhat.which.0),
+                    hat: usize::from(event.jhat.hat),
+                    direction: JoystickHat::from_bits(event.jhat.value),
                 })
             } else if kind == SDL_EVENT_GAMEPAD_BUTTON_DOWN || kind == SDL_EVENT_GAMEPAD_BUTTON_UP {
                 let id = JoystickId(event.gbutton.which.0);
@@ -1232,6 +1400,101 @@ fn gamepad_axis(axis: u8) -> Option<GamepadAxis> {
     .iter()
     .find(|(sdl, _)| sdl.0 == axis)
     .map(|&(_, axis)| axis)
+}
+
+/// Reads what SDL knows about an open joystick.
+///
+/// # Safety
+/// `joystick` must be open.
+unsafe fn joystick_info(joystick: *mut SDL_Joystick) -> JoystickInfo {
+    // SAFETY: the joystick is open, the name SDL returns is copied before
+    // anything else can change it, and the GUID buffer is large enough for
+    // 32 hex digits and a NUL as SDL documents.
+    unsafe {
+        let name = SDL_GetJoystickName(joystick);
+        let name = if name.is_null() {
+            "Joystick".to_string()
+        } else {
+            CStr::from_ptr(name).to_string_lossy().into_owned()
+        };
+        let mut guid = [0 as std::ffi::c_char; 33];
+        SDL_GUIDToString(
+            SDL_GetJoystickGUID(joystick),
+            guid.as_mut_ptr(),
+            guid.len() as i32,
+        );
+        let guid = CStr::from_ptr(guid.as_ptr()).to_string_lossy().into_owned();
+        let count = |n: i32| usize::try_from(n).unwrap_or(0);
+        JoystickInfo {
+            name,
+            guid,
+            vendor_id: SDL_GetJoystickVendor(joystick),
+            product_id: SDL_GetJoystickProduct(joystick),
+            product_version: SDL_GetJoystickProductVersion(joystick),
+            axis_count: count(SDL_GetNumJoystickAxes(joystick)),
+            button_count: count(SDL_GetNumJoystickButtons(joystick)),
+            hat_count: count(SDL_GetNumJoystickHats(joystick)),
+        }
+    }
+}
+
+/// Every key Smitten names, with its SDL scancode.
+fn all_keys() -> impl Iterator<Item = (SDL_Scancode, Key)> {
+    (0..SDL_SCANCODE_COUNT.0)
+        .map(SDL_Scancode)
+        .filter_map(|scancode| Some((scancode, key_from_scancode(scancode)?)))
+}
+
+fn scancode_from_key(key: Key) -> SDL_Scancode {
+    all_keys()
+        .find(|&(_, known)| known == key)
+        .map_or(SDL_SCANCODE_UNKNOWN, |(scancode, _)| scancode)
+}
+
+/// The keycode a US layout gives the key. Keys that type a character use
+/// that character, lowercase; the rest use their scancode with SDL's
+/// scancode bit set.
+fn keycode_from_key(key: Key) -> SDL_Keycode {
+    use Key::*;
+    let character = match key {
+        A | B | C | D | E | F | G | H | I | J | K | L | M | N | O | P | Q | R | S | T | U | V
+        | W | X | Y | Z => Some(b'a' + (scancode_from_key(key).0 - SDL_SCANCODE_A.0) as u8),
+        Num0 => Some(b'0'),
+        Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
+            Some(b'1' + (scancode_from_key(key).0 - SDL_SCANCODE_1.0) as u8)
+        }
+        Space => Some(b' '),
+        Return => Some(b'\r'),
+        Escape => Some(0x1b),
+        Tab => Some(b'\t'),
+        Backspace => Some(0x08),
+        Delete => Some(0x7f),
+        Minus => Some(b'-'),
+        Equals => Some(b'='),
+        LeftBracket => Some(b'['),
+        RightBracket => Some(b']'),
+        Backslash => Some(b'\\'),
+        Semicolon => Some(b';'),
+        Apostrophe => Some(b'\''),
+        Grave => Some(b'`'),
+        Comma => Some(b','),
+        Period => Some(b'.'),
+        Slash => Some(b'/'),
+        _ => None,
+    };
+    match character {
+        Some(character) => SDL_Keycode(u32::from(character)),
+        None => SDL_Keycode(scancode_from_key(key).0 as u32 | SDLK_SCANCODE_MASK.0),
+    }
+}
+
+fn key_from_keycode(keycode: SDL_Keycode) -> Option<Key> {
+    if keycode.0 == 0 {
+        return None;
+    }
+    all_keys()
+        .map(|(_, key)| key)
+        .find(|&key| keycode_from_key(key) == keycode)
 }
 
 fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {

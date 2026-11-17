@@ -27,6 +27,7 @@
 
 mod context;
 mod error;
+mod gamepad_mapping;
 mod input;
 mod reload;
 
@@ -51,7 +52,8 @@ pub mod window;
 pub use joystick::Joystick;
 pub use smitten_core::{
     BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
-    GamepadButton, Key, MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
+    GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton,
+    Scaling, StencilAction, TouchId, Wrap,
 };
 
 use std::path::Path;
@@ -81,6 +83,13 @@ pub trait Game: Sized + 'static {
     /// input method have been applied. Use this for text fields, and
     /// `key_pressed` for controls.
     fn text_input(&mut self, _text: &str) {}
+
+    /// Called while an input method is composing text that has not been
+    /// typed yet, as for Chinese or Japanese. `start` and `length` select
+    /// the part being edited, counted in characters. A game showing a text
+    /// box can draw `text` at the cursor until [`Game::text_input`] brings
+    /// the finished text.
+    fn text_edited(&mut self, _text: &str, _start: usize, _length: usize) {}
 
     /// Called when the pointer moves to `(x, y)`, having moved `(dx, dy)`.
     fn mouse_moved(&mut self, _x: f32, _y: f32, _dx: f32, _dy: f32) {}
@@ -129,11 +138,11 @@ pub trait Game: Sized + 'static {
     ) {
     }
 
-    /// Called when a gamepad is plugged in, and once at startup for each
-    /// gamepad that was already connected.
+    /// Called when a joystick or gamepad is plugged in, and once at
+    /// startup for each one that was already connected.
     fn joystick_added(&mut self, _joystick: Joystick) {}
 
-    /// Called when a gamepad is unplugged.
+    /// Called when a joystick or gamepad is unplugged.
     fn joystick_removed(&mut self, _joystick: Joystick) {}
 
     /// Called when a gamepad button goes down.
@@ -144,6 +153,20 @@ pub trait Game: Sized + 'static {
 
     /// Called when a gamepad stick or trigger moves.
     fn gamepad_axis(&mut self, _joystick: Joystick, _axis: GamepadAxis, _value: f32) {}
+
+    /// Called when a raw joystick button goes down, gamepad or not.
+    /// Buttons count from 0.
+    fn joystick_pressed(&mut self, _joystick: Joystick, _button: usize) {}
+
+    /// Called when a raw joystick button is released.
+    fn joystick_released(&mut self, _joystick: Joystick, _button: usize) {}
+
+    /// Called when a raw joystick axis moves, with its new value from
+    /// -1.0 to 1.0.
+    fn joystick_axis(&mut self, _joystick: Joystick, _axis: usize, _value: f32) {}
+
+    /// Called when a joystick hat changes direction.
+    fn joystick_hat(&mut self, _joystick: Joystick, _hat: usize, _direction: JoystickHat) {}
 
     /// Called when the window's size changes, with its new size in units
     /// (see [`window::dimensions`]).
@@ -411,9 +434,18 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
     match event {
         BackendEvent::Quit => event::quit(),
         BackendEvent::Resized { width, height } => game.resized(width, height),
-        BackendEvent::KeyDown { key, is_repeat } => game.key_pressed(key, is_repeat),
+        BackendEvent::KeyDown { key, is_repeat } => {
+            if !is_repeat || context::with(|ctx| ctx.input.key_repeat) {
+                game.key_pressed(key, is_repeat);
+            }
+        }
         BackendEvent::KeyUp { key } => game.key_released(key),
         BackendEvent::TextInput(text) => game.text_input(&text),
+        BackendEvent::TextEdited {
+            text,
+            start,
+            length,
+        } => game.text_edited(&text, start, length),
         BackendEvent::MouseMoved { x, y, dx, dy } => game.mouse_moved(x, y, dx, dy),
         BackendEvent::MousePressed {
             x,
@@ -462,6 +494,18 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         }
         BackendEvent::GamepadAxis { id, axis, value } => {
             game.gamepad_axis(Joystick::new(id), axis, value);
+        }
+        BackendEvent::JoystickPressed { id, button } => {
+            game.joystick_pressed(Joystick::new(id), button);
+        }
+        BackendEvent::JoystickReleased { id, button } => {
+            game.joystick_released(Joystick::new(id), button);
+        }
+        BackendEvent::JoystickAxis { id, axis, value } => {
+            game.joystick_axis(Joystick::new(id), axis, value);
+        }
+        BackendEvent::JoystickHat { id, hat, direction } => {
+            game.joystick_hat(Joystick::new(id), hat, direction);
         }
         BackendEvent::Focus(focused) => game.focus(focused),
         BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),

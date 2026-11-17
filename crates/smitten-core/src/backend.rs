@@ -12,8 +12,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickId,
-    Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId, WindowState, Wrap,
+    BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
+    JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId,
+    WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -35,6 +36,13 @@ pub enum BackendEvent {
     },
     /// Text the user typed, after keyboard layout and input methods.
     TextInput(String),
+    /// Text an input method is still composing, before it is typed.
+    /// `start` and `length` select the part being edited, in characters.
+    TextEdited {
+        text: String,
+        start: usize,
+        length: usize,
+    },
     /// The pointer moved to `(x, y)` in pixels, by `(dx, dy)`.
     MouseMoved {
         x: f32,
@@ -88,9 +96,10 @@ pub enum BackendEvent {
         dy: f32,
         pressure: f32,
     },
+    /// Any joystick, gamepad or not, was connected.
     JoystickAdded {
         id: JoystickId,
-        name: String,
+        info: JoystickInfo,
     },
     JoystickRemoved {
         id: JoystickId,
@@ -107,6 +116,27 @@ pub enum BackendEvent {
         id: JoystickId,
         axis: GamepadAxis,
         value: f32,
+    },
+    /// A raw joystick button went down. Buttons count from 0.
+    JoystickPressed {
+        id: JoystickId,
+        button: usize,
+    },
+    JoystickReleased {
+        id: JoystickId,
+        button: usize,
+    },
+    /// A raw joystick axis moved, to a value from -1.0 to 1.0.
+    JoystickAxis {
+        id: JoystickId,
+        axis: usize,
+        value: f32,
+    },
+    /// A joystick hat changed direction.
+    JoystickHat {
+        id: JoystickId,
+        hat: usize,
+        direction: JoystickHat,
     },
     /// The window started or stopped receiving the keyboard.
     Focus(bool),
@@ -635,6 +665,47 @@ pub trait Backend {
 
     /// The state of the battery, if there is one.
     fn power_info(&mut self) -> PowerInfo;
+
+    /// Which key the user's keyboard layout puts at the position `key`
+    /// names, or `None` if Smitten has no name for it.
+    fn layout_key(&self, key: Key) -> Option<Key>;
+
+    /// Where the user's keyboard layout puts `key`, named by the key a US
+    /// layout has there, or `None` if the layout has no such key.
+    fn layout_position(&self, key: Key) -> Option<Key>;
+
+    /// Starts or stops reporting typed text. On a phone, starting shows
+    /// the screen keyboard and stopping hides it.
+    fn set_text_input(&mut self, enabled: bool) -> Result<(), String>;
+
+    /// Where on the window text is being typed, as `[x, y, width, height]`
+    /// in pixels, so an input method can place its window beside it.
+    /// `None` forgets the area.
+    fn set_text_input_area(&mut self, area: Option<[f32; 4]>) -> Result<(), String>;
+
+    /// Whether typed text is being reported.
+    fn text_input_active(&self) -> bool;
+
+    /// Whether the platform has an on-screen keyboard.
+    fn has_screen_keyboard(&self) -> bool;
+
+    /// Whether the platform can change the cursor's look.
+    fn cursor_supported(&self) -> bool;
+
+    /// Whether the joystick `id` is recognized as a standard gamepad,
+    /// which can change when a mapping is added for it.
+    fn is_gamepad(&self, id: JoystickId) -> bool;
+
+    /// Adds gamepad mappings, one a line in SDL's
+    /// `GUID,name,a:b0,b:b1,...` format, replacing any for the same GUID.
+    /// Blank lines, comments starting with `#` and lines for other
+    /// platforms are skipped, as are lines that are not valid mappings.
+    /// Returns how many mappings were added, or an error if there were
+    /// mappings to add and none was valid.
+    fn add_gamepad_mappings(&mut self, mappings: &str) -> Result<usize, String>;
+
+    /// The mapping used for joysticks with this GUID, if there is one.
+    fn gamepad_mapping(&self, guid: &str) -> Option<String>;
 
     /// Whether the gamepad `id` has rumble motors.
     fn gamepad_can_rumble(&self, id: JoystickId) -> bool;
