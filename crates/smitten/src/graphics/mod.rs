@@ -22,6 +22,7 @@ mod shader;
 mod shapes;
 mod sprite_batch;
 mod text;
+mod text_object;
 mod transform;
 
 use std::path::Path;
@@ -51,6 +52,7 @@ pub use shader::{Shader, ShaderError, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use sprite_batch::SpriteBatch;
 pub use text::{Align, Font, FontError};
+pub use text_object::Text;
 pub use transform::Transform;
 
 /// Whether a shape is filled in or drawn as an outline.
@@ -562,6 +564,28 @@ impl GraphicsState {
                 .push(Some(image.texture()), image.filter(), &vertices),
             None => self.batch.push(None, Filter::default(), &vertices),
         }
+        self.scratch = vertices;
+    }
+
+    /// Queues a laid-out [`Text`], placed by `local`.
+    fn push_text_object(&mut self, backend: &mut dyn Backend, text: &Text, local: &Transform) {
+        let transform = self.device().then_inner(local);
+        let color = color_array(self.color);
+        let filter = text.font().filter();
+        let mut vertices = std::mem::take(&mut self.scratch);
+        let batch = &mut self.batch;
+        text.with_runs(backend, |texture, run| {
+            vertices.clear();
+            vertices.extend(run.iter().map(|vertex| {
+                let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
+                Vertex {
+                    position: [x, y],
+                    uv: vertex.uv,
+                    color,
+                }
+            }));
+            batch.push(Some(texture), filter, &vertices);
+        });
         self.scratch = vertices;
     }
 
@@ -1506,5 +1530,32 @@ pub fn printf_with(text: &str, limit: f32, align: Align, transform: &Transform) 
     context::with(|ctx| {
         ctx.gfx
             .push_text(ctx.backend.as_mut(), text, Some((limit, align)), transform);
+    });
+}
+
+/// Makes a [`Text`] in `font` holding `text`, the equivalent of
+/// `love.graphics.newText`. Pass an empty string to start with nothing.
+pub fn new_text(font: &Font, text: &str) -> Text {
+    Text::new(font, text)
+}
+
+/// Draws a [`Text`] with its top-left corner at `(x, y)` in the current
+/// color.
+pub fn draw_text(text: &Text, x: f32, y: f32) {
+    draw_text_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// Draws a [`Text`] with the full set of LÖVE's `draw` arguments. See
+/// [`draw_ex`] for what they mean.
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
+pub fn draw_text_ex(text: &Text, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
+    draw_text_with(text, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy));
+}
+
+/// Draws a [`Text`] placed by `transform`.
+pub fn draw_text_with(text: &Text, transform: &Transform) {
+    context::with(|ctx| {
+        ctx.gfx
+            .push_text_object(ctx.backend.as_mut(), text, transform)
     });
 }

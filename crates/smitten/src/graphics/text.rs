@@ -54,6 +54,11 @@ pub(crate) struct Inner {
     image_layout: Option<(String, f32)>,
     filter: Cell<Filter>,
     line_height: Cell<f32>,
+    /// Counts the times the glyphs were replaced, so a [`Text`] laid out
+    /// with the old ones knows to lay itself out again.
+    ///
+    /// [`Text`]: super::Text
+    generation: Cell<u32>,
 }
 
 impl Drop for Inner {
@@ -103,6 +108,7 @@ impl Font {
                 image_layout: None,
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
+                generation: Cell::new(0),
             }),
         })
     }
@@ -132,6 +138,7 @@ impl Font {
                 image_layout: Some((glyphs.to_string(), extra_spacing)),
                 filter: Cell::new(filter),
                 line_height: Cell::new(1.0),
+                generation: Cell::new(0),
             }),
         })
     }
@@ -225,6 +232,20 @@ impl Font {
     /// Sets the filter for every handle to this font.
     pub fn set_filter(&self, filter: Filter) {
         self.inner.filter.set(filter);
+    }
+
+    /// Changes whenever a layout made before now may be out of date: the
+    /// font was loaded again, or its line height changed.
+    pub(crate) fn layout_key(&self) -> (u32, u32) {
+        (
+            self.inner.generation.get(),
+            self.inner.line_height.get().to_bits(),
+        )
+    }
+
+    /// Whether `self` and `other` are handles to the same font.
+    pub(crate) fn is(&self, other: &Font) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
     }
 
     /// Lays out `text` and calls `emit` for every visible glyph with its
@@ -400,6 +421,7 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
     };
     *inner.face.borrow_mut() = face;
     let old = inner.atlas.replace(atlas);
+    inner.generation.set(inner.generation.get().wrapping_add(1));
     for page in &old.pages {
         backend.destroy_texture(page.texture);
     }
