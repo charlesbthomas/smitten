@@ -1444,3 +1444,140 @@ fn the_distance_between_fixtures_and_their_closest_points() {
     assert_eq!(one, two);
     assert!(one.0 > 4.0 && one.0 < 11.0, "{one:?}");
 }
+
+/// Slides a frictionless 20 by 20 block to the right at 300 units a
+/// second, resting on whatever `ground` gives the ground body, with
+/// gravity `gravity`. Returns where it got to after a second and a half.
+fn slide(gravity: f32, start_y: f32, ground: impl FnOnce(&Body)) -> (f32, f32) {
+    let world = World::new(0.0, gravity);
+    let floor = world.new_body(0.0, 0.0, BodyType::Static);
+    ground(&floor);
+    let block = world.new_body(35.0, start_y, BodyType::Dynamic);
+    block.add_rectangle(20.0, 20.0).set_friction(0.0);
+    block.set_fixed_rotation(true);
+    run(&world, 1.0);
+    block.set_awake(true);
+    block.set_linear_velocity(300.0, 0.0);
+    run(&world, 1.5);
+    block.position()
+}
+
+/// Points 20 apart along y = 500, from x = `from` to `to`.
+fn flat_points(from: u32, to: u32) -> Vec<(f32, f32)> {
+    (from / 20..=to / 20)
+        .map(|i| (i as f32 * 20.0, 500.0))
+        .collect()
+}
+
+#[test]
+fn a_block_slides_over_the_joins_of_a_chain() {
+    // Plain friction of the chain, 0.2 averaged with the block's 0, slows
+    // it from 300 to 210 over the slide; catching on a join would stop it.
+    let (x, y) = slide(600.0, 470.0, |ground| {
+        ground.add_chain(&flat_points(0, 800), false);
+    });
+    assert!(x > 400.0, "stopped at {x}");
+    assert!((y - 490.0).abs() < 1.0, "y {y}");
+}
+
+#[test]
+fn a_chain_is_solid_from_both_sides() {
+    // Pressed up against the chain from below, the block slides under it.
+    let (x, y) = slide(-600.0, 530.0, |ground| {
+        ground.add_chain(&flat_points(0, 800), false);
+    });
+    assert!(x > 400.0, "stopped at {x}");
+    assert!((y - 510.0).abs() < 1.0, "went through to {y}");
+}
+
+#[test]
+fn ghost_vertices_join_edges_and_chains_smoothly() {
+    let (x, _) = slide(600.0, 470.0, |ground| {
+        let points = flat_points(0, 800);
+        for (index, pair) in points.windows(2).enumerate() {
+            let mut edge = Shape::edge(pair[0].0, pair[0].1, pair[1].0, pair[1].1);
+            if index > 0 {
+                let (x, y) = points[index - 1];
+                edge.set_previous_vertex(x, y);
+            }
+            if let Some(&(x, y)) = points.get(index + 2) {
+                edge.set_next_vertex(x, y);
+            }
+            ground.add_shape(&edge);
+        }
+    });
+    assert!(x > 400.0, "edges stopped it at {x}");
+
+    let (x, _) = slide(600.0, 470.0, |ground| {
+        // Two chains that meet at x = 60, just ahead of the block.
+        let mut left = Shape::chain(&flat_points(0, 60), false);
+        left.set_next_vertex(80.0, 500.0);
+        let mut right = Shape::chain(&flat_points(60, 800), false);
+        right.set_previous_vertex(40.0, 500.0);
+        ground.add_shape(&left);
+        ground.add_shape(&right);
+    });
+    assert!(x > 400.0, "chains stopped it at {x}");
+}
+
+#[test]
+fn a_wall_at_the_end_of_a_chain_still_stops_things() {
+    let (x, _) = slide(600.0, 470.0, |ground| {
+        ground.add_chain(
+            &[(0.0, 500.0), (100.0, 500.0), (200.0, 500.0), (200.0, 400.0)],
+            false,
+        );
+    });
+    assert!(
+        (x - 190.0).abs() < 1.0,
+        "the block's right side is at {}",
+        x + 10.0
+    );
+}
+
+#[test]
+fn ghost_vertices_are_kept_with_the_shape() {
+    let world = World::new(0.0, 0.0);
+    let body = world.new_body(0.0, 0.0, BodyType::Static);
+    let mut edge = Shape::edge(0.0, 0.0, 10.0, 0.0);
+    assert_eq!(edge.previous_vertex(), None);
+    edge.set_previous_vertex(-10.0, 1.0);
+    edge.set_next_vertex(20.0, -1.0);
+    let fixture = body.add_shape(&edge);
+    let shape = fixture.shape();
+    let close = |a: Option<(f32, f32)>, b: (f32, f32)| {
+        let a = a.expect("a ghost vertex");
+        (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4
+    };
+    assert!(close(shape.previous_vertex(), (-10.0, 1.0)));
+    assert!(close(shape.next_vertex(), (20.0, -1.0)));
+
+    // Replacing the shape replaces its ghosts too.
+    fixture.set_shape(&Shape::edge(0.0, 0.0, 5.0, 0.0));
+    assert_eq!(fixture.shape().next_vertex(), None);
+}
+
+#[test]
+#[should_panic(expected = "only edges and chains do")]
+fn a_circle_has_no_ghost_vertices() {
+    Shape::circle(5.0).set_next_vertex(0.0, 0.0);
+}
+
+#[test]
+fn things_stay_inside_a_closed_chain() {
+    let world = World::new(0.0, 600.0);
+    let walls = world.new_body(0.0, 0.0, BodyType::Static);
+    walls.add_chain(
+        &[(0.0, 0.0), (200.0, 0.0), (200.0, 200.0), (0.0, 200.0)],
+        true,
+    );
+    let ball = world.new_body(100.0, 100.0, BodyType::Dynamic);
+    ball.add_circle(10.0).set_restitution(0.5);
+    ball.set_linear_velocity(400.0, -300.0);
+    run(&world, 3.0);
+    let (x, y) = ball.position();
+    assert!(
+        (10.0..=190.5).contains(&x) && (10.0..=190.5).contains(&y),
+        "the ball got out to ({x}, {y})"
+    );
+}

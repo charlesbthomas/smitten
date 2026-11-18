@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use rapier2d::prelude::*;
 
 use super::coupling::{self, Coupling};
+use super::ghost::{self, Ghosts};
 use super::joint::{self, JointType, MOTOR_DAMPING};
 use super::{Body, BodyType, Fixture, Joint};
 
@@ -34,6 +35,8 @@ pub(super) struct Inner {
     pub mass_set: HashSet<RigidBodyHandle>,
     /// What each gear and pulley joint ties together.
     pub couplings: HashMap<ImpulseJointHandle, Coupling>,
+    /// The ghost vertices of edges and chains that have them.
+    pub ghosts: HashMap<ColliderHandle, Ghosts>,
 }
 
 type PreSolveCallback = Box<dyn FnMut(&mut PreSolve)>;
@@ -349,6 +352,7 @@ struct Callbacks {
     world: Shared,
     pre_solve: Option<PreSolveCallback>,
     contact_filter: Option<ContactFilterCallback>,
+    ghosts: HashMap<ColliderHandle, Ghosts>,
 }
 
 thread_local! {
@@ -408,6 +412,11 @@ impl PhysicsHooks for Hooks {
     }
 
     fn modify_solver_contacts(&self, context: &mut ContactModificationContext) {
+        CALLBACKS.with(|slot| {
+            if let Some(callbacks) = slot.borrow().as_ref() {
+                ghost::smooth(context, &callbacks.ghosts);
+            }
+        });
         let (a, b) = (context.collider1, context.collider2);
         let (a_data, a_body_data) = user_data(context.colliders, context.bodies, a);
         let (b_data, b_body_data) = user_data(context.colliders, context.bodies, b);
@@ -477,6 +486,7 @@ impl World {
                 held_density: HashMap::new(),
                 mass_set: HashSet::new(),
                 couplings: HashMap::new(),
+                ghosts: HashMap::new(),
             })),
         }
     }
@@ -509,21 +519,20 @@ impl World {
             })
             .collect();
         // The callbacks are taken out while the step runs, so the world
-        // can be borrowed for them.
-        if inner.pre_solve.is_some() || inner.contact_filter.is_some() {
-            let callbacks = Callbacks {
-                world: self.inner.clone(),
-                pre_solve: inner.pre_solve.take(),
-                contact_filter: inner.contact_filter.take(),
-            };
-            CALLBACKS.with(|slot| *slot.borrow_mut() = Some(callbacks));
-            inner.world.step_with_events(&Hooks, &collector);
-            if let Some(callbacks) = CALLBACKS.with(|slot| slot.borrow_mut().take()) {
-                inner.pre_solve = callbacks.pre_solve;
-                inner.contact_filter = callbacks.contact_filter;
-            }
-        } else {
-            inner.world.step_with_events(&(), &collector);
+        // can be borrowed for them. The hooks always run, because joins
+        // between lines are smoothed in them.
+        let callbacks = Callbacks {
+            world: self.inner.clone(),
+            pre_solve: inner.pre_solve.take(),
+            contact_filter: inner.contact_filter.take(),
+            ghosts: std::mem::take(&mut inner.ghosts),
+        };
+        CALLBACKS.with(|slot| *slot.borrow_mut() = Some(callbacks));
+        inner.world.step_with_events(&Hooks, &collector);
+        if let Some(callbacks) = CALLBACKS.with(|slot| slot.borrow_mut().take()) {
+            inner.pre_solve = callbacks.pre_solve;
+            inner.contact_filter = callbacks.contact_filter;
+            inner.ghosts = callbacks.ghosts;
         }
         coupling::solve(&mut inner);
         // A force lasts for one update, as in LÖVE. The engine would keep

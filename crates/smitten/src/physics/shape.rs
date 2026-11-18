@@ -46,11 +46,20 @@ pub struct Shape {
     pub(super) shape: SharedShape,
     /// Where the shape sits on the body.
     pub(super) offset: Pose,
+    /// The ghost vertices of an edge or chain, measured from the body's
+    /// origin.
+    pub(super) previous: Option<(f32, f32)>,
+    pub(super) next: Option<(f32, f32)>,
 }
 
 impl Shape {
     pub(super) fn new(shape: SharedShape, offset: Pose) -> Shape {
-        Shape { shape, offset }
+        Shape {
+            shape,
+            offset,
+            previous: None,
+            next: None,
+        }
     }
 
     /// A circle centered on the body's origin. LÖVE's
@@ -126,6 +135,73 @@ impl Shape {
             SharedShape::polyline(vertices, Some(indices)),
             Pose::IDENTITY,
         )
+    }
+
+    /// Tells an edge, or the start of a chain, what comes before it, the
+    /// equivalent of `EdgeShape:setPreviousVertex` and
+    /// `ChainShape:setPreviousVertex`. The point is measured from the
+    /// body's origin like the shape's own.
+    ///
+    /// Nothing collides with this ghost vertex. It lets a body sliding
+    /// over the start of the line pass onto it smoothly from the line
+    /// before, where it would otherwise catch on the join. A chain's own
+    /// joins are smooth already; this is for where one edge or chain
+    /// meets another.
+    ///
+    /// Panics if this is not an edge or a chain.
+    pub fn set_previous_vertex(&mut self, x: f32, y: f32) {
+        self.check_lines("set_previous_vertex");
+        self.previous = Some((x, y));
+    }
+
+    /// Tells an edge, or the end of a chain, what comes after it, the
+    /// equivalent of `setNextVertex`. See [`Shape::set_previous_vertex`].
+    ///
+    /// Panics if this is not an edge or a chain.
+    pub fn set_next_vertex(&mut self, x: f32, y: f32) {
+        self.check_lines("set_next_vertex");
+        self.next = Some((x, y));
+    }
+
+    /// The ghost vertex before an edge or chain, if one was set, the
+    /// equivalent of `getPreviousVertex`. Other shapes have none.
+    pub fn previous_vertex(&self) -> Option<(f32, f32)> {
+        self.previous
+    }
+
+    /// The ghost vertex after an edge or chain, if one was set, the
+    /// equivalent of `getNextVertex`. Other shapes have none.
+    pub fn next_vertex(&self) -> Option<(f32, f32)> {
+        self.next
+    }
+
+    fn check_lines(&self, method: &str) {
+        assert!(
+            matches!(self.kind(), ShapeType::Edge | ShapeType::Chain),
+            "a {:?} shape has no ghost vertices, so it cannot {method}; only edges and chains do",
+            self.kind()
+        );
+    }
+
+    /// The ghost vertices in the space of the shape itself, without the
+    /// offset on the body.
+    pub(super) fn ghosts(&self) -> super::ghost::Ghosts {
+        let local = |(x, y): (f32, f32)| self.offset.inverse_transform_point(Vector::new(x, y));
+        super::ghost::Ghosts {
+            previous: self.previous.map(local),
+            next: self.next.map(local),
+        }
+    }
+
+    /// Gives the shape back ghost vertices kept in its own space.
+    pub(super) fn with_ghosts(mut self, ghosts: super::ghost::Ghosts) -> Shape {
+        let placed = |point: Vector| {
+            let point = self.offset.transform_point(point);
+            (point.x, point.y)
+        };
+        self.previous = ghosts.previous.map(placed);
+        self.next = ghosts.next.map(placed);
+        self
     }
 
     /// What kind of shape this is.

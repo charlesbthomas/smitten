@@ -14,8 +14,8 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 31 of LÖVE's 900 functions and methods are still missing, plus 9
-that only make sense in Lua. That is about **95% of the full API**, and
+About 22 of LÖVE's 900 functions and methods are still missing, plus 9
+that only make sense in Lua. That is about **97% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
 GPU features: depth buffers, instancing, custom vertex formats, vertex
 shaders and canvas formats.
@@ -33,7 +33,7 @@ shaders and canvas formats.
 | keyboard | 9 | 0 | 100% |
 | math | 50 | 0 | 100% |
 | mouse | 19 | 0 | 100% |
-| physics | 272 | 8 | 97% |
+| physics | 272 | 0 | 100% |
 | sound | 16 | 0 | 100% |
 | system | 8 | 0 | 100% |
 | thread | 16 | 0 (Rust threads plus `Channel`) | 100% |
@@ -72,13 +72,6 @@ shaders and canvas formats.
 ### SpriteBatch
 
 - `SpriteBatch:attachAttribute`.
-
-## physics
-
-- Ghost vertices on chains and edges: `ChainShape` and `EdgeShape`
-  `setNextVertex`, `setPreviousVertex`, `getNextVertex`,
-  `getPreviousVertex`. These stop bodies catching on the joins between
-  edges.
 
 ## Callbacks and `love.conf`
 
