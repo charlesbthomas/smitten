@@ -32,3 +32,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # Pinned: a young crate, checked to decode the same pixels as FFmpeg.
 theora-rs = { version = "=0.1.0", optional = true }
 ogg = { version = "0.9", optional = true }
+# The `data` module: compression and hashing.
+flate2 = "1"
+lz4_flex = "0.11"
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"

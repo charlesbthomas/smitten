@@ -3,7 +3,8 @@
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
 //! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
 //! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
-//! the same way `love.graphics` and friends work in LÖVE.
+//! the same way `love.graphics` and friends work in LÖVE. [`data`], [`math`] and [`thread`]
+//! also work on other threads and when no game is running.
 //!
 //! ```no_run
 //! use smitten::{graphics, Color, Config, Game};
@@ -32,6 +33,7 @@ mod input;
 mod reload;
 
 pub mod audio;
+pub mod data;
 pub mod event;
 pub mod filesystem;
 pub mod graphics;
@@ -43,6 +45,7 @@ pub mod mouse;
 pub mod physics;
 pub mod sound;
 pub mod system;
+pub mod thread;
 pub mod timer;
 pub mod touch;
 #[cfg(feature = "video")]
