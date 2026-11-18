@@ -62,7 +62,7 @@ pub use smitten_core::backend::CompressedFormat;
 pub use sprite_batch::SpriteBatch;
 pub use state::StackType;
 pub use stats::Stats;
-pub use text::{Align, Font, FontError, Hinting};
+pub use text::{Align, Font, FontError, GlyphData, GlyphFormat, Hinting, Rasterizer};
 pub use text_object::Text;
 pub use transform::Transform;
 #[cfg(feature = "video")]

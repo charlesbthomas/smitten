@@ -34,6 +34,7 @@ mod reload;
 pub mod audio;
 pub mod event;
 pub mod filesystem;
+pub mod font;
 pub mod graphics;
 pub mod joystick;
 pub mod keyboard;
