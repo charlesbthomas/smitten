@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use smitten_core::backend::{Backend, TextureId};
-use smitten_core::{Filter, Wrap};
+use smitten_core::{Filter, PixelFormat, Wrap};
 
 use crate::context;
 use crate::reload::Asset;
@@ -35,6 +35,11 @@ pub(crate) struct Inner {
     /// replaced in place.
     compressed: Cell<bool>,
     mipmap_filter: Cell<Option<(Filter, f32)>>,
+    /// How the texture stores its pixels.
+    format: Cell<PixelFormat>,
+    /// Whether it was made to be drawn and sampled. Only a canvas can be
+    /// made otherwise.
+    readable: Cell<bool>,
     _counted: Counted,
 }
 
@@ -69,11 +74,27 @@ impl Image {
         rgba: &[u8],
         settings: ImageSettings,
     ) -> Result<Image, ImageError> {
+        Image::from_pixels(PixelFormat::Rgba8, width, height, rgba, settings)
+    }
+
+    /// Creates an image from `pixels` stored in `format`, as
+    /// [`ImageData::from_raw`](super::ImageData::from_raw) takes them.
+    pub(crate) fn from_pixels(
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+        settings: ImageSettings,
+    ) -> Result<Image, ImageError> {
         context::with(|ctx| {
-            let texture = if settings.mipmaps {
-                ctx.backend.create_mipmapped_texture(width, height, rgba)
-            } else {
-                ctx.backend.create_texture(width, height, rgba)
+            let texture = match (format, settings.mipmaps) {
+                (PixelFormat::Rgba8, true) => {
+                    ctx.backend.create_mipmapped_texture(width, height, pixels)
+                }
+                (PixelFormat::Rgba8, false) => ctx.backend.create_texture(width, height, pixels),
+                (format, mipmaps) => ctx
+                    .backend
+                    .create_texture_in(format, width, height, pixels, mipmaps),
             }
             .map_err(ImageError::Upload)?;
             let mipmap_count = if settings.mipmaps {
@@ -91,6 +112,8 @@ impl Image {
                     mipmap_count: Cell::new(mipmap_count),
                     compressed: Cell::new(false),
                     mipmap_filter: Cell::new(settings.mipmaps.then_some((Filter::Linear, 0.0))),
+                    format: Cell::new(format),
+                    readable: Cell::new(true),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -116,6 +139,8 @@ impl Image {
                 mipmap_count: Cell::new(1),
                 compressed: Cell::new(false),
                 mipmap_filter: Cell::new(None),
+                format: Cell::new(PixelFormat::Rgba8),
+                readable: Cell::new(true),
                 _counted: Counted::new(kind),
             }),
         }
@@ -143,6 +168,26 @@ impl Image {
         self.inner.compressed.get()
     }
 
+    /// How the image stores its pixels, the equivalent of
+    /// `Texture:getFormat`. An image loaded from a file, and a compressed
+    /// one, report [`PixelFormat::Rgba8`]; see [`Image::is_compressed`].
+    pub fn format(&self) -> PixelFormat {
+        self.inner.format.get()
+    }
+
+    /// Whether the image can be drawn and sampled by shaders, the
+    /// equivalent of `Texture:isReadable`. Every image is; a canvas made
+    /// with `readable: Some(false)` is not.
+    pub fn is_readable(&self) -> bool {
+        self.inner.readable.get()
+    }
+
+    /// Records how a texture made by someone else stores its pixels.
+    pub(crate) fn set_storage(&self, format: PixelFormat, readable: bool) {
+        self.inner.format.set(format);
+        self.inner.readable.set(readable);
+    }
+
     /// How the image is sampled when scaled or rotated.
     pub fn filter(&self) -> Filter {
         self.inner.filter.get()
@@ -161,7 +206,17 @@ impl Image {
     /// Sets what the image shows beyond its edges, for every handle to it.
     /// With [`Wrap::Repeat`], a [`Quad`] larger than the image draws it
     /// tiled, which is the cheap way to fill a background.
+    ///
+    /// [`Wrap::ClampZero`] becomes [`Wrap::Clamp`] on GPUs that cannot do
+    /// it, which today is all of them, and [`Image::wrap`] then says so.
     pub fn set_wrap(&self, horizontal: Wrap, vertical: Wrap) {
+        let supported = |wrap: Wrap| match wrap {
+            Wrap::ClampZero if !super::is_supported(super::GraphicsFeature::ClampZero) => {
+                Wrap::Clamp
+            }
+            other => other,
+        };
+        let (horizontal, vertical) = (supported(horizontal), supported(vertical));
         self.inner.wrap.set((horizontal, vertical));
         context::with(|ctx| {
             ctx.backend
@@ -195,6 +250,8 @@ impl Image {
                     mipmap_count: Cell::new(mipmap_count),
                     compressed: Cell::new(true),
                     mipmap_filter: Cell::new((mipmap_count > 1).then_some((Filter::Linear, 0.0))),
+                    format: Cell::new(PixelFormat::Rgba8),
+                    readable: Cell::new(true),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -237,7 +294,8 @@ impl Image {
     /// top-left corner at `(x, y)`. The equivalent of
     /// `Image:replacePixels`. Every handle to the image changes.
     ///
-    /// The pixels must fit inside the image.
+    /// The pixels must fit inside the image. They are converted if `data`
+    /// is in another format than the image.
     pub fn replace_pixels(
         &self,
         data: &super::ImageData,
@@ -254,7 +312,14 @@ impl Image {
         }
         context::with(|ctx| {
             ctx.backend
-                .update_texture(self.texture(), x, y, width, height, &data.rgba8())
+                .update_texture(
+                    self.texture(),
+                    x,
+                    y,
+                    width,
+                    height,
+                    &data.bytes_in(self.format()),
+                )
                 .map_err(ImageError::Upload)
         })
     }

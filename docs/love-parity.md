@@ -28,7 +28,7 @@ shaders, volume textures and canvas formats.
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
 | graphics | 268 | 32 | 88% |
-| image | 17 | 1 | 94% |
+| image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
 | math | 50 | 0 | 100% |
@@ -47,9 +47,9 @@ shaders, volume textures and canvas formats.
 
 ### Module functions
 
-- `getSupported` (`GraphicsFeature`), `getSystemLimits` (`GraphicsLimit`),
-  `getCanvasFormats`, `getImageFormats`, `getTextureTypes`.
-  `renderer_info` exists.
+- `getSystemLimits` (`GraphicsLimit`), `getTextureTypes`. `renderer_info`,
+  `is_supported` (`GraphicsFeature`, a first version) and the format lists
+  exist.
 - `setDepthMode`, `getDepthMode`, and depth and stencil buffers on canvases
   (`t.window.depth`, `t.window.stencil`, depth canvas formats).
 - `drawInstanced`, with per-instance vertex attributes
@@ -62,17 +62,12 @@ shaders, volume textures and canvas formats.
 - Gamma-correct rendering (`t.gammacorrect`). `is_gamma_correct` exists and
   always answers `false`.
 
-### Enums
-
-- `WrapMode` `clampzero`.
-
 ### Canvas and Texture
 
-- `newCanvas` settings: `format` (float formats and the rest of
-  `PixelFormat`), `readable`, and `type` (array, cube and volume canvases).
-  MSAA is done.
-- `Texture:getFormat`, `getTextureType`, `getDepth`, `isReadable`,
-  `getDepthSampleMode`, `setDepthSampleMode`.
+- `newCanvas` settings: depth formats, and `type` (array, cube and volume
+  canvases). Color formats, `readable` and MSAA are done.
+- `Texture:getTextureType`, `getDepth`, `getDepthSampleMode`,
+  `setDepthSampleMode`.
 - `Image:isFormatLinear`, and the `linear` setting in `newImage`.
 
 ### Mesh

@@ -19,4 +19,9 @@ pub enum Wrap {
     Repeat,
     /// The texture starts again, flipped each time so its edges meet.
     MirroredRepeat,
+    /// Transparent black beyond the edges, LÖVE's `clampzero`. Not every
+    /// GPU can do it: where
+    /// `graphics::is_supported(GraphicsFeature::ClampZero)` is false,
+    /// [`Wrap::Clamp`] is used instead, as in LÖVE.
+    ClampZero,
 }

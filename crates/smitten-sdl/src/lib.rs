@@ -19,12 +19,12 @@ use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, CompressedFormat, CursorId, Frame, RecordingDeviceId,
-    RecordingSink, RendererInfo, ShaderId, ShaderInfo, TextureId, TextureKind,
+    RecordingSink, RenderTargetDesc, RendererInfo, ShaderId, ShaderInfo, TextureId, TextureKind,
 };
 use smitten_core::{
     Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
-    JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, PowerState,
-    TouchId, WindowState, Wrap,
+    JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PixelFormat,
+    PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -631,7 +631,8 @@ impl Backend for SdlBackend {
         height: u32,
         rgba: &[u8],
     ) -> Result<TextureId, String> {
-        self.renderer.create_texture(width, height, rgba, false)
+        self.renderer
+            .create_texture(PixelFormat::Rgba8, width, height, rgba, false)
     }
 
     fn create_mipmapped_texture(
@@ -640,7 +641,8 @@ impl Backend for SdlBackend {
         height: u32,
         rgba: &[u8],
     ) -> Result<TextureId, String> {
-        self.renderer.create_texture(width, height, rgba, true)
+        self.renderer
+            .create_texture(PixelFormat::Rgba8, width, height, rgba, true)
     }
 
     fn set_texture_mipmap_filter(
@@ -692,18 +694,24 @@ impl Backend for SdlBackend {
             .create_compressed_texture(format, width, height, levels)
     }
 
-    fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
-        self.renderer.create_render_target(width, height, None, 1)
-    }
-
-    fn create_msaa_render_target(
+    fn create_texture_in(
         &mut self,
+        format: PixelFormat,
         width: u32,
         height: u32,
-        samples: u32,
+        pixels: &[u8],
+        mipmapped: bool,
     ) -> Result<TextureId, String> {
         self.renderer
-            .create_render_target(width, height, None, samples)
+            .create_texture(format, width, height, pixels, mipmapped)
+    }
+
+    fn supports_pixel_format(&self, format: PixelFormat, render_target: bool) -> bool {
+        self.renderer.supports_pixel_format(format, render_target)
+    }
+
+    fn create_render_target_with(&mut self, desc: &RenderTargetDesc) -> Result<TextureId, String> {
+        self.renderer.create_render_target(desc)
     }
 
     fn texture_msaa(&self, texture: TextureId) -> u32 {
@@ -716,16 +724,6 @@ impl Backend for SdlBackend {
 
     fn screen_msaa(&self) -> u32 {
         self.renderer.screen_msaa()
-    }
-
-    fn create_mipmapped_render_target(
-        &mut self,
-        width: u32,
-        height: u32,
-        automatic: bool,
-    ) -> Result<TextureId, String> {
-        self.renderer
-            .create_render_target(width, height, Some(automatic), 1)
     }
 
     fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {

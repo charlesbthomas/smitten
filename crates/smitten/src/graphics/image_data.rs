@@ -248,18 +248,27 @@ impl ImageData {
     }
 
     /// The pixels as four bytes each (red, green, blue, alpha), converted
-    /// if the image is in another format. This is what the GPU and the
-    /// window system are given.
+    /// if the image is in another format. This is what the window system
+    /// and array and cube images are given.
     pub(crate) fn rgba8(&self) -> Cow<'_, [u8]> {
-        if matches!(self.format, PixelFormat::Rgba8 | PixelFormat::Srgba8) {
+        self.bytes_in(PixelFormat::Rgba8)
+    }
+
+    /// The pixels in `format`, converted if the image is in another one.
+    /// sRGB and linear versions of a format count as the same.
+    pub(crate) fn bytes_in(&self, format: PixelFormat) -> Cow<'_, [u8]> {
+        if format.to_linear() == self.format.to_linear() {
             return Cow::Borrowed(&self.pixels);
         }
-        let mut rgba = vec![0; self.width as usize * self.height as usize * 4];
-        let size = self.format.bytes_per_pixel();
-        for (to, from) in rgba.chunks_exact_mut(4).zip(self.pixels.chunks_exact(size)) {
-            pixels::encode(PixelFormat::Rgba8, pixels::decode(self.format, from), to);
+        let (from_size, to_size) = (self.format.bytes_per_pixel(), format.bytes_per_pixel());
+        let mut converted = vec![0; self.width as usize * self.height as usize * to_size];
+        for (to, from) in converted
+            .chunks_exact_mut(to_size)
+            .zip(self.pixels.chunks_exact(from_size))
+        {
+            pixels::encode(format, pixels::decode(self.format, from), to);
         }
-        Cow::Owned(rgba)
+        Cow::Owned(converted)
     }
 
     /// The image as the contents of a file in `format`, the equivalent of
@@ -366,11 +375,12 @@ impl Image {
     /// Creates an image to draw from pixels in memory. Later changes to
     /// `data` do not show until [`Image::replace_pixels`] is called.
     ///
-    /// Images are stored on the GPU as [`PixelFormat::Rgba8`] for now, so
-    /// pixels in other formats are converted, and lose any precision or
-    /// range beyond it.
+    /// The image keeps the data's [`PixelFormat`]. It fails if the GPU
+    /// cannot sample that format, which
+    /// [`graphics::is_image_format_supported`](super::is_image_format_supported)
+    /// tells beforehand.
     pub fn from_image_data(data: &ImageData) -> Result<Image, ImageError> {
-        Image::from_rgba(data.width, data.height, &data.rgba8())
+        Image::from_image_data_with(data, super::ImageSettings::default())
     }
 
     /// As [`Image::from_image_data`], with options such as mipmaps.
@@ -378,7 +388,7 @@ impl Image {
         data: &ImageData,
         settings: super::ImageSettings,
     ) -> Result<Image, ImageError> {
-        Image::from_rgba_with(data.width, data.height, &data.rgba8(), settings)
+        Image::from_pixels(data.format, data.width, data.height, &data.pixels, settings)
     }
 }
 
