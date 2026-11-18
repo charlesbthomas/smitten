@@ -98,6 +98,8 @@ pub(crate) fn show(payload: &(dyn Any + Send)) {
         // Music should not play on over the error. Whatever the game left behind is freed once the framework state
         // is no longer borrowed, because freeing it needs that state.
         crate::audio::stop();
+        // A window the game closed is opened again to show the error.
+        crate::window::open();
         let leftovers = context::with(|ctx| ctx.gfx.reset_for_error_screen(BACKGROUND));
         drop(leftovers);
 
