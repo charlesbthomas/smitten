@@ -14,10 +14,10 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 20 of LÖVE's 900 functions and methods are still missing, plus 9
+About 18 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **97% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
-GPU features: depth buffers and canvas formats.
+GPU features: depth canvases and capability queries.
 
 | Module | LÖVE functions and methods | Missing | Coverage |
 |---|---|---|---|
@@ -26,7 +26,7 @@ GPU features: depth buffers and canvas formats.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 19 | 93% |
+| graphics | 268 | 17 | 94% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -49,8 +49,9 @@ GPU features: depth buffers and canvas formats.
 - `getSystemLimits` (`GraphicsLimit`). `renderer_info`, `texture_types`,
   `is_supported` (`GraphicsFeature`, a first version) and the format lists
   exist.
-- `setDepthMode`, `getDepthMode`, and depth and stencil buffers on canvases
-  (`t.window.depth`, `t.window.stencil`, depth canvas formats).
+- A depth canvas as the depth buffer drawn to (`setCanvas` with
+  `depthstencil`). `setDepthMode` and `getDepthMode` are done, and the
+  screen and every canvas have a 24-bit depth buffer of their own.
 
 ### Canvas and Texture
 
@@ -66,8 +67,9 @@ GPU features: depth buffers and canvas formats.
 
 ## Callbacks and `love.conf`
 
-- `love.conf` fields with no `Config` equivalent: `t.window.depth`,
-  `t.window.stencil`.
+- `love.conf` fields with no `Config` equivalent: `t.window.depth` and
+  `t.window.stencil`. Smitten always gives the screen both, so there is
+  nothing to ask for.
 
 ## Left out on purpose
 

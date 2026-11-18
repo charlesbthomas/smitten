@@ -18,8 +18,8 @@ use smitten_core::backend::{
     VertexDataType, VertexLayout, VertexLayoutId as MeshVertexLayoutId, VertexStep,
 };
 use smitten_core::{
-    BlendAlphaMode, BlendMode, CompareMode, Filter, PixelFormat, StencilAction, StencilMode,
-    VertexWinding, Wrap,
+    BlendAlphaMode, BlendMode, CompareMode, DepthMode, Filter, PixelFormat, StencilAction,
+    StencilMode, VertexWinding, Wrap,
 };
 
 use crate::{sdl_error, shader};
@@ -121,6 +121,7 @@ struct PipelineKey {
     blend: BlendMode,
     blend_alpha: BlendAlphaMode,
     stencil: StencilMode,
+    depth: DepthMode,
     color_mask: ColorMask,
     wireframe: bool,
     /// The on-screen winding of the triangles to leave out.
@@ -367,6 +368,7 @@ impl Renderer {
                 blend: BlendMode::Alpha,
                 blend_alpha: BlendAlphaMode::AlphaMultiply,
                 stencil: StencilMode::Off,
+                depth: DepthMode::default(),
                 color_mask: ColorMask::ALL,
                 wireframe: false,
                 cull: None,
@@ -1495,6 +1497,7 @@ impl Renderer {
             blend: call.blend,
             blend_alpha: call.blend_alpha,
             stencil: call.stencil,
+            depth: call.depth,
             color_mask: call.color_mask,
             wireframe: call.wireframe,
             cull: call.cull,
@@ -1919,9 +1922,13 @@ impl Renderer {
                 }
                 let stencil_info = SDL_GPUDepthStencilTargetInfo {
                     texture: stencil,
-                    // The depth half of the texture is never used.
-                    load_op: SDL_GPU_LOADOP_DONT_CARE,
-                    store_op: SDL_GPU_STOREOP_DONT_CARE,
+                    load_op: if pass.clear_depth.is_some() || fresh {
+                        SDL_GPU_LOADOP_CLEAR
+                    } else {
+                        SDL_GPU_LOADOP_LOAD
+                    },
+                    store_op: SDL_GPU_STOREOP_STORE,
+                    clear_depth: pass.clear_depth.unwrap_or(1.0),
                     stencil_load_op: if pass.clear_stencil.is_some() || fresh {
                         SDL_GPU_LOADOP_CLEAR
                     } else {
@@ -2460,6 +2467,8 @@ struct MeshUniforms {
 
 /// The column-major matrix that takes pixels of a `width` by `height`
 /// target, from its top-left with y down, to SDL's clip space, with y up.
+/// z from -10 to 10 becomes depth 1 to 0, as LÖVE's projection makes it,
+/// so z 0 is depth 0.5 like everything `sprite.vert` draws.
 fn pixel_projection(width: u32, height: u32) -> [f32; 16] {
     let (width, height) = (width as f32, height as f32);
     [
@@ -2473,11 +2482,11 @@ fn pixel_projection(width: u32, height: u32) -> [f32; 16] {
         0.0,
         0.0,
         0.0,
-        1.0,
+        -0.05,
         0.0,
         -1.0,
         1.0,
-        0.0,
+        0.5,
         1.0,
     ]
 }
@@ -2712,7 +2721,7 @@ unsafe fn create_pipeline(
                 has_depth_stencil_target: target.depth_stencil != SDL_GPU_TEXTUREFORMAT_INVALID,
                 ..Default::default()
             },
-            depth_stencil_state: stencil_state(stencil),
+            depth_stencil_state: depth_stencil_state(stencil, key.depth),
             ..Default::default()
         };
         let pipeline = SDL_CreateGPUGraphicsPipeline(device, &info);
@@ -2759,6 +2768,28 @@ fn standard_vertex_input() -> VertexInput {
                 std::mem::offset_of!(Vertex, color),
             ),
         ],
+    }
+}
+
+/// The GPU depth and stencil settings for a depth and a stencil mode.
+fn depth_stencil_state(stencil: StencilMode, depth: DepthMode) -> SDL_GPUDepthStencilState {
+    SDL_GPUDepthStencilState {
+        // The GPU compares the new depth with the one there, as
+        // `DepthMode` reads.
+        compare_op: match depth.compare {
+            CompareMode::Equal => SDL_GPU_COMPAREOP_EQUAL,
+            CompareMode::NotEqual => SDL_GPU_COMPAREOP_NOT_EQUAL,
+            CompareMode::Less => SDL_GPU_COMPAREOP_LESS,
+            CompareMode::LessEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+            CompareMode::Greater => SDL_GPU_COMPAREOP_GREATER,
+            CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
+            CompareMode::Never => SDL_GPU_COMPAREOP_NEVER,
+            CompareMode::Always => SDL_GPU_COMPAREOP_ALWAYS,
+        },
+        // Writing needs the test on, even one that always passes.
+        enable_depth_test: depth.is_used(),
+        enable_depth_write: depth.write,
+        ..stencil_state(stencil)
     }
 }
 

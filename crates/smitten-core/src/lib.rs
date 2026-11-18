@@ -29,7 +29,7 @@ pub use input::{
 };
 pub use key::Key;
 pub use pixel_format::PixelFormat;
-pub use stencil::{CompareMode, StencilAction, StencilMode};
+pub use stencil::{CompareMode, DepthMode, StencilAction, StencilMode};
 pub use system::{
     Cursor, DisplayOrientation, FullscreenType, MessageBoxKind, PowerInfo, PowerState, WindowState,
 };

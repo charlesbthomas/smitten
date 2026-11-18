@@ -51,3 +51,33 @@ pub enum StencilMode {
     /// Draws only the pixels whose stencil value passes the comparison.
     Test(CompareMode),
 }
+
+/// How draws use the depth buffer, the equivalent of LÖVE's depth mode.
+///
+/// Each pixel drawn has a depth from 0, nearest, to 1, farthest. A pixel
+/// is drawn only where its depth compares with the depth already there as
+/// `compare` says, and with `write` its depth replaces it. The default,
+/// [`CompareMode::Always`] without writing, leaves depth out entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DepthMode {
+    /// [`CompareMode::Less`] draws where the new pixel is nearer than
+    /// what is there, and so on.
+    pub compare: CompareMode,
+    pub write: bool,
+}
+
+impl Default for DepthMode {
+    fn default() -> Self {
+        DepthMode {
+            compare: CompareMode::Always,
+            write: false,
+        }
+    }
+}
+
+impl DepthMode {
+    /// Whether the depth buffer is read or written at all.
+    pub fn is_used(self) -> bool {
+        self.compare != CompareMode::Always || self.write
+    }
+}

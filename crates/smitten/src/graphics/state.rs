@@ -1,8 +1,8 @@
 //! Saving and restoring the drawing state, for `push_all`, `pop` and
 //! `reset`.
 
-use smitten_core::StencilMode;
 use smitten_core::backend::{ColorMask, TargetSlice};
+use smitten_core::{DepthMode, StencilMode};
 
 use super::{Canvas, Font, GraphicsState, LineJoin, LineStyle, MAX_CANVASES, Shader, Transform};
 use crate::{BlendAlphaMode, BlendMode, Color, CullMode, Filter, VertexWinding};
@@ -46,6 +46,7 @@ pub(super) struct DrawState {
     line_style: LineStyle,
     point_size: f32,
     color_mask: ColorMask,
+    depth: DepthMode,
     wireframe: bool,
     default_filter: Filter,
     mesh_cull: CullMode,
@@ -74,6 +75,7 @@ impl DrawState {
             line_style: LineStyle::default(),
             point_size: 1.0,
             color_mask: ColorMask::ALL,
+            depth: DepthMode::default(),
             wireframe: false,
             default_filter: Filter::default(),
             mesh_cull: CullMode::default(),
@@ -103,6 +105,7 @@ impl GraphicsState {
             line_style: self.line_style,
             point_size: self.point_size,
             color_mask: self.batch.color_mask,
+            depth: self.batch.depth,
             wireframe: self.batch.wireframe,
             default_filter: self.default_filter,
             mesh_cull: self.mesh_cull,
@@ -139,6 +142,7 @@ impl GraphicsState {
         self.line_style = state.line_style;
         self.point_size = state.point_size;
         self.batch.color_mask = state.color_mask;
+        self.batch.depth = state.depth;
         self.batch.wireframe = state.wireframe;
         self.default_filter = state.default_filter;
         self.mesh_cull = state.mesh_cull;
@@ -211,6 +215,10 @@ mod tests {
             a: true,
         };
         gfx.batch.wireframe = true;
+        gfx.batch.depth = DepthMode {
+            compare: CompareMode::Less,
+            write: true,
+        };
         gfx.default_filter = Filter::Nearest;
         gfx.mesh_cull = CullMode::Back;
         gfx.front_face = VertexWinding::Clockwise;
@@ -229,6 +237,7 @@ mod tests {
         assert_eq!(gfx.line_style, LineStyle::default());
         assert_eq!(gfx.point_size, 1.0);
         assert_eq!(gfx.batch.color_mask, ColorMask::ALL);
+        assert_eq!(gfx.batch.depth, DepthMode::default());
         assert!(!gfx.batch.wireframe);
         assert_eq!(gfx.default_filter, Filter::Linear);
         assert_eq!(gfx.mesh_cull, CullMode::None);

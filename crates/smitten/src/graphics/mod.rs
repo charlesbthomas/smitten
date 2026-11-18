@@ -40,7 +40,7 @@ use smitten_core::backend::{
 };
 
 use crate::context;
-use smitten_core::{PixelFormat, StencilMode};
+use smitten_core::{DepthMode, PixelFormat, StencilMode};
 
 use crate::{
     BlendAlphaMode, BlendMode, Color, CompareMode, CullMode, Filter, StencilAction, VertexWinding,
@@ -276,6 +276,7 @@ impl GraphicsState {
         self.batch.blend_alpha = BlendAlphaMode::default();
         self.batch.stencil = StencilMode::Off;
         self.batch.color_mask = ColorMask::ALL;
+        self.batch.depth = DepthMode::default();
         self.batch.wireframe = false;
         self.scissor = None;
         self.screen.design = None;
@@ -875,36 +876,38 @@ fn whole_image(image: &Image) -> Quad {
 // Screen
 
 /// Fills the screen, or the active canvas, with `color`, replacing
-/// whatever was there, and resets its stencil values to 0. The scissor
-/// does not limit it. See [`clear_ex`] to clear only some of that.
+/// whatever was there, resets its stencil values to 0 and its depth
+/// values to 1. The scissor does not limit it. See [`clear_ex`] to clear
+/// only some of that.
 pub fn clear(color: Color) {
     context::with(|ctx| ctx.gfx.batch.clear_target(color));
 }
 
 /// Clears only the parts of the screen, or the active canvas, that are
-/// given, the equivalent of LÖVE's `clear(color, stencil)` and
+/// given, the equivalent of LÖVE's `clear(color, stencil, depth)` and
 /// `clear(false, …)`.
 ///
-/// `color` fills the picture, replacing what was there, and `stencil`
-/// sets every stencil value. `None` leaves that part as it is, so
-/// `clear_ex(None, Some(0))` resets the stencil and keeps the picture.
-/// [`clear`] is `clear_ex(Some(color), Some(0))`. The scissor does not
+/// `color` fills the picture, replacing what was there, `stencil` sets
+/// every stencil value and `depth` every depth value, from 0 to 1. `None`
+/// leaves that part as it is, so `clear_ex(None, Some(0), None)` resets
+/// the stencil and keeps the rest. [`clear`] is
+/// `clear_ex(Some(color), Some(0), Some(1.0))`. The scissor does not
 /// limit it.
-pub fn clear_ex(color: Option<Color>, stencil: Option<u8>) {
-    context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil));
+pub fn clear_ex(color: Option<Color>, stencil: Option<u8>, depth: Option<f32>) {
+    context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil, depth));
 }
 
 /// Fills each canvas being drawn to with its own color, the equivalent of
 /// `love.graphics.clear(color1, color2, ...)` with several canvases set.
 /// `colors[0]` is for the first canvas; a canvas with `None`, or with no
-/// entry, keeps its picture. `stencil` sets every stencil value if given.
-/// The scissor does not limit it.
-pub fn clear_canvases(colors: &[Option<Color>], stencil: Option<u8>) {
+/// entry, keeps its picture. `stencil` sets every stencil value and
+/// `depth` every depth value, if given. The scissor does not limit it.
+pub fn clear_canvases(colors: &[Option<Color>], stencil: Option<u8>, depth: Option<f32>) {
     let mut each = [None; MAX_CANVASES];
     for (slot, color) in each.iter_mut().zip(colors) {
         *slot = *color;
     }
-    context::with(|ctx| ctx.gfx.batch.clear_targets(each, stencil));
+    context::with(|ctx| ctx.gfx.batch.clear_targets(each, stencil, depth));
 }
 
 /// Tells the GPU that the contents of the screen, or of the active
@@ -1505,6 +1508,37 @@ pub fn color_mask() -> (bool, bool, bool, bool) {
     context::with(|ctx| {
         let mask = ctx.gfx.batch.color_mask;
         (mask.r, mask.g, mask.b, mask.a)
+    })
+}
+
+/// Chooses how drawing uses depth, the equivalent of
+/// `love.graphics.setDepthMode`. Each pixel drawn is kept only where its
+/// depth compares with the depth already at that pixel as `compare` says,
+/// and with `write` its depth replaces it. `(CompareMode::Always, false)`,
+/// the default, leaves depth out.
+///
+/// Depth comes from the z of a mesh's 3-component `VertexPosition`, or
+/// from a [`Shader`]'s `position`: z from -10 to 10 maps to depth 1 to 0,
+/// as in LÖVE, so a larger z is nearer. Everything else is drawn at z 0,
+/// depth 0.5. The screen and every canvas have depth values of their own,
+/// which [`clear`] resets to 1.
+///
+/// ```no_run
+/// use smitten::{CompareMode, graphics};
+///
+/// graphics::set_depth_mode(CompareMode::Less, true);
+/// // Draw meshes in any order; nearer pixels win.
+/// graphics::set_depth_mode(CompareMode::Always, false);
+/// ```
+pub fn set_depth_mode(compare: CompareMode, write: bool) {
+    context::with(|ctx| ctx.gfx.batch.depth = DepthMode { compare, write });
+}
+
+/// How drawing uses depth, as `(compare, write)`. See [`set_depth_mode`].
+pub fn depth_mode() -> (CompareMode, bool) {
+    context::with(|ctx| {
+        let depth = ctx.gfx.batch.depth;
+        (depth.compare, depth.write)
     })
 }
 
