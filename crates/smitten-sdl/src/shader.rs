@@ -10,7 +10,7 @@
 
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
-use smitten_core::backend::{ShaderTexture, TextureKind, UniformField, UniformKind};
+use smitten_core::backend::{ShaderTexture, TextureKind, UniformArray, UniformField, UniformKind};
 
 /// The name of the entry point in the generated shader.
 pub(crate) const ENTRY_POINT: &std::ffi::CStr = c"smitten_fragment";
@@ -251,13 +251,42 @@ fn params_layout(module: &naga::Module) -> Result<(u32, Vec<UniformField>), Stri
     };
     let fields = members
         .iter()
-        .map(|member| UniformField {
-            name: member.name.clone().unwrap_or_default(),
-            offset: member.offset,
-            kind: uniform_kind(&module.types[member.ty].inner),
+        .map(|member| {
+            let (kind, array) = member_kind(module, &module.types[member.ty].inner);
+            UniformField {
+                name: member.name.clone().unwrap_or_default(),
+                offset: member.offset,
+                kind,
+                array,
+            }
         })
         .collect();
     Ok((*span, fields))
+}
+
+/// The type of a member of `Params`, and its shape if it is an array of
+/// a type that can be sent.
+fn member_kind(
+    module: &naga::Module,
+    ty: &naga::TypeInner,
+) -> (Option<UniformKind>, Option<UniformArray>) {
+    match *ty {
+        naga::TypeInner::Array {
+            base,
+            size: naga::ArraySize::Constant(count),
+            stride,
+        } => match uniform_kind(&module.types[base].inner) {
+            Some(kind) => (
+                Some(kind),
+                Some(UniformArray {
+                    count: count.get(),
+                    stride,
+                }),
+            ),
+            None => (None, None),
+        },
+        _ => (uniform_kind(ty), None),
+    }
 }
 
 fn uniform_kind(ty: &naga::TypeInner) -> Option<UniformKind> {
@@ -269,15 +298,30 @@ fn uniform_kind(ty: &naga::TypeInner) -> Option<UniformKind> {
             ScalarKind::Uint => Some(UniformKind::Uint),
             _ => None,
         },
-        TypeInner::Vector { size, scalar }
-            if scalar.kind == ScalarKind::Float && scalar.width == 4 =>
-        {
-            Some(match size {
-                VectorSize::Bi => UniformKind::Vec2,
-                VectorSize::Tri => UniformKind::Vec3,
-                VectorSize::Quad => UniformKind::Vec4,
+        TypeInner::Vector { size, scalar } if scalar.width == 4 => {
+            Some(match (scalar.kind, size) {
+                (ScalarKind::Float, VectorSize::Bi) => UniformKind::Vec2,
+                (ScalarKind::Float, VectorSize::Tri) => UniformKind::Vec3,
+                (ScalarKind::Float, VectorSize::Quad) => UniformKind::Vec4,
+                (ScalarKind::Sint, VectorSize::Bi) => UniformKind::IVec2,
+                (ScalarKind::Sint, VectorSize::Tri) => UniformKind::IVec3,
+                (ScalarKind::Sint, VectorSize::Quad) => UniformKind::IVec4,
+                (ScalarKind::Uint, VectorSize::Bi) => UniformKind::UVec2,
+                (ScalarKind::Uint, VectorSize::Tri) => UniformKind::UVec3,
+                (ScalarKind::Uint, VectorSize::Quad) => UniformKind::UVec4,
+                _ => return None,
             })
         }
+        TypeInner::Matrix {
+            columns,
+            rows,
+            scalar,
+        } if scalar.kind == ScalarKind::Float && scalar.width == 4 => match (columns, rows) {
+            (VectorSize::Bi, VectorSize::Bi) => Some(UniformKind::Mat2),
+            (VectorSize::Tri, VectorSize::Tri) => Some(UniformKind::Mat3),
+            (VectorSize::Quad, VectorSize::Quad) => Some(UniformKind::Mat4),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -393,16 +437,59 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
     fn a_type_that_cannot_be_sent_is_still_listed() {
         let compiled = compile(
             "
-struct Params { turn: mat2x2<f32> }
+struct Light { power: f32 }
+struct Params { light: Light, turn: mat2x3<f32> }
 
 fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
-    return color * params.turn[0].x;
+    return color * params.light.power * params.turn[0].x;
 }
 ",
         )
         .unwrap();
-        assert_eq!(compiled.fields[0].name, "turn");
+        assert_eq!(compiled.fields[0].name, "light");
         assert_eq!(compiled.fields[0].kind, None);
+        assert_eq!(compiled.fields[1].kind, None);
+    }
+
+    #[test]
+    fn matrices_integer_vectors_and_arrays_are_laid_out() {
+        let compiled = compile(
+            "
+struct Params {
+    turn: mat2x2<f32>,
+    tile: vec2<i32>,
+    view: mat3x3<f32>,
+    world: mat4x4<f32>,
+    lights: array<vec4<f32>, 8>,
+    bones: array<mat4x4<f32>, 2>,
+    flags: vec4<u32>,
+}
+
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    return color * params.turn[0].x * params.view[0].x * params.world[0].x
+        * params.lights[2] * params.bones[1][0] * f32(params.tile.x + i32(params.flags.y));
+}
+",
+        )
+        .unwrap();
+        let fields: Vec<_> = compiled
+            .fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.offset, field.kind, field.array))
+            .collect();
+        let array = |count, stride| Some(UniformArray { count, stride });
+        assert_eq!(
+            fields,
+            [
+                ("turn", 0, Some(UniformKind::Mat2), None),
+                ("tile", 16, Some(UniformKind::IVec2), None),
+                ("view", 32, Some(UniformKind::Mat3), None),
+                ("world", 80, Some(UniformKind::Mat4), None),
+                ("lights", 144, Some(UniformKind::Vec4), array(8, 16)),
+                ("bones", 272, Some(UniformKind::Mat4), array(2, 64)),
+                ("flags", 400, Some(UniformKind::UVec4), None),
+            ]
+        );
     }
 
     #[test]

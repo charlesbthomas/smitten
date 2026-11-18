@@ -1,10 +1,11 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::mpsc;
 
 use rapier2d::prelude::*;
 
+use super::coupling::{self, Coupling};
 use super::joint::{self, JointType, MOTOR_DAMPING};
 use super::{Body, BodyType, Fixture, Joint};
 
@@ -20,13 +21,48 @@ pub(super) struct Inner {
     /// game.
     pub ground: Option<RigidBodyHandle>,
     pre_solve: Option<PreSolveCallback>,
+    contact_filter: Option<ContactFilterCallback>,
+    /// Whether bodies may fall asleep at all. See
+    /// [`World::set_sleeping_allowed`].
+    pub sleeping_allowed: bool,
+    /// Bodies told they may not sleep with [`Body::set_sleeping_allowed`].
+    pub sleepless: HashSet<RigidBodyHandle>,
+    /// The densities of fixtures whose body's mass was set by hand, which
+    /// count for nothing until [`Body::reset_mass_data`]. Per square unit.
+    pub held_density: HashMap<ColliderHandle, f32>,
+    /// Bodies whose mass was set by hand with [`Body::set_mass_data`].
+    pub mass_set: HashSet<RigidBodyHandle>,
+    /// What each gear and pulley joint ties together.
+    pub couplings: HashMap<ImpulseJointHandle, Coupling>,
 }
 
 type PreSolveCallback = Box<dyn FnMut(&mut PreSolve)>;
+type ContactFilterCallback = Box<dyn FnMut(&ContactFilter) -> bool>;
+
+impl Inner {
+    /// Lets a body fall asleep, or keeps it awake, as the world's and the
+    /// body's own settings say.
+    pub fn apply_sleeping(&mut self, handle: RigidBodyHandle) {
+        let allowed = self.sleeping_allowed && !self.sleepless.contains(&handle);
+        let Some(body) = self.world.bodies.get_mut(handle) else {
+            return;
+        };
+        let activation = body.activation_mut();
+        if allowed {
+            activation.normalized_linear_threshold =
+                RigidBodyActivation::default_normalized_linear_threshold();
+            activation.angular_threshold = RigidBodyActivation::default_angular_threshold();
+        } else {
+            activation.normalized_linear_threshold = -1.0;
+            activation.angular_threshold = -1.0;
+            body.wake_up(true);
+        }
+    }
+}
 
 /// A contact as the engine reported it, before handles are made for the
 /// game.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RawContact {
     began: bool,
     a: ColliderHandle,
@@ -34,6 +70,8 @@ struct RawContact {
     point: Vector,
     normal: Vector,
     speed: f32,
+    points: Vec<(f32, f32)>,
+    children: (usize, usize),
 }
 
 /// How a body was moving before an update: its velocity, its spin, and
@@ -73,6 +111,13 @@ pub struct Contact {
     /// crash. Zero when they were moving apart, and when they stopped
     /// touching.
     pub speed: f32,
+    /// Every point where they touch, in world coordinates: one or two,
+    /// or none for a sensor or once they have stopped touching. `x` and
+    /// `y` are the middle of these. LÖVE's `Contact:getPositions`.
+    pub points: Vec<(f32, f32)>,
+    /// Which piece of each fixture is touched: the index of the segment
+    /// of a chain, 0 for any other shape. LÖVE's `Contact:getChildren`.
+    pub children: (usize, usize),
 }
 
 impl Contact {
@@ -82,10 +127,21 @@ impl Contact {
     }
 }
 
+/// Where two fixtures touch, as worked out by [`touching_at`].
+struct Touching {
+    /// The middle of the points.
+    point: Vector,
+    /// From the first fixture into the second, one unit long.
+    normal: Vector,
+    points: Vec<(f32, f32)>,
+    /// The pieces of the first and second fixture that touch.
+    children: (usize, usize),
+}
+
 /// Where two fixtures touch and the direction from the first into the
 /// second there. Without contact points to go by (a sensor, or two that
 /// no longer touch) this is half way between them.
-fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> (Vector, Vector) {
+fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> Touching {
     let place = |handle| {
         world
             .colliders
@@ -94,7 +150,12 @@ fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> (V
     };
     let (Some(pose_a), Some(pose_b)) = (place(a), place(b)) else {
         // One of them was destroyed.
-        return (Vector::ZERO, Vector::new(0.0, 1.0));
+        return Touching {
+            point: Vector::ZERO,
+            normal: Vector::new(0.0, 1.0),
+            points: Vec::new(),
+            children: (0, 0),
+        };
     };
     let unit = |vector: Vector, fallback: Vector| {
         let length = vector.length();
@@ -109,7 +170,12 @@ fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> (V
         pose_b.transform_point(Vector::ZERO),
     );
     let apart = unit(center_b - center_a, Vector::new(0.0, 1.0));
-    let between = ((center_a + center_b) / 2.0, apart);
+    let between = Touching {
+        point: (center_a + center_b) / 2.0,
+        normal: apart,
+        points: Vec::new(),
+        children: (0, 0),
+    };
 
     let Some(pair) = world.contact_pair(a, b) else {
         return between;
@@ -141,11 +207,26 @@ fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> (V
         .fold(Vector::ZERO, |sum, point| sum + point.local_p1)
         / count;
     let point = to_world(local);
+    let points = manifold
+        .points
+        .iter()
+        .map(|contact| {
+            let point = to_world(contact.local_p1);
+            (point.x, point.y)
+        })
+        .collect();
     let mut normal = unit(to_world(local + manifold.local_n1) - point, apart);
+    let mut children = (manifold.subshape1 as usize, manifold.subshape2 as usize);
     if pair.collider1 != a {
         normal = -normal;
+        children = (children.1, children.0);
     }
-    (point, normal)
+    Touching {
+        point,
+        normal,
+        points,
+        children,
+    }
 }
 
 /// Where a ray first met a fixture.
@@ -180,6 +261,11 @@ pub struct Touch {
     pub normal_impulse: f32,
     /// The push across the normal that friction gave, likewise.
     pub tangent_impulse: f32,
+    /// Every point where they touch, one or two, in world coordinates.
+    pub points: Vec<(f32, f32)>,
+    /// Which piece of each fixture is touched: the index of the segment
+    /// of a chain, 0 for any other shape.
+    pub children: (usize, usize),
 }
 
 impl Touch {
@@ -220,32 +306,92 @@ pub struct PreSolve {
     pub restitution: f32,
 }
 
-thread_local! {
-    /// The world being stepped and its pre-solve callback, for [`Hooks`].
-    /// The engine wants hooks it could share between threads, which the
-    /// callback is not; the step runs on this thread, so it waits here.
-    static PRE_SOLVE: RefCell<Option<(Shared, PreSolveCallback)>> = const { RefCell::new(None) };
+/// Two fixtures about to be checked for a collision, handed to the
+/// callback given to [`World::set_contact_filter`], the equivalent of
+/// the two fixtures LÖVE's contact filter is called with.
+///
+/// As in [`PreSolve`], do not call methods on `a` and `b` inside the
+/// callback: compare them, or use the user data copied here.
+#[derive(Debug)]
+pub struct ContactFilter {
+    pub a: Fixture,
+    pub b: Fixture,
+    /// [`Fixture::user_data`] of `a` and `b`.
+    pub a_data: u64,
+    pub b_data: u64,
+    /// [`Body::user_data`] of the bodies of `a` and `b`.
+    pub a_body_data: u64,
+    pub b_body_data: u64,
 }
 
-/// Runs the pre-solve callback from inside the engine's step.
+/// The callbacks run from inside the engine's step, and the world they
+/// belong to.
+struct Callbacks {
+    world: Shared,
+    pre_solve: Option<PreSolveCallback>,
+    contact_filter: Option<ContactFilterCallback>,
+}
+
+thread_local! {
+    /// The world being stepped and its callbacks, for [`Hooks`]. The
+    /// engine wants hooks it could share between threads, which the
+    /// callbacks are not; the step runs on this thread, so they wait here.
+    static CALLBACKS: RefCell<Option<Callbacks>> = const { RefCell::new(None) };
+}
+
+/// Runs the game's callbacks from inside the engine's step.
 struct Hooks;
 
-impl PhysicsHooks for Hooks {
-    fn modify_solver_contacts(&self, context: &mut ContactModificationContext) {
-        let data = |handle| {
-            context
-                .colliders
-                .get(handle)
-                .map_or((0, 0), |collider: &Collider| {
-                    let body = collider
-                        .parent()
-                        .and_then(|parent| context.bodies.get(parent))
-                        .map_or(0, |body| body.user_data as u64);
-                    (collider.user_data as u64, body)
-                })
-        };
+/// The user data of a fixture and of its body.
+fn user_data(colliders: &ColliderSet, bodies: &RigidBodySet, handle: ColliderHandle) -> (u64, u64) {
+    colliders.get(handle).map_or((0, 0), |collider| {
+        let body = collider
+            .parent()
+            .and_then(|parent| bodies.get(parent))
+            .map_or(0, |body| body.user_data as u64);
+        (collider.user_data as u64, body)
+    })
+}
+
+impl Hooks {
+    /// Whether the game's contact filter lets the two collide.
+    fn allowed(context: &PairFilterContext) -> bool {
         let (a, b) = (context.collider1, context.collider2);
-        let ((a_data, a_body_data), (b_data, b_body_data)) = (data(a), data(b));
+        let (a_data, a_body_data) = user_data(context.colliders, context.bodies, a);
+        let (b_data, b_body_data) = user_data(context.colliders, context.bodies, b);
+        CALLBACKS.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(callbacks) = slot.as_mut() else {
+                return true;
+            };
+            let Some(filter) = callbacks.contact_filter.as_mut() else {
+                return true;
+            };
+            filter(&ContactFilter {
+                a: Fixture::new(&callbacks.world, a),
+                b: Fixture::new(&callbacks.world, b),
+                a_data,
+                b_data,
+                a_body_data,
+                b_body_data,
+            })
+        })
+    }
+}
+
+impl PhysicsHooks for Hooks {
+    fn filter_contact_pair(&self, context: &PairFilterContext) -> Option<SolverFlags> {
+        Hooks::allowed(context).then(SolverFlags::default)
+    }
+
+    fn filter_intersection_pair(&self, context: &PairFilterContext) -> bool {
+        Hooks::allowed(context)
+    }
+
+    fn modify_solver_contacts(&self, context: &mut ContactModificationContext) {
+        let (a, b) = (context.collider1, context.collider2);
+        let (a_data, a_body_data) = user_data(context.colliders, context.bodies, a);
+        let (b_data, b_body_data) = user_data(context.colliders, context.bodies, b);
         let Some(manifold) = context.rigid_mut() else {
             return;
         };
@@ -255,14 +401,17 @@ impl PhysicsHooks for Hooks {
             .iter()
             .fold(Vector::ZERO, |sum, contact| sum + contact.anchor1)
             / count;
-        PRE_SOLVE.with(|slot| {
+        CALLBACKS.with(|slot| {
             let mut slot = slot.borrow_mut();
-            let Some((world, callback)) = slot.as_mut() else {
+            let Some(callbacks) = slot.as_mut() else {
+                return;
+            };
+            let Some(callback) = callbacks.pre_solve.as_mut() else {
                 return;
             };
             let mut contact = PreSolve {
-                a: Fixture::new(world, a),
-                b: Fixture::new(world, b),
+                a: Fixture::new(&callbacks.world, a),
+                b: Fixture::new(&callbacks.world, b),
                 a_data,
                 b_data,
                 a_body_data,
@@ -301,6 +450,12 @@ impl World {
                 contacts: Vec::new(),
                 ground: None,
                 pre_solve: None,
+                contact_filter: None,
+                sleeping_allowed: true,
+                sleepless: HashSet::new(),
+                held_density: HashMap::new(),
+                mass_set: HashSet::new(),
+                couplings: HashMap::new(),
             })),
         }
     }
@@ -332,17 +487,24 @@ impl World {
                 )
             })
             .collect();
-        // The pre-solve callback is taken out while the step runs, so the
-        // world can be borrowed for it.
-        if let Some(callback) = inner.pre_solve.take() {
-            PRE_SOLVE.with(|slot| *slot.borrow_mut() = Some((self.inner.clone(), callback)));
+        // The callbacks are taken out while the step runs, so the world
+        // can be borrowed for them.
+        if inner.pre_solve.is_some() || inner.contact_filter.is_some() {
+            let callbacks = Callbacks {
+                world: self.inner.clone(),
+                pre_solve: inner.pre_solve.take(),
+                contact_filter: inner.contact_filter.take(),
+            };
+            CALLBACKS.with(|slot| *slot.borrow_mut() = Some(callbacks));
             inner.world.step_with_events(&Hooks, &collector);
-            inner.pre_solve = PRE_SOLVE
-                .with(|slot| slot.borrow_mut().take())
-                .map(|(_, callback)| callback);
+            if let Some(callbacks) = CALLBACKS.with(|slot| slot.borrow_mut().take()) {
+                inner.pre_solve = callbacks.pre_solve;
+                inner.contact_filter = callbacks.contact_filter;
+            }
         } else {
             inner.world.step_with_events(&(), &collector);
         }
+        coupling::solve(&mut inner);
         // A force lasts for one update, as in LÖVE. The engine would keep
         // applying it until told otherwise.
         for (_, body) in inner.world.bodies.iter_mut() {
@@ -356,7 +518,8 @@ impl World {
                 CollisionEvent::Started(a, b, _) => (true, a, b),
                 CollisionEvent::Stopped(a, b, _) => (false, a, b),
             };
-            let (point, normal) = touching_at(&inner.world, a, b);
+            let touching = touching_at(&inner.world, a, b);
+            let (point, normal) = (touching.point, touching.normal);
             // The velocity each fixture's body had at the point.
             let velocity = |collider: ColliderHandle| {
                 inner
@@ -382,6 +545,8 @@ impl World {
                 point,
                 normal,
                 speed,
+                points: if began { touching.points } else { Vec::new() },
+                children: touching.children,
             });
         }
     }
@@ -406,6 +571,8 @@ impl World {
                 y: contact.point.y,
                 normal: (contact.normal.x, contact.normal.y),
                 speed: contact.speed,
+                points: contact.points.clone(),
+                children: contact.children,
             })
             .collect()
     }
@@ -451,11 +618,14 @@ impl World {
             BodyType::Dynamic => RigidBodyBuilder::dynamic(),
             BodyType::Kinematic => RigidBodyBuilder::kinematic_velocity_based(),
         };
-        let handle = self
-            .inner
-            .borrow_mut()
+        let mut inner = self.inner.borrow_mut();
+        let handle = inner
             .world
             .insert_body(builder.translation(Vector::new(x, y)));
+        if !inner.sleeping_allowed {
+            inner.apply_sleeping(handle);
+        }
+        drop(inner);
         Body::new(&self.inner, handle)
     }
 
@@ -514,7 +684,8 @@ impl World {
                 }
             }
             let (a, b) = (pair.collider1, pair.collider2);
-            let (point, normal) = touching_at(&inner.world, a, b);
+            let touching = touching_at(&inner.world, a, b);
+            let (point, normal) = (touching.point, touching.normal);
             touches.push(Touch {
                 a: Fixture::new(&self.inner, a),
                 b: Fixture::new(&self.inner, b),
@@ -523,6 +694,8 @@ impl World {
                 normal: (normal.x, normal.y),
                 normal_impulse,
                 tangent_impulse,
+                points: touching.points,
+                children: touching.children,
             });
         }
         touches
@@ -566,6 +739,108 @@ impl World {
     /// Whether a callback was given to [`World::set_pre_solve`].
     pub fn has_pre_solve(&self) -> bool {
         self.inner.borrow().pre_solve.is_some()
+    }
+
+    /// Calls `callback` for pairs of fixtures that come close, during
+    /// each [`World::update`], to decide whether they collide: `false`
+    /// lets them pass through each other and leaves them out of
+    /// [`World::contacts`]. This is LÖVE's `World:setContactFilter`.
+    ///
+    /// It is asked only about fixtures whose [filters](Fixture::set_filter)
+    /// already let them collide, and is asked again at each update while
+    /// they stay close, so its answer may change. As with
+    /// [`World::set_pre_solve`], the callback must not call methods of the
+    /// world or of its bodies, fixtures and joints.
+    ///
+    /// ```
+    /// use smitten::physics::{BodyType, World};
+    ///
+    /// let world = World::new(0.0, 600.0);
+    /// let ghost = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    /// ghost.add_circle(10.0).set_user_data(1);
+    /// // Fixtures with user data 1 pass through everything.
+    /// world.set_contact_filter(|pair| pair.a_data != 1 && pair.b_data != 1);
+    /// ```
+    pub fn set_contact_filter(&self, callback: impl FnMut(&ContactFilter) -> bool + 'static) {
+        self.inner.borrow_mut().contact_filter = Some(Box::new(callback));
+    }
+
+    /// Stops calling the callback given to [`World::set_contact_filter`],
+    /// so fixtures collide as their filters say.
+    pub fn clear_contact_filter(&self) {
+        self.inner.borrow_mut().contact_filter = None;
+    }
+
+    /// Whether a callback was given to [`World::set_contact_filter`].
+    pub fn has_contact_filter(&self) -> bool {
+        self.inner.borrow().contact_filter.is_some()
+    }
+
+    /// Whether bodies that come to rest may fall asleep. `true` at first.
+    pub fn is_sleeping_allowed(&self) -> bool {
+        self.inner.borrow().sleeping_allowed
+    }
+
+    /// Lets bodies that come to rest fall asleep, which saves time, or
+    /// keeps every body awake and wakes those asleep now. A body can also
+    /// be kept awake by itself with [`Body::set_sleeping_allowed`].
+    pub fn set_sleeping_allowed(&self, allowed: bool) {
+        let mut inner = self.inner.borrow_mut();
+        inner.sleeping_allowed = allowed;
+        let handles: Vec<RigidBodyHandle> = inner.world.bodies.iter().map(|(h, _)| h).collect();
+        for handle in handles {
+            inner.apply_sleeping(handle);
+        }
+    }
+
+    /// How many pairs of fixtures are close enough to be checked for
+    /// touching: those whose bounding boxes overlap, touching or not, as
+    /// LÖVE's `World:getContactCount` counts them.
+    pub fn contact_count(&self) -> usize {
+        let inner = self.inner.borrow();
+        inner.world.contact_pairs().count() + inner.world.intersection_pairs().count()
+    }
+
+    /// Whether the world is in the middle of an update, which is so only
+    /// inside the callbacks given to [`World::set_pre_solve`] and
+    /// [`World::set_contact_filter`]. The world cannot be changed then.
+    pub fn is_locked(&self) -> bool {
+        self.inner.try_borrow_mut().is_err()
+    }
+
+    /// Moves the world's origin to `(x, y)`: every body, and every mouse
+    /// joint's target, moves by `(-x, -y)`, without changing how anything
+    /// moves. Useful in a large world, to keep the numbers near the player
+    /// small, where they are precise.
+    pub fn translate_origin(&self, x: f32, y: f32) {
+        let shift = Vector::new(x, y);
+        let mut inner = self.inner.borrow_mut();
+        let ground = inner.ground;
+        let world = &mut inner.world;
+        for (handle, body) in world.bodies.iter_mut() {
+            if Some(handle) == ground {
+                continue;
+            }
+            let mut pose = *body.position();
+            pose.translation -= shift;
+            body.set_position(pose, false);
+        }
+        world
+            .bodies
+            .propagate_modified_body_positions_to_colliders(&mut world.colliders);
+        if let Some(ground) = ground {
+            let mice: Vec<ImpulseJointHandle> = world
+                .impulse_joints
+                .attached_joints(ground)
+                .map(|(_, _, handle, _)| handle)
+                .collect();
+            for handle in mice {
+                if let Some(joint) = world.impulse_joints.get_mut(handle, false) {
+                    let anchor = joint.data.local_anchor1();
+                    joint.data.set_local_anchor1(anchor - shift);
+                }
+            }
+        }
     }
 
     /// Every fixture whose bounding box overlaps the box from
@@ -897,6 +1172,147 @@ impl World {
             joint.set_motor_position(axis, 0.0, stiffness, damping);
         }
         self.insert_joint(a, b, joint, JointType::Motor)
+    }
+
+    /// Hangs two bodies from a rope over two fixed pulleys, at
+    /// `(ground_x1, ground_y1)` and `(ground_x2, ground_y2)`. The rope is
+    /// tied to `(x1, y1)` on the first body and `(x2, y2)` on the second,
+    /// and keeps `length_a + ratio * length_b` as it is now, so when one
+    /// side goes down the other comes up. A `ratio` above 1 makes the
+    /// second side move less and pull harder, like a block and tackle.
+    ///
+    /// Box2D's pulley holds the rope taut both ways, as this does: it
+    /// never goes slack. Rapier has no pulley, so smitten enforces it
+    /// itself after each step, on top of the engine's own joints and
+    /// contacts. One difference shows: while one side rests on the
+    /// ground, the two keep a slight speed against each other, too small
+    /// to see, and so never fall asleep.
+    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newPulleyJoint.
+    pub fn new_pulley_joint(
+        &self,
+        a: &Body,
+        b: &Body,
+        ground_x1: f32,
+        ground_y1: f32,
+        ground_x2: f32,
+        ground_y2: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        ratio: f32,
+        collide: bool,
+    ) -> Joint {
+        assert!(
+            ratio.is_finite() && ratio > 0.0,
+            "a pulley's ratio must be positive, got {ratio}"
+        );
+        let (ground_a, ground_b) = (
+            Vector::new(ground_x1, ground_y1),
+            Vector::new(ground_x2, ground_y2),
+        );
+        let (first, second) = (Vector::new(x1, y1), Vector::new(x2, y2));
+        let constant = (first - ground_a).length() + ratio * (second - ground_b).length();
+        let data = GenericJointBuilder::new(JointAxesMask::empty())
+            .local_anchor1(a.pose().inverse_transform_point(first))
+            .local_anchor2(b.pose().inverse_transform_point(second))
+            .contacts_enabled(collide)
+            .build();
+        let joint = self.insert_joint(a, b, data, JointType::Pulley);
+        self.inner.borrow_mut().couplings.insert(
+            joint.handle,
+            Coupling::Pulley {
+                ground_a,
+                ground_b,
+                ratio,
+                constant,
+                impulse: 0.0,
+            },
+        );
+        joint
+    }
+
+    /// Ties two revolute or prismatic joints together like gears, so that
+    /// `angle_a + ratio * angle_b` stays as it is now, where each is the
+    /// joint's angle (or, for a prismatic joint, how far it has slid).
+    /// With a `ratio` of 2, the second joint turns half as far as the
+    /// first, the other way. A revolute and a prismatic joint make a rack
+    /// and pinion.
+    ///
+    /// The gear joint connects the second bodies of the two joints, which
+    /// are usually each pinned to the ground. Destroy the gear joint
+    /// before either of its joints; once one is gone the gear does
+    /// nothing.
+    ///
+    /// Rapier has no gear joint, so smitten enforces it itself after each
+    /// step, on top of the engine's own joints and contacts.
+    pub fn new_gear_joint(
+        &self,
+        joint_a: &Joint,
+        joint_b: &Joint,
+        ratio: f32,
+        collide: bool,
+    ) -> Joint {
+        assert!(
+            ratio.is_finite() && ratio != 0.0,
+            "a gear's ratio must be a number other than 0, got {ratio}"
+        );
+        for joint in [joint_a, joint_b] {
+            assert!(
+                Rc::ptr_eq(&self.inner, &joint.world),
+                "both joints of a gear must belong to this world"
+            );
+            let kind = joint.kind();
+            assert!(
+                matches!(kind, JointType::Revolute | JointType::Prismatic),
+                "a gear joint ties revolute and prismatic joints, not a {kind:?} joint"
+            );
+        }
+        let (handle_a, handle_b) = (joint_a.handle, joint_b.handle);
+        let (body_a, body_b, anchor_a, anchor_b, constant) = {
+            let inner = self.inner.borrow();
+            let world = &inner.world;
+            let joint = |handle| {
+                world
+                    .impulse_joints
+                    .get(handle)
+                    .expect("a gear's joints must not be destroyed")
+            };
+            let (one, two) = (joint(handle_a), joint(handle_b));
+            let mut rates = Vec::new();
+            let a = coupling::joint_coordinate(world, handle_a, &mut rates, 1.0)
+                .expect("the first joint exists");
+            let b = coupling::joint_coordinate(world, handle_b, &mut rates, 1.0)
+                .expect("the second joint exists");
+            (
+                one.body2(),
+                two.body2(),
+                one.data.local_anchor2(),
+                two.data.local_anchor2(),
+                a + ratio * b,
+            )
+        };
+        let data = GenericJointBuilder::new(JointAxesMask::empty())
+            .local_anchor1(anchor_a)
+            .local_anchor2(anchor_b)
+            .contacts_enabled(collide)
+            .build();
+        let (a, b) = (
+            Body::new(&self.inner, body_a),
+            Body::new(&self.inner, body_b),
+        );
+        let joint = self.insert_joint(&a, &b, data, JointType::Gear);
+        self.inner.borrow_mut().couplings.insert(
+            joint.handle,
+            Coupling::Gear {
+                joint_a: handle_a,
+                joint_b: handle_b,
+                ratio,
+                constant,
+                impulse: 0.0,
+            },
+        );
+        joint
     }
 
     /// The world's hidden ground body, made the first time it is needed.
