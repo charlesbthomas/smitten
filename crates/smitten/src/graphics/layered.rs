@@ -138,6 +138,22 @@ impl ArrayImage {
         self.inner.texture
     }
 
+    /// An array image for a texture that was never made, for tests that
+    /// need no GPU.
+    #[cfg(test)]
+    pub(crate) fn for_tests(texture: TextureId, width: u32, height: u32, layers: u32) -> Self {
+        ArrayImage {
+            inner: Rc::new(Inner {
+                texture,
+                width,
+                height,
+                layers,
+                filter: Cell::new(Filter::default()),
+                _counted: Counted::new(Kind::Image),
+            }),
+        }
+    }
+
     pub(crate) fn keep_alive(&self) -> Rc<dyn std::any::Any> {
         self.inner.clone()
     }

@@ -782,6 +782,9 @@ fn pre_solve_can_change_friction_for_one_contact() {
     world.set_pre_solve(|contact| {
         if contact.a_data == 7 || contact.b_data == 7 {
             contact.friction = 0.0;
+            contact.restitution = 0.9;
+            contact.reset_restitution();
+            assert_eq!(contact.restitution, 0.0);
         }
     });
     block.set_linear_velocity(100.0, 0.0);
@@ -791,9 +794,14 @@ fn pre_solve_can_change_friction_for_one_contact() {
         "{:?}",
         block.linear_velocity()
     );
-    world.clear_pre_solve();
+    world.set_pre_solve(|contact| {
+        contact.friction = 0.0;
+        contact.reset_friction();
+    });
+    block.set_linear_velocity(100.0, 0.0);
     run(&world, 0.5);
     assert!(block.linear_velocity().0 < 1.0);
+    world.clear_pre_solve();
 }
 
 #[test]
