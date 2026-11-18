@@ -11,7 +11,8 @@
 //!
 //! Relative paths are looked up in the save directory first and then in
 //! the asset directory, as in LÖVE, so a saved file can override a shipped
-//! one. Writing always goes to the save directory. Image, font, shader and
+//! one. [`Config::append_identity`] or [`set_append_identity`] reverse
+//! that, so shipped files win. Writing always goes to the save directory. Image, font, shader and
 //! sound loading use the same lookup.
 //!
 //! A game can also [`mount`] a zip archive or a directory, such as a
@@ -51,7 +52,7 @@ impl FilesystemState {
             asset_directory: default_asset_directory(),
             identity: config.identity.clone().unwrap_or_else(default_identity),
             save_directory: None,
-            mounts: SearchPath::default(),
+            mounts: SearchPath::new(config.append_identity),
         }
     }
 }
@@ -203,6 +204,21 @@ pub fn set_identity(identity: &str) {
         ctx.fs.identity = identity.to_string();
         ctx.fs.save_directory = None;
     });
+}
+
+/// Sets whether the asset directory is searched before the save
+/// directory, the `appendToPath` argument of `love.filesystem.setIdentity`
+/// and the runtime form of [`Config::append_identity`]. When it is on, a
+/// file in the save directory no longer overrides a shipped file of the
+/// same name. Writes still go to the save directory.
+pub fn set_append_identity(append: bool) {
+    context::with(|ctx| ctx.fs.mounts.assets_first = append);
+}
+
+/// Whether the asset directory is searched before the save directory.
+/// See [`set_append_identity`].
+pub fn append_identity() -> bool {
+    context::with(|ctx| ctx.fs.mounts.assets_first)
 }
 
 /// The per-user directory the game may write to, created if needed.

@@ -264,6 +264,9 @@ pub trait Game: Sized + 'static {
 /// where it came from until the player presses Escape, like LÖVE's error
 /// screen. The panic then continues as usual.
 pub fn run<G: Game>(config: Config) {
+    if config.console {
+        open_console();
+    }
     let backend = match smitten_sdl::SdlBackend::new(&config) {
         Ok(backend) => backend,
         Err(message) => panic!("smitten: could not start: {message}"),
@@ -336,6 +339,30 @@ pub fn run<G: Game>(config: Config) {
     }
     context::uninstall();
 }
+
+/// Gives the game a console to print to, like `t.console`: the one it was
+/// started from if there is one, and a new window otherwise.
+#[cfg(windows)]
+fn open_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+        fn AllocConsole() -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: both calls take plain values and only fail by returning 0.
+    // Rust's standard streams look up the console's handles on every
+    // write, so printing works from here on.
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            AllocConsole();
+        }
+    }
+}
+
+/// Only Windows separates console and window programs.
+#[cfg(not(windows))]
+fn open_console() {}
 
 /// Turns the pixels in a backend event into the units the game works in.
 pub(crate) fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {

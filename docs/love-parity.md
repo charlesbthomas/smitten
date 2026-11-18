@@ -120,9 +120,7 @@ shaders, volume textures and canvas formats.
 
 - `love.run`: a custom main loop.
 - `love.conf` fields with no `Config` equivalent: `t.gammacorrect`,
-  `t.window.depth`, `t.window.stencil`, `t.appendidentity`,
-  `t.externalstorage`, `t.accelerometerjoystick`, `t.console`,
-  `t.audio.mic`, and `t.modules.*` for turning modules off.
+  `t.window.depth`, `t.window.stencil`.
 
 ## Left out on purpose
 
@@ -137,3 +135,5 @@ shaders, volume textures and canvas formats.
 | `Object`, `Data` base types | Rust ownership and slices do their job. |
 | `setDeprecationOutput`, `hasDeprecationOutput` | Smitten has no deprecated LÖVE names to warn about. |
 | LÖVE's GLSL shader dialect | Smitten shaders are WGSL. |
+| `t.externalstorage`, `t.accelerometerjoystick`, `t.audio.mic` | They only do anything on Android and iOS, which Smitten doesn't run on. |
+| `t.modules.*` | The `physics` and `video` Cargo features leave those modules out; the rest are always built in. |
