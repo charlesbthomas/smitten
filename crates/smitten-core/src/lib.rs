@@ -10,6 +10,7 @@ pub mod backend;
 mod blend;
 mod color;
 mod config;
+mod cull;
 mod filter;
 mod input;
 mod key;
@@ -19,6 +20,7 @@ mod system;
 pub use blend::{BlendAlphaMode, BlendMode};
 pub use color::Color;
 pub use config::{Config, Scaling};
+pub use cull::{CullMode, VertexWinding};
 pub use filter::{Filter, Wrap};
 pub use input::{
     GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickId, JoystickInfo, JoystickInput,

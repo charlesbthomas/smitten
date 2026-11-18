@@ -19,7 +19,7 @@ use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, CompressedFormat, CursorId, Frame, RecordingDeviceId,
-    RecordingSink, ShaderId, ShaderInfo, TextureId, TextureKind,
+    RecordingSink, RendererInfo, ShaderId, ShaderInfo, TextureId, TextureKind,
 };
 use smitten_core::{
     Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
@@ -729,6 +729,14 @@ impl Backend for SdlBackend {
 
     fn destroy_shader(&mut self, shader: ShaderId) {
         self.renderer.destroy_shader(shader);
+    }
+
+    fn validate_shader(&self, source: &str) -> Result<(), String> {
+        shader::compile(source).map(|_| ())
+    }
+
+    fn renderer_info(&self) -> RendererInfo {
+        self.renderer.renderer_info()
     }
 
     fn present(&mut self, frame: &Frame) {

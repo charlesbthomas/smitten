@@ -5,7 +5,7 @@ use smitten_core::StencilMode;
 use smitten_core::backend::ColorMask;
 
 use super::{Canvas, Font, GraphicsState, LineJoin, LineStyle, Shader, Transform};
-use crate::{BlendAlphaMode, BlendMode, Color, Filter};
+use crate::{BlendAlphaMode, BlendMode, Color, CullMode, Filter, VertexWinding};
 
 /// What [`push_ex`](super::push_ex) saves, the equivalent of LÖVE's
 /// `StackType`.
@@ -46,6 +46,8 @@ pub(super) struct DrawState {
     color_mask: ColorMask,
     wireframe: bool,
     default_filter: Filter,
+    mesh_cull: CullMode,
+    front_face: VertexWinding,
 }
 
 impl DrawState {
@@ -70,6 +72,8 @@ impl DrawState {
             color_mask: ColorMask::ALL,
             wireframe: false,
             default_filter: Filter::default(),
+            mesh_cull: CullMode::default(),
+            front_face: VertexWinding::default(),
         }
     }
 }
@@ -95,6 +99,8 @@ impl GraphicsState {
             color_mask: self.batch.color_mask,
             wireframe: self.batch.wireframe,
             default_filter: self.default_filter,
+            mesh_cull: self.mesh_cull,
+            front_face: self.front_face,
         }
     }
 
@@ -129,6 +135,8 @@ impl GraphicsState {
         self.batch.color_mask = state.color_mask;
         self.batch.wireframe = state.wireframe;
         self.default_filter = state.default_filter;
+        self.mesh_cull = state.mesh_cull;
+        self.front_face = state.front_face;
     }
 
     pub(super) fn push_state(&mut self, kind: StackType) {
@@ -198,6 +206,8 @@ mod tests {
         };
         gfx.batch.wireframe = true;
         gfx.default_filter = Filter::Nearest;
+        gfx.mesh_cull = CullMode::Back;
+        gfx.front_face = VertexWinding::Clockwise;
         gfx.pop_state();
 
         assert_eq!(gfx.transform, Transform::IDENTITY);
@@ -215,6 +225,8 @@ mod tests {
         assert_eq!(gfx.batch.color_mask, ColorMask::ALL);
         assert!(!gfx.batch.wireframe);
         assert_eq!(gfx.default_filter, Filter::Linear);
+        assert_eq!(gfx.mesh_cull, CullMode::None);
+        assert_eq!(gfx.front_face, VertexWinding::CounterClockwise);
     }
 
     #[test]
