@@ -40,6 +40,9 @@ pub(crate) struct Inner {
     /// Whether it was made to be drawn and sampled. Only a canvas can be
     /// made otherwise.
     readable: Cell<bool>,
+    /// Whether the GPU decodes its colors from sRGB, which is what
+    /// gamma-correct rendering does for images not made `linear`.
+    srgb: Cell<bool>,
     _counted: Counted,
 }
 
@@ -51,6 +54,11 @@ pub struct ImageSettings {
     /// uses when it is drawn small, so it does not shimmer or look grainy.
     /// They take a third more memory. See [`Image::set_mipmap_filter`].
     pub mipmaps: bool,
+    /// With gamma-correct rendering, whether the pixels are used as they
+    /// are rather than decoded from sRGB, LÖVE's `linear` setting. Use it
+    /// for pictures that hold data, such as normal maps, rather than
+    /// colors. It changes nothing without gamma-correct rendering.
+    pub linear: bool,
 }
 
 impl Drop for Inner {
@@ -87,6 +95,15 @@ impl Image {
         settings: ImageSettings,
     ) -> Result<Image, ImageError> {
         context::with(|ctx| {
+            // Gamma-correct rendering stores ordinary colors sRGB-encoded.
+            let format = if format == PixelFormat::Rgba8
+                && ctx.backend.is_gamma_correct()
+                && !settings.linear
+            {
+                PixelFormat::Srgba8
+            } else {
+                format
+            };
             let texture = match (format, settings.mipmaps) {
                 (PixelFormat::Rgba8, true) => {
                     ctx.backend.create_mipmapped_texture(width, height, pixels)
@@ -114,6 +131,7 @@ impl Image {
                     mipmap_filter: Cell::new(settings.mipmaps.then_some((Filter::Linear, 0.0))),
                     format: Cell::new(format),
                     readable: Cell::new(true),
+                    srgb: Cell::new(format.is_srgb()),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -141,6 +159,7 @@ impl Image {
                 mipmap_filter: Cell::new(None),
                 format: Cell::new(PixelFormat::Rgba8),
                 readable: Cell::new(true),
+                srgb: Cell::new(false),
                 _counted: Counted::new(kind),
             }),
         }
@@ -186,6 +205,15 @@ impl Image {
     pub(crate) fn set_storage(&self, format: PixelFormat, readable: bool) {
         self.inner.format.set(format);
         self.inner.readable.set(readable);
+        self.inner.srgb.set(format.is_srgb());
+    }
+
+    /// Whether the image's pixels are used as they are, rather than
+    /// decoded from sRGB, while rendering is gamma-correct, the
+    /// equivalent of `Image:isFormatLinear`. Always `false` without
+    /// gamma-correct rendering, as in LÖVE.
+    pub fn is_format_linear(&self) -> bool {
+        super::is_gamma_correct() && !self.inner.srgb.get()
     }
 
     /// How the image is sampled when scaled or rotated.
@@ -233,11 +261,21 @@ impl Image {
     ///
     /// Its pixels cannot be replaced.
     pub fn from_compressed_data(data: &CompressedImageData) -> Result<Image, ImageError> {
+        Image::from_compressed_data_with(data, ImageSettings::default())
+    }
+
+    /// As [`Image::from_compressed_data`], with options. Only `linear`
+    /// applies; the mipmaps are the ones in the data.
+    pub fn from_compressed_data_with(
+        data: &CompressedImageData,
+        settings: ImageSettings,
+    ) -> Result<Image, ImageError> {
         context::with(|ctx| {
             let (width, height) = data.dimensions();
+            let srgb = ctx.backend.is_gamma_correct() && !settings.linear;
             let texture = ctx
                 .backend
-                .create_compressed_texture(data.format(), width, height, &data.levels())
+                .create_compressed_texture(data.format(), srgb, width, height, &data.levels())
                 .map_err(ImageError::Upload)?;
             let mipmap_count = data.mipmap_count();
             Ok(Image {
@@ -252,6 +290,7 @@ impl Image {
                     mipmap_filter: Cell::new((mipmap_count > 1).then_some((Filter::Linear, 0.0))),
                     format: Cell::new(PixelFormat::Rgba8),
                     readable: Cell::new(true),
+                    srgb: Cell::new(srgb),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -436,7 +475,7 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
             },
             other => other,
         })?;
-        Image::from_compressed_data(&data)?
+        Image::from_compressed_data_with(&data, settings)?
     } else {
         let decoded = decode(&bytes).map_err(|message| ImageError::Decode {
             path: path.to_path_buf(),
@@ -463,8 +502,13 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
     if is_dds(bytes) {
         let data = CompressedImageData::from_bytes(bytes).map_err(|error| error.to_string())?;
         let (width, height) = data.dimensions();
-        let texture =
-            backend.create_compressed_texture(data.format(), width, height, &data.levels())?;
+        let texture = backend.create_compressed_texture(
+            data.format(),
+            inner.srgb.get(),
+            width,
+            height,
+            &data.levels(),
+        )?;
         replace_texture(
             inner,
             backend,
@@ -485,12 +529,20 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
     // texture. Quads made for the old size keep their old numbers until
     // the game makes them again. An image with mipmaps keeps having them,
     // as many as the new size allows.
-    let (texture, levels) = if inner.mipmap_count.get() > 1 {
-        let texture = backend.create_mipmapped_texture(width, height, decoded.as_raw())?;
-        (texture, 32 - width.max(height).leading_zeros())
+    // It stays sRGB-encoded or linear, as it was made.
+    let format = if inner.srgb.get() {
+        PixelFormat::Srgba8
     } else {
-        (backend.create_texture(width, height, decoded.as_raw())?, 1)
+        PixelFormat::Rgba8
     };
+    let mipmapped = inner.mipmap_count.get() > 1;
+    let texture = backend.create_texture_in(format, width, height, decoded.as_raw(), mipmapped)?;
+    let levels = if mipmapped {
+        32 - width.max(height).leading_zeros()
+    } else {
+        1
+    };
+    inner.format.set(format);
     replace_texture(inner, backend, texture, width, height, levels, false);
     Ok(())
 }
@@ -529,6 +581,9 @@ fn replace_texture(
     inner.height.set(height);
     inner.mipmap_count.set(levels);
     inner.compressed.set(compressed);
+    if compressed {
+        inner.format.set(PixelFormat::Rgba8);
+    }
 }
 
 /// A rectangular part of an image, the equivalent of LÖVE's `Quad`.

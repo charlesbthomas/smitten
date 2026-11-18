@@ -77,6 +77,14 @@ pub struct Config {
     /// edges of shapes and images, as `t.window.msaa`. 0 or 1 is none; 2,
     /// 4 and 8 are common. The GPU may give fewer than asked for.
     pub msaa: u32,
+    /// Whether colors are blended in linear light, as `t.gammacorrect`.
+    /// Gradients, blending and lighting then come out physically right.
+    /// Images and canvases are stored sRGB-encoded, and colors from
+    /// `set_color` and vertex colors are converted to linear light when
+    /// they are drawn, so a game looks the same apart from the blending.
+    /// Off by default. If the display cannot do it, the game runs
+    /// without; `graphics::is_gamma_correct` says which.
+    pub gamma_correct: bool,
     /// Whether images, shaders, fonts and sounds are loaded again when
     /// their files change on disk while the game runs. On by default in debug builds, so
     /// `cargo run` picks up edits, and off in release builds.
@@ -107,6 +115,7 @@ impl Default for Config {
             console: false,
             vsync: true,
             msaa: 0,
+            gamma_correct: false,
             hot_reload: cfg!(debug_assertions),
         }
     }

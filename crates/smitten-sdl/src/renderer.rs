@@ -222,11 +222,19 @@ pub(crate) struct Renderer {
     transfer_buffer: *mut SDL_GPUTransferBuffer,
     /// How many vertices the two buffers above can hold.
     vertex_capacity: u32,
+    /// Whether the screen is sRGB-encoded, so vertex and clear colors,
+    /// which games give in sRGB, are converted to linear light.
+    gamma_correct: bool,
 }
 
 impl Renderer {
     /// Builds the pipeline for `window`, which `device` must already own.
-    pub fn new(device: *mut SDL_GPUDevice, window: *mut SDL_Window) -> Result<Self, String> {
+    /// With `gamma_correct`, the window's swapchain is sRGB-encoded.
+    pub fn new(
+        device: *mut SDL_GPUDevice,
+        window: *mut SDL_Window,
+        gamma_correct: bool,
+    ) -> Result<Self, String> {
         let mut renderer = Self {
             device,
             screen_format: SDL_GPU_TEXTUREFORMAT_INVALID,
@@ -256,6 +264,7 @@ impl Renderer {
             vertex_buffer: ptr::null_mut(),
             transfer_buffer: ptr::null_mut(),
             vertex_capacity: 0,
+            gamma_correct,
         };
         // On failure `renderer` is dropped, which releases whatever was
         // created so far. SDL ignores null handles on release.
@@ -450,6 +459,7 @@ impl Renderer {
     pub fn create_compressed_texture(
         &mut self,
         format: CompressedFormat,
+        srgb: bool,
         width: u32,
         height: u32,
         levels: &[&[u8]],
@@ -477,7 +487,22 @@ impl Renderer {
             return Err(format!("this GPU cannot read {format:?} images"));
         }
         let level_count = levels.len() as u32;
-        let format = compressed_format(format);
+        // Fall back to the linear version where there is no sRGB one.
+        let format = srgb
+            .then(|| compressed_srgb_format(format))
+            .flatten()
+            .filter(|&format| {
+                // SAFETY: the device is alive.
+                unsafe {
+                    SDL_GPUTextureSupportsFormat(
+                        self.device,
+                        format,
+                        SDL_GPU_TEXTURETYPE_2D,
+                        SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                    )
+                }
+            })
+            .unwrap_or_else(|| compressed_format(format));
         let mipmaps = (level_count > 1).then_some(Mipmaps {
             filter: Filter::Linear,
             sharpness: 0f32.to_bits(),
@@ -549,6 +574,7 @@ impl Renderer {
     pub fn create_layered_texture(
         &mut self,
         kind: TextureKind,
+        pixel_format: PixelFormat,
         width: u32,
         height: u32,
         layers: &[&[u8]],
@@ -557,7 +583,7 @@ impl Renderer {
             let [layer] = layers else {
                 return Err("a flat texture has exactly one layer".to_string());
             };
-            return self.create_texture(PixelFormat::Rgba8, width, height, layer, false);
+            return self.create_texture(pixel_format, width, height, layer, false);
         }
         if width == 0 || height == 0 {
             return Err("an image must be at least 1x1 pixels".to_string());
@@ -569,11 +595,11 @@ impl Renderer {
             return Err("a cube needs six square faces".to_string());
         }
         for layer in layers {
-            check_pixel_count(width, height, layer, DEFAULT_TEXTURE_FORMAT)?;
+            check_pixel_count(width, height, layer, sdl_pixel_format(pixel_format))?;
         }
         // SAFETY: the device is alive and every layer was just checked to
         // cover the whole texture.
-        let format = DEFAULT_TEXTURE_FORMAT;
+        let format = sdl_pixel_format(pixel_format);
         let handle =
             unsafe { new_layered_texture(self.device, format, kind, width, height, layers)? };
         let id = self.next_texture_id;
@@ -978,7 +1004,8 @@ impl Renderer {
             if handle.is_null() {
                 return Err(format!("could not create a buffer: {}", sdl_error()));
             }
-            if let Err(message) = upload_buffer(self.device, handle, 0, data, false) {
+            let data = self.linear_vertex_bytes(usage, 0, data);
+            if let Err(message) = upload_buffer(self.device, handle, 0, &data, false) {
                 SDL_ReleaseGPUBuffer(self.device, handle);
                 return Err(message);
             }
@@ -1024,8 +1051,41 @@ impl Renderer {
         // than waiting for frames still using the old. Part of it cannot,
         // since a cycled buffer loses the rest of its bytes.
         let whole = offset == 0 && data.len() == entry.size as usize;
+        let data = self.linear_vertex_bytes(entry.usage, offset, data);
         // SAFETY: the buffer is alive and the bytes were checked to fit.
-        unsafe { upload_buffer(self.device, entry.handle, offset, data, whole) }
+        unsafe { upload_buffer(self.device, entry.handle, offset, &data, whole) }
+    }
+
+    /// `data` for a buffer, with the colors of whole vertices converted to
+    /// linear light when rendering is gamma-correct, as the colors in
+    /// [`Frame::vertices`] are.
+    fn linear_vertex_bytes<'a>(
+        &self,
+        usage: BufferUsage,
+        offset: u32,
+        data: &'a [u8],
+    ) -> std::borrow::Cow<'a, [u8]> {
+        let vertex = VERTEX_SIZE as usize;
+        if !self.gamma_correct
+            || usage != BufferUsage::Vertex
+            || !(offset as usize).is_multiple_of(vertex)
+            || !data.len().is_multiple_of(vertex)
+        {
+            return std::borrow::Cow::Borrowed(data);
+        }
+        let color_at = std::mem::offset_of!(Vertex, color);
+        let mut converted = data.to_vec();
+        for chunk in converted.chunks_exact_mut(vertex) {
+            let color = &mut chunk[color_at..color_at + 16];
+            let mut channels = [0f32; 4];
+            for (channel, bytes) in channels.iter_mut().zip(color.chunks_exact(4)) {
+                *channel = f32::from_ne_bytes(bytes.try_into().unwrap());
+            }
+            for (bytes, channel) in color.chunks_exact_mut(4).zip(linear_color(channels)) {
+                bytes.copy_from_slice(&channel.to_ne_bytes());
+            }
+        }
+        std::borrow::Cow::Owned(converted)
     }
 
     pub fn destroy_buffer(&mut self, buffer: BufferId) {
@@ -1360,7 +1420,15 @@ impl Renderer {
             if mapped.is_null() {
                 return false;
             }
-            ptr::copy_nonoverlapping(vertices.as_ptr(), mapped.cast::<Vertex>(), vertices.len());
+            if self.gamma_correct {
+                linearize_colors(vertices, mapped.cast::<Vertex>());
+            } else {
+                ptr::copy_nonoverlapping(
+                    vertices.as_ptr(),
+                    mapped.cast::<Vertex>(),
+                    vertices.len(),
+                );
+            }
             SDL_UnmapGPUTransferBuffer(self.device, self.transfer_buffer);
 
             let pass = SDL_BeginGPUCopyPass(commands);
@@ -1566,12 +1634,12 @@ impl Renderer {
                 };
                 if let Some(color) = pass.clear {
                     info.load_op = SDL_GPU_LOADOP_CLEAR;
-                    info.clear_color = SDL_FColor {
-                        r: color.r,
-                        g: color.g,
-                        b: color.b,
-                        a: color.a,
+                    let [r, g, b, a] = if self.gamma_correct {
+                        linear_color([color.r, color.g, color.b, color.a])
+                    } else {
+                        [color.r, color.g, color.b, color.a]
                     };
+                    info.clear_color = SDL_FColor { r, g, b, a };
                 }
                 let stencil_info = SDL_GPUDepthStencilTargetInfo {
                     texture: stencil,
@@ -1844,7 +1912,11 @@ impl Renderer {
                             );
                             let uniforms = MeshUniforms {
                                 transform_projection: multiply(&projection, &draw.transform),
-                                tint: draw.tint,
+                                tint: if self.gamma_correct {
+                                    linear_color(draw.tint)
+                                } else {
+                                    draw.tint
+                                },
                             };
                             SDL_PushGPUVertexUniformData(
                                 commands,
@@ -2454,6 +2526,52 @@ fn check_pixel_count(
             "{width}x{height} pixels need {expected} bytes, got {}",
             pixels.len()
         ))
+    }
+}
+
+/// `color`, given sRGB-encoded as games give colors, in linear light.
+/// Alpha is left alone.
+fn linear_color([r, g, b, a]: [f32; 4]) -> [f32; 4] {
+    let linear = |component: f32| {
+        if component <= 0.04045 {
+            component / 12.92
+        } else {
+            ((component + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [linear(r), linear(g), linear(b), a]
+}
+
+/// Copies `vertices` to `out` with their colors in linear light.
+/// Neighboring vertices usually share a color, so the last conversion is
+/// reused.
+///
+/// # Safety
+/// `out` must have room for `vertices.len()` vertices.
+unsafe fn linearize_colors(vertices: &[Vertex], out: *mut Vertex) {
+    let mut last: Option<([f32; 4], [f32; 4])> = None;
+    for (index, vertex) in vertices.iter().enumerate() {
+        let color = match last {
+            Some((from, to)) if from == vertex.color => to,
+            _ => {
+                let to = linear_color(vertex.color);
+                last = Some((vertex.color, to));
+                to
+            }
+        };
+        // SAFETY: as the caller promised.
+        unsafe { out.add(index).write(Vertex { color, ..*vertex }) };
+    }
+}
+
+/// The sRGB version of a compressed format, if it has one.
+fn compressed_srgb_format(format: CompressedFormat) -> Option<SDL_GPUTextureFormat> {
+    match format {
+        CompressedFormat::Bc1 => Some(SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc2 => Some(SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc3 => Some(SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc7 => Some(SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc4 | CompressedFormat::Bc5 => None,
     }
 }
 

@@ -35,7 +35,8 @@ mod video;
 use std::path::Path;
 
 use smitten_core::backend::{
-    Backend, BufferId, ColorMask, Frame, MeshDraw, Pass, Scissor, TextureId, Vertex,
+    Backend, BufferId, ColorMask, Frame, MeshDraw, Pass, RenderTargetDesc, Scissor, TextureId,
+    Vertex,
 };
 
 use crate::context;
@@ -349,11 +350,13 @@ impl GraphicsState {
     /// way the picture is the same whatever is covering the window.
     fn read_screen(&mut self, backend: &mut dyn Backend) -> Result<ImageData, String> {
         let (width, height) = backend.size_in_pixels();
-        // Multisampled as the screen is, so the picture matches it.
-        let target = match backend.screen_msaa() {
-            1 => backend.create_render_target(width, height)?,
-            samples => backend.create_msaa_render_target(width, height, samples)?,
-        };
+        // Multisampled and encoded as the screen is, so the picture
+        // matches it.
+        let target = backend.create_render_target_with(&RenderTargetDesc {
+            format: normal_format(backend),
+            samples: backend.screen_msaa(),
+            ..RenderTargetDesc::new(width, height)
+        })?;
         let passes: Vec<Pass> = self
             .batch
             .passes
@@ -1363,11 +1366,22 @@ pub fn is_active() -> bool {
 /// draws in order without help, so there is nothing to flush early.
 pub fn flush_batch() {}
 
-/// Whether colors are blended in linear space, the equivalent of
-/// `love.graphics.isGammaCorrect`. Always `false`: smitten blends in sRGB
-/// space, as LÖVE does unless `t.gammacorrect` is set.
+/// Whether colors are blended in linear light, the equivalent of
+/// `love.graphics.isGammaCorrect`. True when
+/// [`Config::gamma_correct`](crate::Config::gamma_correct) was set and the
+/// display allows it.
 pub fn is_gamma_correct() -> bool {
-    false
+    context::with(|ctx| ctx.backend.is_gamma_correct())
+}
+
+/// The format of an ordinary image or canvas: sRGB-encoded with
+/// gamma-correct rendering, as LÖVE's `normal` format is.
+pub(crate) fn normal_format(backend: &dyn Backend) -> PixelFormat {
+    if backend.is_gamma_correct() {
+        PixelFormat::Srgba8
+    } else {
+        PixelFormat::Rgba8
+    }
 }
 
 // ---------------------------------------------------------------------------
