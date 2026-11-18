@@ -1,4 +1,4 @@
-//! Textures with more than one picture: array images and cube images.
+//! Textures with more than one picture: array, cube and volume images.
 
 use std::cell::Cell;
 use std::fmt;
@@ -248,6 +248,95 @@ impl CubeImage {
 
     pub(crate) fn keep_alive(&self) -> Rc<dyn std::any::Any> {
         self.inner.clone()
+    }
+}
+
+/// A block of pixels with depth as well as width and height, the
+/// equivalent of LÖVE's volume `Image` (`TextureType` `volume`). It is
+/// built from slices of the same size, stacked front to back, and
+/// sampled in three dimensions with a coordinate from 0 to 1 on each
+/// axis, so the GPU blends between neighbouring slices as well as
+/// neighbouring pixels. It suits color grading tables, fog and noise.
+///
+/// As in LÖVE, a volume image cannot be drawn directly. Send it to a
+/// [`Shader`](super::Shader) that declares a `texture_3d<f32>`:
+///
+/// ```wgsl
+/// var grade: texture_3d<f32>;
+///
+/// fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+///     let original = textureSample(image, image_sampler, uv) * color;
+///     return vec4<f32>(textureSample(grade, grade_sampler, original.rgb).rgb, original.a);
+/// }
+/// ```
+///
+/// Cloning is cheap and gives another handle to the same texture.
+#[derive(Clone)]
+pub struct VolumeImage {
+    inner: Rc<Inner>,
+}
+
+impl VolumeImage {
+    /// Makes a volume image from its slices, the first at the front (a
+    /// depth coordinate of 0). They must all be the same size.
+    pub fn from_image_data(slices: &[ImageData]) -> Result<VolumeImage, ImageError> {
+        Ok(VolumeImage {
+            inner: Rc::new(Inner::create(TextureKind::Volume, slices)?),
+        })
+    }
+
+    /// Loads an image file for each slice, front to back. They must all
+    /// be the same size.
+    pub fn from_files(paths: &[impl AsRef<Path>]) -> Result<VolumeImage, ImageError> {
+        VolumeImage::from_image_data(&load_all(paths)?)
+    }
+
+    /// Width in pixels.
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
+
+    /// Height in pixels.
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
+
+    /// How many slices deep it is, the equivalent of `Texture:getDepth`.
+    pub fn depth(&self) -> u32 {
+        self.inner.layers
+    }
+
+    /// Size in pixels as `(width, height, depth)`.
+    pub fn dimensions(&self) -> (u32, u32, u32) {
+        (self.inner.width, self.inner.height, self.inner.layers)
+    }
+
+    /// How the volume is sampled between pixels and slices.
+    pub fn filter(&self) -> Filter {
+        self.inner.filter.get()
+    }
+
+    /// Sets the filter for every handle to this volume image.
+    pub fn set_filter(&self, filter: Filter) {
+        self.inner.filter.set(filter);
+    }
+
+    pub(crate) fn texture(&self) -> TextureId {
+        self.inner.texture
+    }
+
+    pub(crate) fn keep_alive(&self) -> Rc<dyn std::any::Any> {
+        self.inner.clone()
+    }
+}
+
+impl fmt::Debug for VolumeImage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VolumeImage")
+            .field("width", &self.inner.width)
+            .field("height", &self.inner.height)
+            .field("depth", &self.inner.layers)
+            .finish()
     }
 }
 

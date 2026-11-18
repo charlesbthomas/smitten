@@ -200,6 +200,7 @@ pub(crate) struct Renderer {
     /// Stand-ins for textures a shader declares but was not sent.
     white_array: *mut SDL_GPUTexture,
     white_cube: *mut SDL_GPUTexture,
+    white_volume: *mut SDL_GPUTexture,
     textures: HashMap<u32, Texture>,
     next_texture_id: u32,
     vertex_buffer: *mut SDL_GPUBuffer,
@@ -232,6 +233,7 @@ impl Renderer {
             white: ptr::null_mut(),
             white_array: ptr::null_mut(),
             white_cube: ptr::null_mut(),
+            white_volume: ptr::null_mut(),
             textures: HashMap::new(),
             next_texture_id: 1,
             vertex_buffer: ptr::null_mut(),
@@ -324,6 +326,14 @@ impl Renderer {
                 1,
                 1,
                 &[white; 6],
+            )?;
+            renderer.white_volume = new_layered_texture(
+                device,
+                DEFAULT_TEXTURE_FORMAT,
+                TextureKind::Volume,
+                1,
+                1,
+                &[white],
             )?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
@@ -1109,6 +1119,7 @@ impl Renderer {
                             TextureKind::Flat => self.white,
                             TextureKind::Array => self.white_array,
                             TextureKind::Cube => self.white_cube,
+                            TextureKind::Volume => self.white_volume,
                         },
                         sampler: self.linear,
                     },
@@ -1583,7 +1594,7 @@ impl Renderer {
                 let drawable = match kind {
                     TextureKind::Flat => true,
                     TextureKind::Array => call.shader.is_none(),
-                    TextureKind::Cube => false,
+                    TextureKind::Cube | TextureKind::Volume => false,
                 };
                 if !drawable {
                     continue;
@@ -1765,6 +1776,7 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTexture(self.device, self.white);
             SDL_ReleaseGPUTexture(self.device, self.white_array);
             SDL_ReleaseGPUTexture(self.device, self.white_cube);
+            SDL_ReleaseGPUTexture(self.device, self.white_volume);
             SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             SDL_ReleaseGPUSampler(self.device, self.linear);
@@ -2299,7 +2311,8 @@ unsafe fn new_texture(
     }
 }
 
-/// Creates an array or cube texture and fills each layer.
+/// Creates an array, cube or volume texture and fills each layer, or
+/// each slice of a volume.
 ///
 /// # Safety
 /// `device` must be alive, `kind` must not be flat, and each layer must
@@ -2314,6 +2327,7 @@ unsafe fn new_layered_texture(
 ) -> Result<*mut SDL_GPUTexture, String> {
     let r#type = match kind {
         TextureKind::Cube => SDL_GPU_TEXTURETYPE_CUBE,
+        TextureKind::Volume => SDL_GPU_TEXTURETYPE_3D,
         _ => SDL_GPU_TEXTURETYPE_2D_ARRAY,
     };
     // SAFETY: the create-info is valid for the call, and the new texture
@@ -2337,9 +2351,23 @@ unsafe fn new_layered_texture(
             return Err(format!("could not create a texture: {}", sdl_error()));
         }
         for (index, layer) in layers.iter().enumerate() {
-            if let Err(message) =
-                upload_region(device, texture, index as u32, 0, 0, width, height, layer)
-            {
+            // A volume's slices are depths of one layer, not layers.
+            let region = if kind == TextureKind::Volume {
+                Region {
+                    z: index as u32,
+                    width,
+                    height,
+                    ..Region::default()
+                }
+            } else {
+                Region {
+                    layer: index as u32,
+                    width,
+                    height,
+                    ..Region::default()
+                }
+            };
+            if let Err(message) = upload(device, texture, region, layer) {
                 SDL_ReleaseGPUTexture(device, texture);
                 return Err(message);
             }
@@ -2352,6 +2380,8 @@ unsafe fn new_layered_texture(
 #[derive(Clone, Copy, Default)]
 struct Region {
     layer: u32,
+    /// The slice of a volume texture.
+    z: u32,
     level: u32,
     x: u32,
     y: u32,
@@ -2377,6 +2407,7 @@ unsafe fn upload_region(
 ) -> Result<(), String> {
     let region = Region {
         layer,
+        z: 0,
         level: 0,
         x,
         y,
@@ -2447,10 +2478,10 @@ unsafe fn upload(
                 layer: region.layer,
                 x: region.x,
                 y: region.y,
+                z: region.z,
                 w: region.width,
                 h: region.height,
                 d: 1,
-                ..Default::default()
             },
             false,
         );

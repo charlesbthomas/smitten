@@ -18,7 +18,7 @@ About 34 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **95% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
 GPU features: depth buffers, instancing, custom vertex formats, vertex
-shaders, volume textures and canvas formats.
+shaders and canvas formats.
 
 | Module | LÖVE functions and methods | Missing | Coverage |
 |---|---|---|---|
@@ -27,7 +27,7 @@ shaders, volume textures and canvas formats.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 25 | 91% |
+| graphics | 268 | 24 | 91% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -54,7 +54,6 @@ shaders, volume textures and canvas formats.
   (`t.window.depth`, `t.window.stencil`, depth canvas formats).
 - `drawInstanced`, with per-instance vertex attributes
   (`VertexAttributeStep` `perinstance`).
-- `newVolumeImage` (`TextureType` `volume`).
 - `setCanvas` with several canvases at once (multiple render targets), and
   with a layer, cube face or mipmap of a canvas as the target.
 - Gamma-correct rendering (`t.gammacorrect`). `is_gamma_correct` exists and

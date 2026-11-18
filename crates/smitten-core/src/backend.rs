@@ -339,6 +339,9 @@ pub enum TextureKind {
     /// Six square pictures that make the inside of a cube, picked by
     /// direction.
     Cube,
+    /// A block of pixels with a depth as well as a width and height,
+    /// built from slices of one size and sampled in three dimensions.
+    Volume,
 }
 
 /// A way of storing pixels compressed in blocks of 4 by 4, which the GPU

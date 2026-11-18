@@ -8,7 +8,7 @@ use smitten_core::backend::{
     Backend, BoundTexture, ShaderId, ShaderTexture, TextureKind, UniformField, UniformKind,
 };
 
-use super::{ArrayImage, Canvas, CubeImage, GraphicsState, Image, Transform};
+use super::{ArrayImage, Canvas, CubeImage, GraphicsState, Image, Transform, VolumeImage};
 use crate::reload::Asset;
 use crate::{Color, context};
 
@@ -57,7 +57,7 @@ use crate::{Color, context};
 ///
 /// A shader can read more textures than the one being drawn. Declare each
 /// with no binding, use it with the sampler named after it, and send it
-/// an [`Image`], [`Canvas`], [`ArrayImage`] or [`CubeImage`] with
+/// an [`Image`], [`Canvas`], [`ArrayImage`], [`CubeImage`] or [`VolumeImage`] with
 /// [`Shader::send_texture`]. One that has not been sent reads as white.
 ///
 /// ```wgsl
@@ -400,7 +400,7 @@ mod sealed {
 }
 
 /// Something with pixels a shader can read: an [`Image`], a [`Canvas`],
-/// an [`ArrayImage`] or a [`CubeImage`]. See [`Shader::send_texture`].
+/// an [`ArrayImage`], a [`CubeImage`] or a [`VolumeImage`]. See [`Shader::send_texture`].
 pub trait Texture: sealed::Sealed {
     /// The texture to bind, its kind, and a handle that keeps it alive.
     #[doc(hidden)]
@@ -448,11 +448,23 @@ impl Texture for CubeImage {
     }
 }
 
+impl sealed::Sealed for VolumeImage {}
+impl Texture for VolumeImage {
+    fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>) {
+        let bound = BoundTexture {
+            texture: self.texture(),
+            filter: self.filter(),
+        };
+        (bound, TextureKind::Volume, self.keep_alive())
+    }
+}
+
 fn kind_name(kind: TextureKind) -> &'static str {
     match kind {
         TextureKind::Flat => "texture_2d<f32>",
         TextureKind::Array => "texture_2d_array<f32>",
         TextureKind::Cube => "texture_cube<f32>",
+        TextureKind::Volume => "texture_3d<f32>",
     }
 }
 
