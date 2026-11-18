@@ -1239,3 +1239,177 @@ fn fixtures_are_made_from_shapes_and_can_change_shape() {
 fn asking_a_polygon_for_its_center_point_panics() {
     Shape::rectangle(10.0, 10.0).point();
 }
+
+#[test]
+fn a_pulley_lifts_one_side_as_the_other_falls() {
+    let world = World::new(0.0, 600.0);
+    let light = world.new_body(100.0, 300.0, BodyType::Dynamic);
+    light.add_rectangle(20.0, 20.0);
+    let heavy = world.new_body(300.0, 300.0, BodyType::Dynamic);
+    heavy.add_rectangle(20.0, 20.0).set_density(3.0);
+    let pulley = world.new_pulley_joint(
+        &light, &heavy, 100.0, 100.0, 300.0, 100.0, 100.0, 300.0, 300.0, 300.0, 1.0, false,
+    );
+    assert_eq!(pulley.kind(), JointType::Pulley);
+    assert_eq!(pulley.ground_anchors(), ((100.0, 100.0), (300.0, 100.0)));
+    assert!((pulley.constant() - 400.0).abs() < 1e-3);
+    assert_eq!(pulley.ratio(), 1.0);
+
+    for _ in 0..30 {
+        world.update(STEP);
+        let total = pulley.length_a() + pulley.length_b();
+        assert!((total - 400.0).abs() < 0.5, "the rope stretched to {total}");
+    }
+    assert!(light.y() < 290.0, "the light one rose to {}", light.y());
+    assert!(heavy.y() > 310.0, "the heavy one fell to {}", heavy.y());
+    // Half the difference in weight over the total: g / 2.
+    let (_, rising) = light.linear_velocity();
+    assert!((rising + 150.0).abs() < 20.0, "rising at {rising}");
+    let (_, pull) = pulley.reaction_force();
+    assert!(pull < 0.0, "the rope pulls the heavy one up, got {pull}");
+
+    // More rope lets both hang lower.
+    pulley.set_constant(500.0);
+    world.update(STEP);
+    assert!((pulley.length_a() + pulley.length_b() - 500.0).abs() < 1.0);
+}
+
+#[test]
+fn a_pulley_ratio_trades_distance_for_strength() {
+    let world = World::new(0.0, 600.0);
+    let a = world.new_body(100.0, 300.0, BodyType::Dynamic);
+    a.add_rectangle(20.0, 20.0);
+    let b = world.new_body(300.0, 300.0, BodyType::Dynamic);
+    b.add_rectangle(20.0, 20.0);
+    // With a ratio of 2, b holds up twice its weight: a, as heavy, rises.
+    let pulley = world.new_pulley_joint(
+        &a, &b, 100.0, 100.0, 300.0, 100.0, 100.0, 300.0, 300.0, 300.0, 2.0, true,
+    );
+    run(&world, 0.5);
+    let (start_a, start_b) = (200.0, 200.0);
+    let (length_a, length_b) = (pulley.length_a(), pulley.length_b());
+    assert!(length_a > start_a, "a went down, to a rope of {length_a}");
+    assert!(
+        ((length_a - start_a) + 2.0 * (length_b - start_b)).abs() < 1.0,
+        "a moved twice as far as b"
+    );
+}
+
+/// A wheel pinned at `(x, y)` to a static body, by a revolute joint.
+fn pinned_wheel(world: &World, ground: &Body, x: f32, y: f32, radius: f32) -> (Body, Joint) {
+    let wheel = world.new_body(x, y, BodyType::Dynamic);
+    wheel.add_circle(radius);
+    let pin = world.new_revolute_joint(ground, &wheel, x, y, false);
+    (wheel, pin)
+}
+
+#[test]
+fn a_gear_turns_two_wheels_together() {
+    let world = World::new(0.0, 0.0);
+    let ground = world.new_body(0.0, 0.0, BodyType::Static);
+    let (big, big_pin) = pinned_wheel(&world, &ground, 100.0, 100.0, 40.0);
+    let (small, small_pin) = pinned_wheel(&world, &ground, 160.0, 100.0, 20.0);
+    let gear = world.new_gear_joint(&big_pin, &small_pin, 0.5, false);
+    assert_eq!(gear.kind(), JointType::Gear);
+    assert_eq!(gear.joints(), vec![big_pin.clone(), small_pin.clone()]);
+    assert_eq!(gear.bodies(), vec![big.clone(), small.clone()]);
+
+    big_pin.set_motor_enabled(true);
+    big_pin.set_max_motor_torque(1.0e7);
+    big_pin.set_motor_speed(1.0);
+    let mut hardest: f32 = 0.0;
+    for _ in 0..60 {
+        world.update(STEP);
+        hardest = hardest.max(gear.reaction_torque().abs());
+        let sum = big_pin.joint_angle() + 0.5 * small_pin.joint_angle();
+        assert!(sum.abs() < 0.01, "the gears slipped by {sum}");
+    }
+    assert!(
+        big_pin.joint_angle() > 0.5,
+        "turned {}",
+        big_pin.joint_angle()
+    );
+    // The small wheel turns twice as fast, the other way.
+    let ratio = small.angular_velocity() / big.angular_velocity();
+    assert!(
+        (ratio + 2.0).abs() < 0.05,
+        "turned at {ratio} times the speed"
+    );
+    // It pushed on the small wheel to spin it up.
+    assert!(hardest > 0.0);
+
+    // A new ratio applies from where the wheels are now.
+    gear.set_ratio(1.0);
+    assert_eq!(gear.ratio(), 1.0);
+    let before = big_pin.joint_angle() + small_pin.joint_angle();
+    run(&world, 0.5);
+    let after = big_pin.joint_angle() + small_pin.joint_angle();
+    assert!(
+        (after - before).abs() < 0.01,
+        "slipped from {before} to {after}"
+    );
+
+    // Once a joint is gone the gear does nothing, and does not panic.
+    gear.destroy();
+    small_pin.destroy();
+    run(&world, 0.1);
+}
+
+#[test]
+fn a_gear_between_a_wheel_and_a_slider_makes_a_rack_and_pinion() {
+    let world = World::new(0.0, 0.0);
+    let ground = world.new_body(0.0, 0.0, BodyType::Static);
+    let (_, pin) = pinned_wheel(&world, &ground, 100.0, 100.0, 20.0);
+    let rack = world.new_body(100.0, 130.0, BodyType::Dynamic);
+    rack.add_rectangle(200.0, 10.0);
+    let slider = world.new_prismatic_joint(&ground, &rack, 100.0, 130.0, 1.0, 0.0, false);
+    // The rack moves the pinion's radius for every radian it turns.
+    let gear = world.new_gear_joint(&pin, &slider, 1.0 / 20.0, false);
+
+    rack.set_linear_velocity(40.0, 0.0);
+    run(&world, 1.0);
+    let travel = slider.joint_translation();
+    assert!(travel > 10.0, "the rack slid {travel}");
+    let turn = pin.joint_angle();
+    assert!(
+        (turn + travel / 20.0).abs() < 0.02,
+        "turned {turn} for {travel}"
+    );
+    gear.destroy();
+}
+
+#[test]
+#[should_panic(expected = "ties revolute and prismatic joints")]
+fn a_gear_needs_revolute_or_prismatic_joints() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    a.add_circle(5.0);
+    let b = world.new_body(10.0, 0.0, BodyType::Dynamic);
+    b.add_circle(5.0);
+    let weld = world.new_weld_joint(&a, &b, false);
+    let pin = world.new_revolute_joint(&a, &b, 5.0, 0.0, false);
+    world.new_gear_joint(&weld, &pin, 1.0, false);
+}
+
+#[test]
+fn a_pulley_comes_to_rest_when_one_side_lands() {
+    let (world, _) = world_with_floor();
+    let light = world.new_body(100.0, 300.0, BodyType::Dynamic);
+    light.add_rectangle(20.0, 20.0);
+    let heavy = world.new_body(300.0, 400.0, BodyType::Dynamic);
+    heavy.add_rectangle(20.0, 20.0).set_density(3.0);
+    let pulley = world.new_pulley_joint(
+        &light, &heavy, 100.0, 100.0, 300.0, 100.0, 100.0, 300.0, 300.0, 400.0, 1.0, false,
+    );
+    run(&world, 4.0);
+    // The heavy one rests on the floor, holding the light one up.
+    assert!((heavy.y() - 490.0).abs() < 2.0, "heavy at {}", heavy.y());
+    assert!((light.y() - 210.0).abs() < 3.0, "light at {}", light.y());
+    // It is solved after the engine's step, not with the floor's
+    // contact, so it keeps a little speed, but does not move.
+    let still = light.y();
+    run(&world, 1.0);
+    assert!((light.y() - still).abs() < 0.5, "crept to {}", light.y());
+    assert!(light.linear_velocity().1.abs() < 5.0);
+    assert!((pulley.length_a() + pulley.length_b() - 500.0).abs() < 1.0);
+}

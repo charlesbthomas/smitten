@@ -5,6 +5,7 @@ use std::sync::mpsc;
 
 use rapier2d::prelude::*;
 
+use super::coupling::{self, Coupling};
 use super::joint::{self, JointType, MOTOR_DAMPING};
 use super::{Body, BodyType, Fixture, Joint};
 
@@ -31,6 +32,8 @@ pub(super) struct Inner {
     pub held_density: HashMap<ColliderHandle, f32>,
     /// Bodies whose mass was set by hand with [`Body::set_mass_data`].
     pub mass_set: HashSet<RigidBodyHandle>,
+    /// What each gear and pulley joint ties together.
+    pub couplings: HashMap<ImpulseJointHandle, Coupling>,
 }
 
 type PreSolveCallback = Box<dyn FnMut(&mut PreSolve)>;
@@ -452,6 +455,7 @@ impl World {
                 sleepless: HashSet::new(),
                 held_density: HashMap::new(),
                 mass_set: HashSet::new(),
+                couplings: HashMap::new(),
             })),
         }
     }
@@ -500,6 +504,7 @@ impl World {
         } else {
             inner.world.step_with_events(&(), &collector);
         }
+        coupling::solve(&mut inner);
         // A force lasts for one update, as in LÖVE. The engine would keep
         // applying it until told otherwise.
         for (_, body) in inner.world.bodies.iter_mut() {
@@ -1167,6 +1172,147 @@ impl World {
             joint.set_motor_position(axis, 0.0, stiffness, damping);
         }
         self.insert_joint(a, b, joint, JointType::Motor)
+    }
+
+    /// Hangs two bodies from a rope over two fixed pulleys, at
+    /// `(ground_x1, ground_y1)` and `(ground_x2, ground_y2)`. The rope is
+    /// tied to `(x1, y1)` on the first body and `(x2, y2)` on the second,
+    /// and keeps `length_a + ratio * length_b` as it is now, so when one
+    /// side goes down the other comes up. A `ratio` above 1 makes the
+    /// second side move less and pull harder, like a block and tackle.
+    ///
+    /// Box2D's pulley holds the rope taut both ways, as this does: it
+    /// never goes slack. Rapier has no pulley, so smitten enforces it
+    /// itself after each step, on top of the engine's own joints and
+    /// contacts. One difference shows: while one side rests on the
+    /// ground, the two keep a slight speed against each other, too small
+    /// to see, and so never fall asleep.
+    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newPulleyJoint.
+    pub fn new_pulley_joint(
+        &self,
+        a: &Body,
+        b: &Body,
+        ground_x1: f32,
+        ground_y1: f32,
+        ground_x2: f32,
+        ground_y2: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        ratio: f32,
+        collide: bool,
+    ) -> Joint {
+        assert!(
+            ratio.is_finite() && ratio > 0.0,
+            "a pulley's ratio must be positive, got {ratio}"
+        );
+        let (ground_a, ground_b) = (
+            Vector::new(ground_x1, ground_y1),
+            Vector::new(ground_x2, ground_y2),
+        );
+        let (first, second) = (Vector::new(x1, y1), Vector::new(x2, y2));
+        let constant = (first - ground_a).length() + ratio * (second - ground_b).length();
+        let data = GenericJointBuilder::new(JointAxesMask::empty())
+            .local_anchor1(a.pose().inverse_transform_point(first))
+            .local_anchor2(b.pose().inverse_transform_point(second))
+            .contacts_enabled(collide)
+            .build();
+        let joint = self.insert_joint(a, b, data, JointType::Pulley);
+        self.inner.borrow_mut().couplings.insert(
+            joint.handle,
+            Coupling::Pulley {
+                ground_a,
+                ground_b,
+                ratio,
+                constant,
+                impulse: 0.0,
+            },
+        );
+        joint
+    }
+
+    /// Ties two revolute or prismatic joints together like gears, so that
+    /// `angle_a + ratio * angle_b` stays as it is now, where each is the
+    /// joint's angle (or, for a prismatic joint, how far it has slid).
+    /// With a `ratio` of 2, the second joint turns half as far as the
+    /// first, the other way. A revolute and a prismatic joint make a rack
+    /// and pinion.
+    ///
+    /// The gear joint connects the second bodies of the two joints, which
+    /// are usually each pinned to the ground. Destroy the gear joint
+    /// before either of its joints; once one is gone the gear does
+    /// nothing.
+    ///
+    /// Rapier has no gear joint, so smitten enforces it itself after each
+    /// step, on top of the engine's own joints and contacts.
+    pub fn new_gear_joint(
+        &self,
+        joint_a: &Joint,
+        joint_b: &Joint,
+        ratio: f32,
+        collide: bool,
+    ) -> Joint {
+        assert!(
+            ratio.is_finite() && ratio != 0.0,
+            "a gear's ratio must be a number other than 0, got {ratio}"
+        );
+        for joint in [joint_a, joint_b] {
+            assert!(
+                Rc::ptr_eq(&self.inner, &joint.world),
+                "both joints of a gear must belong to this world"
+            );
+            let kind = joint.kind();
+            assert!(
+                matches!(kind, JointType::Revolute | JointType::Prismatic),
+                "a gear joint ties revolute and prismatic joints, not a {kind:?} joint"
+            );
+        }
+        let (handle_a, handle_b) = (joint_a.handle, joint_b.handle);
+        let (body_a, body_b, anchor_a, anchor_b, constant) = {
+            let inner = self.inner.borrow();
+            let world = &inner.world;
+            let joint = |handle| {
+                world
+                    .impulse_joints
+                    .get(handle)
+                    .expect("a gear's joints must not be destroyed")
+            };
+            let (one, two) = (joint(handle_a), joint(handle_b));
+            let mut rates = Vec::new();
+            let a = coupling::joint_coordinate(world, handle_a, &mut rates, 1.0)
+                .expect("the first joint exists");
+            let b = coupling::joint_coordinate(world, handle_b, &mut rates, 1.0)
+                .expect("the second joint exists");
+            (
+                one.body2(),
+                two.body2(),
+                one.data.local_anchor2(),
+                two.data.local_anchor2(),
+                a + ratio * b,
+            )
+        };
+        let data = GenericJointBuilder::new(JointAxesMask::empty())
+            .local_anchor1(anchor_a)
+            .local_anchor2(anchor_b)
+            .contacts_enabled(collide)
+            .build();
+        let (a, b) = (
+            Body::new(&self.inner, body_a),
+            Body::new(&self.inner, body_b),
+        );
+        let joint = self.insert_joint(&a, &b, data, JointType::Gear);
+        self.inner.borrow_mut().couplings.insert(
+            joint.handle,
+            Coupling::Gear {
+                joint_a: handle_a,
+                joint_b: handle_b,
+                ratio,
+                constant,
+                impulse: 0.0,
+            },
+        );
+        joint
     }
 
     /// The world's hidden ground body, made the first time it is needed.

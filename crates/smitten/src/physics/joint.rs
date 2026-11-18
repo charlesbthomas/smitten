@@ -3,6 +3,7 @@ use std::rc::Rc;
 use rapier2d::prelude::*;
 
 use super::Body;
+use super::coupling::{self, Coupling};
 use super::world::{Inner, Shared};
 
 /// What kind of connection a [`Joint`] is, the equivalent of LÖVE's
@@ -30,10 +31,16 @@ pub enum JointType {
     Friction,
     /// A body driven towards an offset from another.
     Motor,
+    /// Two revolute or prismatic joints that turn or slide together. See
+    /// [`World::new_gear_joint`](super::World::new_gear_joint).
+    Gear,
+    /// Two bodies hanging from ropes over two fixed points. See
+    /// [`World::new_pulley_joint`](super::World::new_pulley_joint).
+    Pulley,
 }
 
 impl JointType {
-    const ALL: [JointType; 10] = [
+    const ALL: [JointType; 12] = [
         JointType::Revolute,
         JointType::Weld,
         JointType::Rope,
@@ -44,6 +51,8 @@ impl JointType {
         JointType::Mouse,
         JointType::Friction,
         JointType::Motor,
+        JointType::Gear,
+        JointType::Pulley,
     ];
 
     fn index(self) -> u128 {
@@ -63,6 +72,15 @@ const GAME_DATA: u128 = u64::MAX as u128;
 /// velocity motors are springs; this makes them stiff enough to act like
 /// Box2D's, with the motor's maximum torque or force as the real limit.
 pub(super) const MOTOR_DAMPING: f32 = 1.0e4;
+
+/// The kind a joint was tagged with.
+pub(super) fn kind_of(joint: &GenericJoint) -> JointType {
+    let index = (joint.user_data >> KIND_SHIFT) as usize;
+    JointType::ALL
+        .get(index)
+        .copied()
+        .unwrap_or(JointType::Weld)
+}
 
 pub(super) fn tag(joint: &mut GenericJoint, kind: JointType) {
     joint.user_data = (joint.user_data & GAME_DATA) | (kind.index() << KIND_SHIFT);
@@ -116,8 +134,8 @@ fn per_second(inner: &Inner) -> f32 {
 /// [`Joint::is_destroyed`] and [`Joint::destroy`].
 #[derive(Clone)]
 pub struct Joint {
-    world: Shared,
-    handle: ImpulseJointHandle,
+    pub(super) world: Shared,
+    pub(super) handle: ImpulseJointHandle,
 }
 
 impl PartialEq for Joint {
@@ -209,21 +227,14 @@ impl Joint {
     /// Removes the joint, setting its bodies free of each other. Does
     /// nothing if it was already destroyed.
     pub fn destroy(&self) {
-        self.world
-            .borrow_mut()
-            .world
-            .remove_impulse_joint(self.handle);
+        let mut inner = self.world.borrow_mut();
+        inner.couplings.remove(&self.handle);
+        inner.world.remove_impulse_joint(self.handle);
     }
 
     /// What kind of joint this is.
     pub fn kind(&self) -> JointType {
-        self.read(|joint, _| {
-            let index = (joint.data.user_data >> KIND_SHIFT) as usize;
-            JointType::ALL
-                .get(index)
-                .copied()
-                .unwrap_or(JointType::Weld)
-        })
+        self.read(|joint, _| kind_of(&joint.data))
     }
 
     /// The bodies the joint connects. A mouse joint has only the one it
@@ -258,6 +269,9 @@ impl Joint {
     /// update, as `(x, y)`. Useful for breaking a joint that is pulled
     /// too hard.
     pub fn reaction_force(&self) -> (f32, f32) {
+        if let Some((force, _)) = self.coupling_reaction() {
+            return force;
+        }
         self.read(|joint, inner| {
             let data = &joint.data;
             let along = |axis: usize| {
@@ -288,6 +302,9 @@ impl Joint {
     /// The torque the joint applied to its second body during the last
     /// update.
     pub fn reaction_torque(&self) -> f32 {
+        if let Some((_, torque)) = self.coupling_reaction() {
+            return torque;
+        }
         self.read(|joint, inner| {
             let data = &joint.data;
             let axis = JointAxis::AngX as usize;
@@ -773,6 +790,217 @@ impl Joint {
             for motor in &mut joint.motors {
                 motor.stiffness = stiffness;
                 motor.damping = damping;
+            }
+        });
+    }
+}
+
+impl Joint {
+    // Gear and pulley joints.
+
+    /// What a gear or pulley joint ties together.
+    fn coupling(&self) -> Coupling {
+        let kind = self.expect(&[JointType::Gear, JointType::Pulley], "ratio");
+        self.world
+            .borrow()
+            .couplings
+            .get(&self.handle)
+            .cloned()
+            .unwrap_or_else(|| panic!("this {kind:?} joint lost what it ties together"))
+    }
+
+    fn change_coupling(&self, change: impl FnOnce(&mut Coupling)) {
+        let mut inner = self.world.borrow_mut();
+        if let Some(coupling) = inner.couplings.get_mut(&self.handle) {
+            change(coupling);
+        }
+        // Wake the bodies, so the change is felt at once.
+        inner.world.impulse_joints.get_mut(self.handle, true);
+    }
+
+    /// The force and torque a gear or pulley joint applied to its second
+    /// body during the last update.
+    fn coupling_reaction(&self) -> Option<((f32, f32), f32)> {
+        let inner = self.world.borrow();
+        let coupling = inner.couplings.get(&self.handle)?;
+        let joint = inner.world.impulse_joints.get(self.handle)?;
+        let per_second = 1.0 / inner.world.integration_parameters.dt;
+        let mut rates = Vec::new();
+        let impulse = match *coupling {
+            Coupling::Pulley {
+                ground_b,
+                ratio,
+                impulse,
+                ..
+            } => {
+                let b = inner
+                    .world
+                    .bodies
+                    .get(joint.body2())
+                    .map_or(Pose::IDENTITY, |body| *body.position())
+                    .transform_point(joint.data.local_anchor2());
+                let rope = b - ground_b;
+                let along = if rope.length() > 1e-6 {
+                    rope / rope.length()
+                } else {
+                    Vector::ZERO
+                };
+                let force = along * (ratio * impulse * per_second);
+                return Some(((force.x, force.y), 0.0));
+            }
+            Coupling::Gear {
+                joint_b,
+                ratio,
+                impulse,
+                ..
+            } => {
+                coupling::joint_coordinate(&inner.world, joint_b, &mut rates, ratio)?;
+                impulse
+            }
+        };
+        let (_, linear, angular) = rates
+            .iter()
+            .find(|entry| entry.0 == joint.body2())
+            .copied()?;
+        let force = linear * (impulse * per_second);
+        Some(((force.x, force.y), angular * impulse * per_second))
+    }
+
+    /// How much one side of a gear or pulley joint moves for the other:
+    /// see [`World::new_gear_joint`](super::World::new_gear_joint) and
+    /// [`World::new_pulley_joint`](super::World::new_pulley_joint).
+    pub fn ratio(&self) -> f32 {
+        match self.coupling() {
+            Coupling::Pulley { ratio, .. } | Coupling::Gear { ratio, .. } => ratio,
+        }
+    }
+
+    /// Changes the ratio of a gear or pulley joint. The joint holds the
+    /// bodies where they are now with the new ratio.
+    pub fn set_ratio(&self, ratio: f32) {
+        assert!(
+            ratio.is_finite() && ratio != 0.0,
+            "a ratio must be a number other than 0, got {ratio}"
+        );
+        if self.kind() == JointType::Pulley {
+            assert!(
+                ratio > 0.0,
+                "a pulley's ratio must be positive, got {ratio}"
+            );
+        }
+        let current = self.current_sum(ratio);
+        self.change_coupling(|coupling| match coupling {
+            Coupling::Pulley {
+                ratio: kept,
+                constant,
+                ..
+            }
+            | Coupling::Gear {
+                ratio: kept,
+                constant,
+                ..
+            } => {
+                *kept = ratio;
+                if let Some(current) = current {
+                    *constant = current;
+                }
+            }
+        });
+    }
+
+    /// What a gear or pulley joint would hold constant with `ratio`, from
+    /// where the bodies are now.
+    fn current_sum(&self, ratio: f32) -> Option<f32> {
+        let coupling = self.coupling();
+        let inner = self.world.borrow();
+        match coupling {
+            Coupling::Pulley {
+                ground_a, ground_b, ..
+            } => {
+                let (a, b) =
+                    coupling::pulley_lengths(&inner.world, self.handle, ground_a, ground_b)?;
+                Some(a + ratio * b)
+            }
+            Coupling::Gear {
+                joint_a, joint_b, ..
+            } => {
+                let mut rates = Vec::new();
+                let a = coupling::joint_coordinate(&inner.world, joint_a, &mut rates, 1.0)?;
+                let b = coupling::joint_coordinate(&inner.world, joint_b, &mut rates, 1.0)?;
+                Some(a + ratio * b)
+            }
+        }
+    }
+
+    /// The two joints a gear joint ties together, if they still exist.
+    pub fn joints(&self) -> Vec<Joint> {
+        self.expect(&[JointType::Gear], "joints");
+        let Coupling::Gear {
+            joint_a, joint_b, ..
+        } = self.coupling()
+        else {
+            unreachable!("a gear joint ties gears")
+        };
+        let inner = self.world.borrow();
+        [joint_a, joint_b]
+            .into_iter()
+            .filter(|&handle| inner.world.impulse_joints.get(handle).is_some())
+            .map(|handle| Joint::new(&self.world, handle))
+            .collect()
+    }
+
+    fn pulley(&self, what: &str) -> (Vector, Vector, f32, f32) {
+        self.expect(&[JointType::Pulley], what);
+        let Coupling::Pulley {
+            ground_a,
+            ground_b,
+            ratio,
+            constant,
+            ..
+        } = self.coupling()
+        else {
+            unreachable!("a pulley joint has ropes")
+        };
+        (ground_a, ground_b, ratio, constant)
+    }
+
+    /// The fixed points a pulley joint's ropes run over, as `((x1, y1),
+    /// (x2, y2))`.
+    pub fn ground_anchors(&self) -> ((f32, f32), (f32, f32)) {
+        let (a, b, _, _) = self.pulley("ground anchors");
+        ((a.x, a.y), (b.x, b.y))
+    }
+
+    /// How long a pulley joint's first rope is now: from its first ground
+    /// anchor to its first body.
+    pub fn length_a(&self) -> f32 {
+        self.pulley_lengths().0
+    }
+
+    /// How long a pulley joint's second rope is now.
+    pub fn length_b(&self) -> f32 {
+        self.pulley_lengths().1
+    }
+
+    fn pulley_lengths(&self) -> (f32, f32) {
+        let (a, b, _, _) = self.pulley("rope lengths");
+        let inner = self.world.borrow();
+        coupling::pulley_lengths(&inner.world, self.handle, a, b).unwrap_or((0.0, 0.0))
+    }
+
+    /// The total a pulley joint holds `length_a + ratio * length_b` at:
+    /// how much rope there is.
+    pub fn constant(&self) -> f32 {
+        self.pulley("constant").3
+    }
+
+    /// Changes how much rope a pulley joint has. More lets both bodies
+    /// hang lower.
+    pub fn set_constant(&self, constant: f32) {
+        self.pulley("constant");
+        self.change_coupling(|coupling| {
+            if let Coupling::Pulley { constant: kept, .. } = coupling {
+                *kept = constant;
             }
         });
     }

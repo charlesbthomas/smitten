@@ -36,6 +36,7 @@
 //! without a running game, except for [`World::draw_debug`].
 
 mod body;
+mod coupling;
 mod fixture;
 mod joint;
 mod shape;
