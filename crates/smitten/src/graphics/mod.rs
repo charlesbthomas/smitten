@@ -1183,7 +1183,7 @@ pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), String> {
 /// equivalent of LÖVE's `setCanvas{canvas, depthstencil = depth}`.
 ///
 /// `depth_stencil` is a canvas made with a depth format, such as
-/// [`PixelFormat::Depth24Stencil8`](crate::PixelFormat::Depth24Stencil8),
+/// [`PixelFormat::Depth24Stencil8`],
 /// the same size in pixels as what is drawn to and multisampled alike.
 /// Unlike a canvas's own values, it can be shared between canvases,
 /// cleared with [`clear_ex`], and, made readable, sampled afterwards, for
@@ -2872,8 +2872,8 @@ pub enum GraphicsFeature {
     /// [`Wrap::ClampZero`](crate::Wrap::ClampZero) as its own mode, rather
     /// than falling back to [`Wrap::Clamp`](crate::Wrap::Clamp).
     ClampZero,
-    /// The [`BlendMode::Lighten`](crate::BlendMode::Lighten) and
-    /// [`BlendMode::Darken`](crate::BlendMode::Darken) blend modes.
+    /// The [`BlendMode::Lighten`] and
+    /// [`BlendMode::Darken`] blend modes.
     Lighten,
     /// Drawing to several canvases at once that have different formats.
     MultiCanvasFormats,

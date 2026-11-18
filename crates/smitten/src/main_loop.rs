@@ -10,7 +10,7 @@ use crate::{Color, Config, context, error, graphics, reload, timer, window};
 /// `body` is shown on the error screen and then carried on.
 pub(crate) fn run_with(config: Config, body: impl FnOnce(&mut MainLoop)) {
     if config.console {
-        crate::open_console();
+        smitten_sdl::open_console();
     }
     let backend = match smitten_sdl::SdlBackend::new(&config) {
         Ok(backend) => backend,

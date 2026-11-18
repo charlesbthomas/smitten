@@ -251,6 +251,12 @@ pub struct Locked<'a, T> {
     state: MutexGuard<'a, State<T>>,
 }
 
+impl<T> std::fmt::Debug for Locked<'_, T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Locked").finish_non_exhaustive()
+    }
+}
+
 impl<T> Locked<'_, T> {
     /// See [`Channel::push`].
     pub fn push(&mut self, value: T) -> u64 {

@@ -5,6 +5,8 @@
 //! It has no dependencies and no platform code. Games should depend on the
 //! `smitten` crate, which re-exports everything they need from here.
 
+#![forbid(unsafe_code)]
+
 pub mod backend;
 
 mod blend;

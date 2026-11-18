@@ -12,3 +12,9 @@ publish = false
 smitten-core = { path = "crates/smitten-core" }
 smitten-sdl = { path = "crates/smitten-sdl", default-features = false }
 sdl3-sys = "0.7.3"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"

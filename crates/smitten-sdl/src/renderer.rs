@@ -703,9 +703,9 @@ impl Renderer {
         for layer in layers {
             check_pixel_count(width, height, layer, sdl_pixel_format(pixel_format))?;
         }
+        let format = sdl_pixel_format(pixel_format);
         // SAFETY: the device is alive and every layer was just checked to
         // cover the whole texture.
-        let format = sdl_pixel_format(pixel_format);
         let handle =
             unsafe { new_layered_texture(self.device, format, kind, width, height, layers)? };
         let id = self.next_texture_id;

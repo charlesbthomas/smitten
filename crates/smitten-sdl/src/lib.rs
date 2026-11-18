@@ -31,6 +31,7 @@ use smitten_core::{
 use renderer::Renderer;
 
 /// A window and GPU device owned through SDL3.
+#[allow(missing_debug_implementations)] // Raw SDL handles have nothing to show.
 pub struct SdlBackend {
     window: *mut SDL_Window,
     device: *mut SDL_GPUDevice,
@@ -2180,6 +2181,30 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
         .find(|(sdl, _)| sdl.0 == code)
         .map(|&(_, key)| key)
 }
+
+/// Gives the game a console to print to, like `t.console`: the one it was
+/// started from if there is one, and a new window otherwise.
+#[cfg(windows)]
+pub fn open_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+        fn AllocConsole() -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: both calls take plain values and only fail by returning 0.
+    // Rust's standard streams look up the console's handles on every
+    // write, so printing works from here on.
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            AllocConsole();
+        }
+    }
+}
+
+/// Only Windows separates console and window programs.
+#[cfg(not(windows))]
+pub fn open_console() {}
 
 #[cfg(test)]
 mod tests {
