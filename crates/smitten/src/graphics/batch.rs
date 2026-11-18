@@ -362,6 +362,17 @@ impl Batch {
     /// Queues geometry kept in GPU buffers, to draw on top of everything
     /// queued so far in a draw call of its own.
     pub fn push_mesh(&mut self, texture: Option<TextureId>, filter: Filter, draw: MeshDraw) {
+        self.push_mesh_layer(texture, 0, filter, draw);
+    }
+
+    /// As `push_mesh`, drawing picture `layer` of an array texture.
+    pub fn push_mesh_layer(
+        &mut self,
+        texture: Option<TextureId>,
+        layer: u32,
+        filter: Filter,
+        draw: MeshDraw,
+    ) {
         if draw.index_count == 0 {
             return;
         }
@@ -380,7 +391,7 @@ impl Batch {
         self.meshes.push(draw);
         self.push_call(DrawCall {
             texture,
-            layer: 0,
+            layer,
             filter,
             blend: self.blend,
             blend_alpha: self.blend_alpha,
