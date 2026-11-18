@@ -19,11 +19,12 @@ use smitten_core::backend::{
 pub(crate) const ENTRY_POINT: &std::ffi::CStr = c"smitten_fragment";
 
 /// Appended after the game's source, so its line numbers stay the same in
-/// error messages. WGSL does not care about declaration order.
+/// error messages. WGSL does not care about declaration order. `IMAGE` is
+/// replaced with the type of the texture being drawn.
 ///
 /// SDL wants fragment shader textures in group 2 and uniforms in group 3.
 const WRAPPER: &str = "
-@group(2) @binding(0) var image: texture_2d<f32>;
+@group(2) @binding(0) var image: IMAGE;
 @group(2) @binding(1) var image_sampler: sampler;
 
 struct SmittenFragmentInput {
@@ -31,12 +32,78 @@ struct SmittenFragmentInput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
 }
+";
 
-@fragment
-fn smitten_fragment(input: SmittenFragmentInput) -> @location(0) vec4<f32> {
-    return effect(input.color, input.uv, input.position.xy);
+/// The built-in fragment shader, as a game would write it, for drawing
+/// to several canvases at once. Drawing to one uses the GLSL one beside
+/// this file.
+pub(crate) const BUILTIN: &str = "
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    return textureSample(image, image_sampler, uv) * color;
 }
 ";
+
+/// As [`BUILTIN`], for drawing a layer of an array texture: the layer is
+/// the one uniform, as in `sprite_array.frag`.
+pub(crate) const BUILTIN_ARRAY: &str = "
+struct Params { layer: f32 }
+
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    return textureSample(image, image_sampler, uv, i32(params.layer)) * color;
+}
+";
+
+/// The entry point for a shader with one output, `effect`, drawing to
+/// `targets` canvases: each gets the same color.
+fn single_entry(targets: u32) -> String {
+    let fields: String = (0..targets)
+        .map(|index| format!("    @location({index}) out{index}: vec4<f32>,\n"))
+        .collect();
+    let copies: String = (0..targets)
+        .map(|index| format!("    output.out{index} = result;\n"))
+        .collect();
+    format!(
+        "
+struct SmittenFragmentOutput {{
+{fields}}}
+
+@fragment
+fn smitten_fragment(input: SmittenFragmentInput) -> SmittenFragmentOutput {{
+    let result = effect(input.color, input.uv, input.position.xy);
+    var output: SmittenFragmentOutput;
+{copies}    return output;
+}}
+"
+    )
+}
+
+/// The entry point for a shader with several outputs, `effects`, whose
+/// `Outputs` struct has the members `outputs`, drawing to `targets`
+/// canvases. A canvas past the last member gets transparent black.
+fn multiple_entry(outputs: &[String], targets: u32) -> String {
+    let fields: String = (0..targets)
+        .map(|index| format!("    @location({index}) out{index}: vec4<f32>,\n"))
+        .collect();
+    let copies: String = (0..targets as usize)
+        .map(|index| match outputs.get(index) {
+            Some(name) => format!("    output.out{index} = result.{name};\n"),
+            None => format!("    output.out{index} = vec4<f32>(0.0);\n"),
+        })
+        .collect();
+    format!(
+        "
+struct SmittenFragmentOutput {{
+{fields}}}
+
+@fragment
+fn smitten_fragment(input: SmittenFragmentInput) -> SmittenFragmentOutput {{
+    let result: Outputs = effects(input.color, input.uv, input.position.xy);
+    var output: SmittenFragmentOutput;
+{copies}    return output;
+}}
+"
+    )
+}
 
 /// The name of the entry point of the built-in mesh vertex shader.
 pub(crate) const MESH_VERTEX_ENTRY_POINT: &std::ffi::CStr = c"smitten_vertex";
@@ -211,11 +278,27 @@ pub(crate) struct Compiled {
     pub textures: Vec<ShaderTexture>,
 }
 
+/// Compiles a game's shader to draw to one canvas.
 pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
+    compile_for(source, 1, false)
+}
+
+/// Compiles a game's shader, or one of the built-in ones, to draw to
+/// `targets` canvases at once. With `layered`, the texture drawn is an
+/// array texture.
+pub(crate) fn compile_for(source: &str, targets: u32, layered: bool) -> Result<Compiled, String> {
     let has_params = declares_params(source);
+    let multiple = defines_function(source, "effects");
     let texture_names = declared_textures(source);
     let mut full = String::from(source);
-    full.push_str(WRAPPER);
+    full.push_str(&WRAPPER.replace(
+        "IMAGE",
+        if layered {
+            "texture_2d_array<f32>"
+        } else {
+            "texture_2d<f32>"
+        },
+    ));
     for name in &texture_names {
         full.push_str(&format!("var {name}_sampler: sampler;\n"));
     }
@@ -223,22 +306,39 @@ pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
         full.push_str(PARAMS_BINDING);
     }
     let user_lines = source.lines().count() as u32;
+    let wrong = if multiple {
+        wrong_effects
+    } else {
+        wrong_effect
+    };
+    let parse = |full: &str| {
+        naga::front::wgsl::parse_str(full).map_err(|error| {
+            // An error placed in the wrapper means it did not fit the
+            // game's `effect`, which is the game's mistake to fix, not
+            // ours to show.
+            match error.location(full) {
+                Some(location) if location.line_number > user_lines => wrong(error.message()),
+                _ => error.emit_to_string_with_path(full, "shader"),
+            }
+        })
+    };
+    // The entry point copies the members of `Outputs`, so their names
+    // come from parsing the source without it first.
+    let entry = if multiple {
+        multiple_entry(&output_names(&parse(&full)?)?, targets)
+    } else {
+        single_entry(targets)
+    };
+    full.push_str(&entry);
 
-    let mut module = naga::front::wgsl::parse_str(&full).map_err(|error| {
-        // An error placed in the wrapper means it did not fit the game's
-        // `effect`, which is the game's mistake to fix, not ours to show.
-        match error.location(&full) {
-            Some(location) if location.line_number > user_lines => wrong_effect(error.message()),
-            _ => error.emit_to_string_with_path(&full, "shader"),
-        }
-    })?;
+    let mut module = parse(&full)?;
     let textures = bind_textures(&mut module, &texture_names)?;
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .map_err(|error| {
             let report = error.emit_to_string_with_path(&full, "shader");
             if report.contains("smitten_fragment") {
-                wrong_effect("its arguments or return type do not match")
+                wrong("its arguments or return type do not match")
             } else {
                 report
             }
@@ -377,6 +477,67 @@ fn unsupported_texture(name: &str) -> String {
         "texture `{name}` must be a `texture_2d<f32>`, `texture_2d_array<f32>`, \
          `texture_cube<f32>` or `texture_3d<f32>`"
     )
+}
+
+fn wrong_effects(detail: &str) -> String {
+    format!(
+        "the shader must define \
+         `fn effects(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> Outputs`, \
+         with `struct Outputs` holding a `vec4<f32>` for each canvas: {detail}"
+    )
+}
+
+/// The names of the members of the game's `struct Outputs`, in order.
+fn output_names(module: &naga::Module) -> Result<Vec<String>, String> {
+    let outputs = module
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref() == Some("Outputs"))
+        .map(|(_, ty)| &ty.inner);
+    let Some(naga::TypeInner::Struct { members, .. }) = outputs else {
+        return Err(wrong_effects("`Outputs` must be a struct"));
+    };
+    if members.len() > smitten_core::backend::MAX_TARGETS {
+        return Err(wrong_effects(&format!(
+            "`Outputs` has {} members, but at most {} canvases can be drawn to at once",
+            members.len(),
+            smitten_core::backend::MAX_TARGETS
+        )));
+    }
+    members
+        .iter()
+        .map(|member| {
+            let is_vec4 = matches!(
+                module.types[member.ty].inner,
+                naga::TypeInner::Vector {
+                    size: naga::VectorSize::Quad,
+                    scalar: naga::Scalar::F32,
+                }
+            );
+            let name = member.name.clone().unwrap_or_default();
+            if is_vec4 {
+                Ok(name)
+            } else {
+                Err(wrong_effects(&format!(
+                    "`Outputs.{name}` is not a `vec4<f32>`"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// Whether `source` defines a function called `name`, found as the
+/// words `fn` and `name` in a row.
+fn defines_function(source: &str, name: &str) -> bool {
+    let mut words = source
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty());
+    let mut previous = "";
+    words.any(|word| {
+        let found = previous == "fn" && word == name;
+        previous = word;
+        found
+    })
 }
 
 fn wrong_effect(detail: &str) -> String {
@@ -566,6 +727,49 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
                 .locations
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn effects_writes_each_output_to_its_own_canvas() {
+        let source = "
+struct Outputs { albedo: vec4<f32>, normal: vec4<f32> }
+
+fn effects(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> Outputs {
+    var out: Outputs;
+    out.albedo = textureSample(image, image_sampler, uv) * color;
+    out.normal = vec4<f32>(0.5, 0.5, 1.0, 1.0);
+    return out;
+}
+";
+        for targets in 1..=4 {
+            compile_for(source, targets, false).unwrap();
+        }
+        let error = compile_for(
+            "
+struct Outputs { albedo: vec3<f32> }
+fn effects(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> Outputs {
+    var out: Outputs;
+    return out;
+}
+",
+            2,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("`Outputs.albedo` is not a `vec4<f32>`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_built_in_shaders_compile_for_several_canvases() {
+        for targets in 1..=4 {
+            compile_for(PLAIN, targets, false).unwrap();
+            compile_for(BUILTIN, targets, false).unwrap();
+            let array = compile_for(BUILTIN_ARRAY, targets, true).unwrap();
+            assert_eq!(array.uniform_size, 4);
+        }
     }
 
     #[test]

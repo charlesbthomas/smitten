@@ -13,7 +13,7 @@ use std::ptr;
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
     BoundTexture, BufferId, BufferUsage, ColorMask, CompressedFormat, DrawCall, Frame,
-    IndexDataType, MAX_VERTEX_ATTRIBUTES, MAX_VERTEX_BUFFERS, MeshDraw, RenderTargetDesc,
+    IndexDataType, MAX_VERTEX_ATTRIBUTES, MAX_VERTEX_BUFFERS, MeshDraw, Pass, RenderTargetDesc,
     RendererInfo, Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex, VertexDataType,
     VertexLayout, VertexLayoutId as MeshVertexLayoutId, VertexStep,
 };
@@ -182,6 +182,8 @@ struct SamplerKey {
 /// A fragment shader supplied by the game.
 struct CustomShader {
     fragment: *mut SDL_GPUShader,
+    /// The game's WGSL, compiled again for drawing to several canvases.
+    source: String,
     /// How many bytes of uniform data each draw must supply.
     uniform_size: u32,
     /// The kinds of the textures it declares besides `image`.
@@ -206,6 +208,11 @@ pub(crate) struct Renderer {
     array_fragment_shader: *mut SDL_GPUShader,
     /// Built the first time each combination is drawn with.
     pipelines: HashMap<PipelineKey, *mut SDL_GPUGraphicsPipeline>,
+    /// Fragment shaders that write to several canvases at once, made the
+    /// first time each is needed, by custom shader (or `None` for the
+    /// built-in one), whether it draws an array texture, and how many
+    /// canvases.
+    fragment_variants: HashMap<(Option<u32>, bool, u8), *mut SDL_GPUShader>,
     stencil_format: SDL_GPUTextureFormat,
     /// The screen's stencil values, and the size they were made for.
     screen_stencil: *mut SDL_GPUTexture,
@@ -258,6 +265,7 @@ impl Renderer {
             fragment_shader: ptr::null_mut(),
             array_fragment_shader: ptr::null_mut(),
             pipelines: HashMap::new(),
+            fragment_variants: HashMap::new(),
             stencil_format: SDL_GPU_TEXTUREFORMAT_INVALID,
             screen_stencil: ptr::null_mut(),
             screen_stencil_size: (0, 0),
@@ -1126,6 +1134,7 @@ impl Renderer {
             id,
             CustomShader {
                 fragment,
+                source: source.to_string(),
                 uniform_size: compiled.uniform_size,
                 textures: compiled
                     .textures
@@ -1157,10 +1166,26 @@ impl Renderer {
             // SAFETY: as above.
             unsafe { SDL_ReleaseGPUShader(device, shader.fragment) };
         }
+        let id = shader.0;
+        self.fragment_variants
+            .retain(|&(owner, _, _), &mut variant| {
+                let owned = owner == Some(id);
+                if owned {
+                    // SAFETY: as above.
+                    unsafe { SDL_ReleaseGPUShader(device, variant) };
+                }
+                !owned
+            });
     }
 
-    fn create_pipeline(&self, key: PipelineKey) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
+    fn create_pipeline(
+        &mut self,
+        key: PipelineKey,
+    ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
         let fragment = match key.shader {
+            _ if key.target.color_count > 1 => {
+                self.fragment_variant(key.shader, key.layered, key.target.color_count)?
+            }
             None if key.layered => self.array_fragment_shader,
             None => self.fragment_shader,
             Some(id) => {
@@ -1173,6 +1198,65 @@ impl Renderer {
         let (vertex, input) = self.vertex_stage(key.layout)?;
         // SAFETY: the device and both shaders are alive.
         unsafe { create_pipeline(self.device, vertex, fragment, &input, key) }
+    }
+
+    /// The fragment shader of a custom shader, or of the built-in one for
+    /// `None`, that draws to `targets` canvases at once.
+    fn fragment_variant(
+        &mut self,
+        shader: Option<u32>,
+        layered: bool,
+        targets: u8,
+    ) -> Result<*mut SDL_GPUShader, String> {
+        let key = (shader, layered, targets);
+        if let Some(&variant) = self.fragment_variants.get(&key) {
+            return Ok(variant);
+        }
+        let source = match shader {
+            Some(id) => {
+                &self
+                    .shaders
+                    .get(&id)
+                    .ok_or("the shader no longer exists")?
+                    .source
+            }
+            None if layered => shader::BUILTIN_ARRAY,
+            None => shader::BUILTIN,
+        };
+        // A custom shader declares its own textures, so it is never given
+        // an array texture as `image`.
+        let compiled =
+            shader::compile_for(source, u32::from(targets), layered && shader.is_none())?;
+        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let variant = unsafe {
+            create_shader(
+                self.device,
+                &compiled.spirv,
+                shader::ENTRY_POINT,
+                SDL_GPU_SHADERSTAGE_FRAGMENT,
+                1 + compiled.textures.len() as u32,
+                u32::from(compiled.uniform_size > 0),
+            )?
+        };
+        self.fragment_variants.insert(key, variant);
+        Ok(variant)
+    }
+
+    /// What a pass draws to: its first target as [`Renderer::target_desc`]
+    /// says, and its extra targets' formats after it.
+    fn pass_target_desc(&self, pass: &Pass) -> TargetDesc {
+        let mut desc = self.target_desc(pass.target);
+        for id in pass.extra_targets.iter().flatten() {
+            let Some(texture) = self.textures.get(&id.0) else {
+                break;
+            };
+            if usize::from(desc.color_count) == MAX_COLOR_TARGETS {
+                break;
+            }
+            desc.colors[usize::from(desc.color_count)] = texture.format;
+            desc.color_count += 1;
+        }
+        desc
     }
 
     /// The vertex shader and vertex input for a layout.
@@ -1235,7 +1319,7 @@ impl Renderer {
                 .checked_add(pass.call_count as usize)
                 .and_then(|end| frame.calls.get(pass.first_call as usize..end))
                 .unwrap_or(&[]);
-            let target = self.target_desc(pass.target);
+            let target = self.pass_target_desc(pass);
             for call in calls {
                 let key = self.pipeline_key(call, target, frame.meshes);
                 if !self.pipelines.contains_key(&key)
@@ -1641,31 +1725,29 @@ impl Renderer {
                     continue;
                 }
 
-                let mut info = if msaa.is_null() {
-                    SDL_GPUColorTargetInfo {
-                        texture,
-                        load_op: SDL_GPU_LOADOP_LOAD,
-                        store_op: SDL_GPU_STOREOP_STORE,
-                        ..Default::default()
+                let mut infos = [SDL_GPUColorTargetInfo::default(); MAX_COLOR_TARGETS];
+                infos[0] = self.color_target_info(texture, msaa, pass.clear);
+                let mut info_count = 1;
+                // The extra targets must match the first, or the pass is
+                // skipped.
+                let mut extras_ok = true;
+                for (id, clear) in pass.extra_targets.iter().zip(pass.extra_clears) {
+                    let Some(id) = id else { break };
+                    match self.textures.get(&id.0) {
+                        Some(extra)
+                            if extra.is_target
+                                && (extra.width, extra.height) == (width, height)
+                                && extra.msaa.is_null() == msaa.is_null() =>
+                        {
+                            infos[info_count] =
+                                self.color_target_info(extra.handle, extra.msaa, clear);
+                            info_count += 1;
+                        }
+                        _ => extras_ok = false,
                     }
-                } else {
-                    // The samples are kept for later passes to draw on.
-                    SDL_GPUColorTargetInfo {
-                        texture: msaa,
-                        load_op: SDL_GPU_LOADOP_LOAD,
-                        store_op: SDL_GPU_STOREOP_RESOLVE_AND_STORE,
-                        resolve_texture: texture,
-                        ..Default::default()
-                    }
-                };
-                if let Some(color) = pass.clear {
-                    info.load_op = SDL_GPU_LOADOP_CLEAR;
-                    let [r, g, b, a] = if self.gamma_correct {
-                        linear_color([color.r, color.g, color.b, color.a])
-                    } else {
-                        [color.r, color.g, color.b, color.a]
-                    };
-                    info.clear_color = SDL_FColor { r, g, b, a };
+                }
+                if !extras_ok {
+                    continue;
                 }
                 let stencil_info = SDL_GPUDepthStencilTargetInfo {
                     texture: stencil,
@@ -1681,7 +1763,12 @@ impl Renderer {
                     clear_stencil: pass.clear_stencil.unwrap_or(0),
                     ..Default::default()
                 };
-                let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, &stencil_info);
+                let render_pass = SDL_BeginGPURenderPass(
+                    commands,
+                    infos.as_ptr(),
+                    info_count as u32,
+                    &stencil_info,
+                );
                 if render_pass.is_null() {
                     continue;
                 }
@@ -1695,6 +1782,7 @@ impl Renderer {
                         calls,
                         frame,
                         pass.target,
+                        self.pass_target_desc(pass),
                         vertex_count,
                         width,
                         height,
@@ -1703,20 +1791,64 @@ impl Renderer {
                 SDL_EndGPURenderPass(render_pass);
                 // A target that keeps its mipmaps up to date makes them
                 // once the passes drawing to it in a row are done.
-                if let Some(id) = pass.target
-                    && frame
-                        .passes
-                        .get(index + 1)
-                        .is_none_or(|next| next.target != pass.target)
-                    && let Some(target) = self.textures.get(&id.0)
-                    && target.auto_mipmaps
-                {
-                    SDL_GenerateMipmapsForGPUTexture(commands, target.handle);
+                let next = frame.passes.get(index + 1);
+                let same_next = next.is_some_and(|next| {
+                    next.target == pass.target && next.extra_targets == pass.extra_targets
+                });
+                if !same_next {
+                    for id in pass
+                        .target
+                        .iter()
+                        .chain(pass.extra_targets.iter().flatten())
+                    {
+                        if let Some(target) = self.textures.get(&id.0)
+                            && target.auto_mipmaps
+                        {
+                            SDL_GenerateMipmapsForGPUTexture(commands, target.handle);
+                        }
+                    }
                 }
             }
 
             SDL_SubmitGPUCommandBuffer(commands);
         }
+    }
+
+    /// How a pass draws to `texture`, which is resolved from `msaa` unless
+    /// that is null, filled with `clear` first if given.
+    fn color_target_info(
+        &self,
+        texture: *mut SDL_GPUTexture,
+        msaa: *mut SDL_GPUTexture,
+        clear: Option<smitten_core::Color>,
+    ) -> SDL_GPUColorTargetInfo {
+        let mut info = if msaa.is_null() {
+            SDL_GPUColorTargetInfo {
+                texture,
+                load_op: SDL_GPU_LOADOP_LOAD,
+                store_op: SDL_GPU_STOREOP_STORE,
+                ..Default::default()
+            }
+        } else {
+            // The samples are kept for later passes to draw on.
+            SDL_GPUColorTargetInfo {
+                texture: msaa,
+                load_op: SDL_GPU_LOADOP_LOAD,
+                store_op: SDL_GPU_STOREOP_RESOLVE_AND_STORE,
+                resolve_texture: texture,
+                ..Default::default()
+            }
+        };
+        if let Some(color) = clear {
+            info.load_op = SDL_GPU_LOADOP_CLEAR;
+            let [r, g, b, a] = if self.gamma_correct {
+                linear_color([color.r, color.g, color.b, color.a])
+            } else {
+                [color.r, color.g, color.b, color.a]
+            };
+            info.clear_color = SDL_FColor { r, g, b, a };
+        }
+        info
     }
 
     /// # Safety
@@ -1731,6 +1863,7 @@ impl Renderer {
         calls: &[DrawCall],
         frame: &Frame,
         target: Option<TextureId>,
+        target_desc: TargetDesc,
         vertex_count: u32,
         width: u32,
         height: u32,
@@ -1747,7 +1880,6 @@ impl Renderer {
         // frame's vertices in pixels, or a mesh's own.
         let mut bound_mesh: Option<MeshDraw> = None;
         let mut screen_bound = false;
-        let target_desc = self.target_desc(target);
 
         // SAFETY: every handle bound here is alive, and each draw is checked
         // to stay inside the uploaded vertices or its buffers.
@@ -2258,6 +2390,9 @@ impl Drop for Renderer {
             }
             SDL_ReleaseGPUShader(self.device, self.fragment_shader);
             SDL_ReleaseGPUShader(self.device, self.array_fragment_shader);
+            for &variant in self.fragment_variants.values() {
+                SDL_ReleaseGPUShader(self.device, variant);
+            }
         }
     }
 }

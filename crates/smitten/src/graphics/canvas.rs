@@ -302,10 +302,11 @@ impl Canvas {
     /// Runs `draw` with this canvas as the target, then goes back to
     /// whatever was the target before.
     pub fn render_to(&self, draw: impl FnOnce()) {
-        let previous = super::canvas();
+        let previous = super::canvases();
         super::set_canvas(Some(self));
         draw();
-        super::set_canvas(previous.as_ref());
+        let previous: Vec<&Canvas> = previous.iter().collect();
+        super::set_canvases(&previous);
     }
 }
 

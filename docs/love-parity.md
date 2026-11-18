@@ -54,8 +54,8 @@ shaders and canvas formats.
   (`t.window.depth`, `t.window.stencil`, depth canvas formats).
 - `drawInstanced`, with per-instance vertex attributes
   (`VertexAttributeStep` `perinstance`).
-- `setCanvas` with several canvases at once (multiple render targets), and
-  with a layer, cube face or mipmap of a canvas as the target.
+- `setCanvas` with a layer, cube face or mipmap of a canvas as the target.
+  Several canvases at once are done.
 
 ### Canvas and Texture
 

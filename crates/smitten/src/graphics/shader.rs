@@ -72,6 +72,29 @@ use crate::{Color, context};
 /// The types it can be are `texture_2d<f32>`, `texture_2d_array<f32>` and
 /// `texture_cube<f32>`.
 ///
+/// When several canvases are drawn to at once with
+/// [`set_canvases`](super::set_canvases), `effect`'s color goes to all of
+/// them. To give each its own, define `effects` in place of `effect`,
+/// returning a struct named `Outputs` with a `vec4<f32>` for each canvas
+/// in order, the equivalent of writing `love_Canvases[i]` in LÖVE:
+///
+/// ```wgsl
+/// struct Outputs {
+///     albedo: vec4<f32>,
+///     normal: vec4<f32>,
+/// }
+///
+/// fn effects(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> Outputs {
+///     var out: Outputs;
+///     out.albedo = textureSample(image, image_sampler, uv) * color;
+///     out.normal = vec4<f32>(0.5, 0.5, 1.0, 1.0);
+///     return out;
+/// }
+/// ```
+///
+/// A canvas past the last member of `Outputs` gets transparent black, and
+/// a member past the last canvas is left out.
+///
 /// Cloning is cheap and gives another handle to the same shader.
 #[derive(Clone)]
 pub struct Shader {

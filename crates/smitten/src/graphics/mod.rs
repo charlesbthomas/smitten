@@ -112,6 +112,8 @@ pub(crate) struct GraphicsState {
     font: Option<Font>,
     /// Where drawing goes, or `None` for the screen.
     canvas: Option<Canvas>,
+    /// The canvases drawn to at the same time as `canvas`, if any.
+    extra_canvases: Vec<Canvas>,
     /// The custom shader in use, if any.
     shader: Option<Shader>,
     /// Reused between draws of large things so they do not allocate.
@@ -154,6 +156,7 @@ impl Default for GraphicsState {
             batch: Batch::default(),
             font: None,
             canvas: None,
+            extra_canvases: Vec::new(),
             shader: None,
             scratch: Vec::new(),
             screen: Screen::default(),
@@ -276,6 +279,7 @@ impl GraphicsState {
         let leftovers = (
             self.surface.take(),
             self.canvas.take(),
+            std::mem::take(&mut self.extra_canvases),
             self.shader.take(),
             self.font.take(),
         );
@@ -496,9 +500,20 @@ impl GraphicsState {
     }
 
     fn set_canvas(&mut self, canvas: Option<Canvas>) {
+        self.set_canvas_list(canvas, Vec::new());
+    }
+
+    /// Draws to `canvas` and, at the same time, to each of `extra`, which
+    /// the caller has checked match it.
+    fn set_canvas_list(&mut self, canvas: Option<Canvas>, extra: Vec<Canvas>) {
         let target = canvas.as_ref().or(self.surface.as_ref());
-        self.batch.set_target(target.map(|canvas| canvas.texture()));
+        let mut targets = batch::Targets::single(target.map(|canvas| canvas.texture()));
+        for (slot, canvas) in targets.extra.iter_mut().zip(&extra) {
+            *slot = Some(canvas.texture());
+        }
+        self.batch.set_targets(targets);
         self.canvas = canvas;
+        self.extra_canvases = extra;
         self.apply_scissor();
     }
 
@@ -827,6 +842,19 @@ pub fn clear_ex(color: Option<Color>, stencil: Option<u8>) {
     context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil));
 }
 
+/// Fills each canvas being drawn to with its own color, the equivalent of
+/// `love.graphics.clear(color1, color2, ...)` with several canvases set.
+/// `colors[0]` is for the first canvas; a canvas with `None`, or with no
+/// entry, keeps its picture. `stencil` sets every stencil value if given.
+/// The scissor does not limit it.
+pub fn clear_canvases(colors: &[Option<Color>], stencil: Option<u8>) {
+    let mut each = [None; MAX_CANVASES];
+    for (slot, color) in each.iter_mut().zip(colors) {
+        *slot = *color;
+    }
+    context::with(|ctx| ctx.gfx.batch.clear_targets(each, stencil));
+}
+
 /// Tells the GPU that the contents of the screen, or of the active
 /// canvas, are no longer needed, the equivalent of `love.graphics.discard`.
 ///
@@ -906,9 +934,78 @@ pub fn set_canvas(canvas: Option<&Canvas>) {
     context::with(|ctx| ctx.gfx.set_canvas(canvas.cloned()));
 }
 
-/// Returns the canvas being drawn to, or `None` for the screen.
+/// Returns the canvas being drawn to, or `None` for the screen. With
+/// several canvases, it is the first.
 pub fn canvas() -> Option<Canvas> {
     context::with(|ctx| ctx.gfx.canvas.clone())
+}
+
+/// Sends everything drawn from now on to all of `canvases` at once, the
+/// equivalent of `love.graphics.setCanvas(canvas1, canvas2, ...)`, or
+/// back to the screen for none. Up to [`MAX_CANVASES`] can be used.
+///
+/// The built-in shader, and a shader with an `effect` function, draw the
+/// same color to every canvas. A shader with an `effects` function draws
+/// its own color to each; see [`Shader`].
+///
+/// Panics if the canvases are not all the same size in pixels, are
+/// multisampled differently, or are too many, which is always a bug in
+/// the game. Use [`try_set_canvases`] to handle that instead.
+pub fn set_canvases(canvases: &[&Canvas]) {
+    try_set_canvases(canvases).unwrap_or_else(|message| panic!("{message}"));
+}
+
+/// The most canvases [`set_canvases`] can draw to at once.
+pub const MAX_CANVASES: usize = smitten_core::backend::MAX_TARGETS;
+
+/// As [`set_canvases`], returning an error rather than panicking.
+pub fn try_set_canvases(canvases: &[&Canvas]) -> Result<(), String> {
+    let Some((first, rest)) = canvases.split_first() else {
+        set_canvas(None);
+        return Ok(());
+    };
+    if canvases.len() > MAX_CANVASES {
+        return Err(format!(
+            "at most {MAX_CANVASES} canvases can be drawn to at once, not {}",
+            canvases.len()
+        ));
+    }
+    for (index, canvas) in rest.iter().enumerate() {
+        if canvas.pixel_dimensions() != first.pixel_dimensions() {
+            let (width, height) = first.pixel_dimensions();
+            let (other_width, other_height) = canvas.pixel_dimensions();
+            return Err(format!(
+                "canvases drawn to at once must be the same size: the first is \
+                 {width} by {height} pixels, but canvas {} is {other_width} by {other_height}",
+                index + 1
+            ));
+        }
+        if canvas.msaa() != first.msaa() {
+            return Err("canvases drawn to at once must be multisampled alike".to_string());
+        }
+        if canvases[..=index]
+            .iter()
+            .any(|other| other.texture() == canvas.texture())
+        {
+            return Err("the same canvas cannot be drawn to twice at once".to_string());
+        }
+    }
+    let rest = rest.iter().map(|&canvas| canvas.clone()).collect();
+    context::with(|ctx| ctx.gfx.set_canvas_list(Some((*first).clone()), rest));
+    Ok(())
+}
+
+/// Every canvas being drawn to, the first being [`canvas`]. Empty for the
+/// screen.
+pub fn canvases() -> Vec<Canvas> {
+    context::with(|ctx| {
+        ctx.gfx
+            .canvas
+            .iter()
+            .chain(&ctx.gfx.extra_canvases)
+            .cloned()
+            .collect()
+    })
 }
 
 /// Takes a picture of the window once the current frame has been drawn,
@@ -2321,10 +2418,9 @@ pub fn is_supported(feature: GraphicsFeature) -> bool {
     match feature {
         // SDL's GPU API has no border colors to build it from.
         GraphicsFeature::ClampZero => false,
-        // Not until several canvases can be drawn to at once.
-        GraphicsFeature::MultiCanvasFormats => false,
         // Every GPU SDL's GPU API runs on has these.
-        GraphicsFeature::Lighten
+        GraphicsFeature::MultiCanvasFormats
+        | GraphicsFeature::Lighten
         | GraphicsFeature::FullNpot
         | GraphicsFeature::PixelShaderHighp
         | GraphicsFeature::ShaderDerivatives => true,

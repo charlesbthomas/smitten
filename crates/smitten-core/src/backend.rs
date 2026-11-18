@@ -645,15 +645,28 @@ pub struct DrawCall {
     pub vertex_count: u32,
 }
 
+/// The most render targets one pass can draw to at once.
+pub const MAX_TARGETS: usize = 4;
+
 /// A run of draw calls that share a render target.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pass {
     /// A texture from [`Backend::create_render_target`], or `None` for
     /// the screen.
     pub target: Option<TextureId>,
+    /// More render targets drawn to at the same time, from the front,
+    /// with `None` for the slots not used. Only a pass with a `target`
+    /// has them, and they are all the same size as it and multisampled
+    /// alike. A fragment shader writes output `i + 1` to
+    /// `extra_targets[i]`; the built-in one, and one with a single
+    /// output, writes the same color to all.
+    pub extra_targets: [Option<TextureId>; MAX_TARGETS - 1],
     /// The color to fill the target with first. `None` keeps what the
     /// target already holds and draws on top of it.
     pub clear: Option<Color>,
+    /// The colors to fill each of `extra_targets` with first, as `clear`
+    /// does for `target`.
+    pub extra_clears: [Option<Color>; MAX_TARGETS - 1],
     /// The value to reset the target's stencil values to first, or `None`
     /// to keep them. Each target has its own stencil values, kept until
     /// cleared.
@@ -902,7 +915,10 @@ pub trait Backend {
     /// `fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32>`,
     /// which returns the color of one pixel. It may read the texture being
     /// drawn through `image` and `image_sampler`, and values sent by the
-    /// game through `params` if it declares a `struct Params`.
+    /// game through `params` if it declares a `struct Params`. In place
+    /// of `effect`, it may define `fn effects(...) -> Outputs` with the
+    /// same arguments, whose `struct Outputs` holds one `vec4<f32>` for
+    /// each of a pass's targets; see [`Pass::extra_targets`].
     ///
     /// The error is a message for the game's author, with line numbers
     /// that refer to `source`.
