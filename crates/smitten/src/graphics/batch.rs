@@ -2,8 +2,8 @@
 //! the draw order allows.
 
 use smitten_core::backend::{
-    BoundTexture, ColorMask, DrawCall, MAX_TARGETS, MeshDraw, Pass, Scissor, ShaderId, TextureId,
-    Vertex,
+    BoundTexture, ColorMask, DrawCall, MAX_TARGETS, MeshDraw, Pass, Scissor, ShaderId, TargetSlice,
+    TextureId, Vertex,
 };
 use smitten_core::{BlendAlphaMode, BlendMode, Color, Filter, StencilMode, VertexWinding};
 
@@ -15,6 +15,8 @@ use super::stats::FrameCounts;
 pub(crate) struct Targets {
     pub first: Option<TextureId>,
     pub extra: [Option<TextureId>; MAX_TARGETS - 1],
+    /// The part of each target drawn to, `first` then `extra`.
+    pub slices: [TargetSlice; MAX_TARGETS],
 }
 
 impl Targets {
@@ -23,6 +25,7 @@ impl Targets {
         Self {
             first: target,
             extra: [None; MAX_TARGETS - 1],
+            slices: [TargetSlice::default(); MAX_TARGETS],
         }
     }
 
@@ -37,7 +40,7 @@ impl Targets {
 
     /// Whether `pass` draws to these targets.
     fn matches(&self, pass: &Pass) -> bool {
-        pass.target == self.first && pass.extra_targets == self.extra
+        pass.target == self.first && pass.extra_targets == self.extra && pass.slices == self.slices
     }
 
     /// A pass to these targets that clears nothing.
@@ -47,6 +50,7 @@ impl Targets {
             extra_targets: self.extra,
             clear: None,
             extra_clears: [None; MAX_TARGETS - 1],
+            slices: self.slices,
             clear_stencil: None,
             first_call,
             call_count: 0,

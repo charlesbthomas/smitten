@@ -35,8 +35,8 @@ mod video;
 use std::path::Path;
 
 use smitten_core::backend::{
-    Backend, BufferId, ColorMask, Frame, MeshDraw, Pass, RenderTargetDesc, Scissor, TextureId,
-    Vertex,
+    Backend, BufferId, ColorMask, Frame, MeshDraw, Pass, RenderTargetDesc, Scissor, TargetSlice,
+    TextureId, Vertex,
 };
 
 use crate::context;
@@ -65,7 +65,7 @@ pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, Pa
 pub use shader::{MatrixLayout, Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::{
-    CompressedFormat, IndexDataType, RendererInfo, VertexDataType,
+    CompressedFormat, IndexDataType, RendererInfo, TextureKind, VertexDataType,
     VertexStep as VertexAttributeStep,
 };
 pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
@@ -114,6 +114,8 @@ pub(crate) struct GraphicsState {
     canvas: Option<Canvas>,
     /// The canvases drawn to at the same time as `canvas`, if any.
     extra_canvases: Vec<Canvas>,
+    /// The layer and mipmap level drawn to on each canvas in use.
+    canvas_slices: [TargetSlice; MAX_CANVASES],
     /// The custom shader in use, if any.
     shader: Option<Shader>,
     /// Reused between draws of large things so they do not allocate.
@@ -157,6 +159,7 @@ impl Default for GraphicsState {
             font: None,
             canvas: None,
             extra_canvases: Vec::new(),
+            canvas_slices: Default::default(),
             shader: None,
             scratch: Vec::new(),
             screen: Screen::default(),
@@ -322,9 +325,10 @@ impl GraphicsState {
         &mut self,
         backend: &mut dyn Backend,
         canvas: &Canvas,
+        slice: TargetSlice,
     ) -> Result<ImageData, String> {
         self.flush_canvases(backend);
-        let (width, height, pixels) = backend.read_texture(canvas.texture())?;
+        let (width, height, pixels) = backend.read_texture_slice(canvas.texture(), slice)?;
         ImageData::from_raw(width, height, canvas.format(), pixels)
             .map_err(|error| error.to_string())
     }
@@ -456,7 +460,11 @@ impl GraphicsState {
     /// The size in units of what is being drawn to.
     fn target_size(&self) -> (u32, u32) {
         match &self.canvas {
-            Some(canvas) => canvas.dimensions(),
+            Some(canvas) => {
+                let (w, h) = canvas.dimensions();
+                let level = self.canvas_slices[0].mipmap;
+                ((w >> level).max(1), (h >> level).max(1))
+            }
             None => self.screen.size(),
         }
     }
@@ -464,7 +472,11 @@ impl GraphicsState {
     /// The size in pixels of what is being drawn to.
     fn target_pixel_size(&self) -> (u32, u32) {
         match &self.canvas {
-            Some(canvas) => canvas.pixel_dimensions(),
+            Some(canvas) => {
+                let (w, h) = canvas.pixel_dimensions();
+                let level = self.canvas_slices[0].mipmap;
+                ((w >> level).max(1), (h >> level).max(1))
+            }
             None => self.screen.pixel_size(),
         }
     }
@@ -499,21 +511,43 @@ impl GraphicsState {
         }
     }
 
+    /// The canvases drawn to now and the slice of each, for putting back
+    /// later with `set_canvas_list`.
+    pub(crate) fn canvas_list(&self) -> (Option<Canvas>, Vec<Canvas>, [TargetSlice; MAX_CANVASES]) {
+        (
+            self.canvas.clone(),
+            self.extra_canvases.clone(),
+            self.canvas_slices,
+        )
+    }
+
     fn set_canvas(&mut self, canvas: Option<Canvas>) {
-        self.set_canvas_list(canvas, Vec::new());
+        self.set_canvas_list(canvas, Vec::new(), Default::default());
     }
 
     /// Draws to `canvas` and, at the same time, to each of `extra`, which
     /// the caller has checked match it.
-    fn set_canvas_list(&mut self, canvas: Option<Canvas>, extra: Vec<Canvas>) {
+    pub(crate) fn set_canvas_list(
+        &mut self,
+        canvas: Option<Canvas>,
+        extra: Vec<Canvas>,
+        slices: [TargetSlice; MAX_CANVASES],
+    ) {
+        let slices = if canvas.is_some() {
+            slices
+        } else {
+            Default::default()
+        };
         let target = canvas.as_ref().or(self.surface.as_ref());
         let mut targets = batch::Targets::single(target.map(|canvas| canvas.texture()));
         for (slot, canvas) in targets.extra.iter_mut().zip(&extra) {
             *slot = Some(canvas.texture());
         }
+        targets.slices = slices;
         self.batch.set_targets(targets);
         self.canvas = canvas;
         self.extra_canvases = extra;
+        self.canvas_slices = slices;
         self.apply_scissor();
     }
 
@@ -584,6 +618,12 @@ impl GraphicsState {
 
     /// Queues the part of `image` covered by `quad`, placed by `local`.
     fn push_image(&mut self, image: &Image, quad: &Quad, local: &Transform) {
+        assert!(
+            image.texture_kind() == TextureKind::Flat,
+            "a {:?} canvas cannot be drawn like an image; draw a layer with \
+             graphics::draw_layer or sample it in a shader",
+            image.texture_kind()
+        );
         self.push_texture(image.texture(), 0, image.filter(), quad, local);
     }
 
@@ -960,39 +1000,150 @@ pub const MAX_CANVASES: usize = smitten_core::backend::MAX_TARGETS;
 
 /// As [`set_canvases`], returning an error rather than panicking.
 pub fn try_set_canvases(canvases: &[&Canvas]) -> Result<(), String> {
-    let Some((first, rest)) = canvases.split_first() else {
+    let targets: Vec<CanvasTarget> = canvases
+        .iter()
+        .map(|&canvas| CanvasTarget::new(canvas))
+        .collect();
+    try_set_canvas_targets(&targets)
+}
+
+/// A canvas to draw to, and which part of it: one layer of an array
+/// canvas, one face of a cube canvas, or one slice of a volume canvas, at
+/// one mipmap level. The equivalent of the table LÖVE's `setCanvas`
+/// takes, `{canvas, layer = …, mipmap = …}`.
+///
+/// ```no_run
+/// # use smitten::graphics::{self, Canvas, CanvasTarget};
+/// # let cube: Canvas = todo!();
+/// // Draw the +y face of a cube canvas.
+/// graphics::set_canvas_targets(&[CanvasTarget::new(&cube).layer(2)]);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct CanvasTarget<'a> {
+    pub canvas: &'a Canvas,
+    /// The layer, cube face (+x, -x, +y, -y, +z, -z) or volume slice.
+    pub layer: u32,
+    /// The mipmap level, 0 for the full-size picture. Drawing to a
+    /// smaller level needs [`MipmapMode::Manual`].
+    pub mipmap: u32,
+}
+
+impl<'a> CanvasTarget<'a> {
+    /// The whole of `canvas`, or its first layer.
+    pub fn new(canvas: &'a Canvas) -> Self {
+        Self {
+            canvas,
+            layer: 0,
+            mipmap: 0,
+        }
+    }
+
+    /// Draws to layer `layer` instead.
+    pub fn layer(self, layer: u32) -> Self {
+        Self { layer, ..self }
+    }
+
+    /// Draws to mipmap level `mipmap` instead.
+    pub fn mipmap(self, mipmap: u32) -> Self {
+        Self { mipmap, ..self }
+    }
+
+    fn slice(&self) -> TargetSlice {
+        TargetSlice {
+            layer: self.layer,
+            mipmap: self.mipmap,
+        }
+    }
+}
+
+/// Sends everything drawn from now on to these parts of canvases, as
+/// [`set_canvases`] does for whole ones. Positions are then in units of
+/// the mipmap level drawn to, which is half the size for each level.
+///
+/// Panics if a layer or level does not exist, if the parts are not all
+/// the same size in pixels or multisampled alike, or for a smaller level
+/// of a canvas with [`MipmapMode::Auto`]. Use [`try_set_canvas_targets`]
+/// to handle that instead.
+pub fn set_canvas_targets(targets: &[CanvasTarget]) {
+    try_set_canvas_targets(targets).unwrap_or_else(|message| panic!("{message}"));
+}
+
+/// As [`set_canvas_targets`], returning an error rather than panicking.
+pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), String> {
+    let Some(first) = targets.first() else {
         set_canvas(None);
         return Ok(());
     };
-    if canvases.len() > MAX_CANVASES {
+    if targets.len() > MAX_CANVASES {
         return Err(format!(
             "at most {MAX_CANVASES} canvases can be drawn to at once, not {}",
-            canvases.len()
+            targets.len()
         ));
     }
-    for (index, canvas) in rest.iter().enumerate() {
-        if canvas.pixel_dimensions() != first.pixel_dimensions() {
-            let (width, height) = first.pixel_dimensions();
-            let (other_width, other_height) = canvas.pixel_dimensions();
+    for (index, target) in targets.iter().enumerate() {
+        let canvas = target.canvas;
+        if target.layer >= canvas.layer_count() {
             return Err(format!(
-                "canvases drawn to at once must be the same size: the first is \
-                 {width} by {height} pixels, but canvas {} is {other_width} by {other_height}",
-                index + 1
+                "layer {} does not exist: the canvas has {}",
+                target.layer,
+                canvas.layer_count()
             ));
         }
-        if canvas.msaa() != first.msaa() {
+        if target.mipmap >= canvas.mipmap_count() {
+            return Err(format!(
+                "mipmap level {} does not exist: the canvas has {}",
+                target.mipmap,
+                canvas.mipmap_count()
+            ));
+        }
+        if target.mipmap > 0 && canvas.mipmap_mode() == MipmapMode::Auto {
+            return Err(
+                "a canvas whose mipmaps are made automatically can only be drawn to at level 0; \
+                 make it with MipmapMode::Manual"
+                    .to_string(),
+            );
+        }
+        if target.canvas_pixels() != first.canvas_pixels() {
+            let (width, height) = first.canvas_pixels();
+            let (other_width, other_height) = target.canvas_pixels();
+            return Err(format!(
+                "canvases drawn to at once must be the same size: the first is \
+                 {width} by {height} pixels, but canvas {index} is {other_width} by {other_height}"
+            ));
+        }
+        if canvas.msaa() != first.canvas.msaa() {
             return Err("canvases drawn to at once must be multisampled alike".to_string());
         }
-        if canvases[..=index]
-            .iter()
-            .any(|other| other.texture() == canvas.texture())
-        {
+        if targets[..index].iter().any(|other| {
+            other.canvas.texture() == canvas.texture() && other.slice() == target.slice()
+        }) {
             return Err("the same canvas cannot be drawn to twice at once".to_string());
         }
     }
-    let rest = rest.iter().map(|&canvas| canvas.clone()).collect();
-    context::with(|ctx| ctx.gfx.set_canvas_list(Some((*first).clone()), rest));
+    let mut slices = [TargetSlice::default(); MAX_CANVASES];
+    for (slot, target) in slices.iter_mut().zip(targets) {
+        *slot = target.slice();
+    }
+    let rest = targets[1..]
+        .iter()
+        .map(|target| target.canvas.clone())
+        .collect();
+    context::with(|ctx| {
+        ctx.gfx
+            .set_canvas_list(Some(first.canvas.clone()), rest, slices)
+    });
     Ok(())
+}
+
+impl CanvasTarget<'_> {
+    /// The size in pixels of the part drawn to.
+    fn canvas_pixels(&self) -> (u32, u32) {
+        let (width, height) = self.canvas.pixel_dimensions();
+        (
+            (width >> self.mipmap).max(1),
+            (height >> self.mipmap).max(1),
+        )
+    }
 }
 
 /// Every canvas being drawn to, the first being [`canvas`]. Empty for the
@@ -2257,7 +2408,7 @@ pub fn draw_text_with(text: &Text, transform: &Transform) {
 /// Panics if there is no such layer, or if a custom shader is active: a
 /// shader reads an array image by declaring a `texture_2d_array<f32>` and
 /// being sent it with [`Shader::send_texture`].
-pub fn draw_layer(image: &ArrayImage, layer: u32, x: f32, y: f32) {
+pub fn draw_layer(image: &impl Layered, layer: u32, x: f32, y: f32) {
     draw_layer_ex(image, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2265,7 +2416,7 @@ pub fn draw_layer(image: &ArrayImage, layer: u32, x: f32, y: f32) {
 /// arguments. See [`draw_ex`] for what they mean.
 #[allow(clippy::too_many_arguments)] // Mirrors love.graphics.drawLayer.
 pub fn draw_layer_ex(
-    image: &ArrayImage,
+    image: &impl Layered,
     layer: u32,
     x: f32,
     y: f32,
@@ -2275,7 +2426,8 @@ pub fn draw_layer_ex(
     ox: f32,
     oy: f32,
 ) {
-    let (width, height) = (image.width() as f32, image.height() as f32);
+    let (width, height) = image.layer_size();
+    let (width, height) = (width as f32, height as f32);
     let quad = Quad::new(0.0, 0.0, width, height, width, height);
     draw_layer_quad_with(
         image,
@@ -2286,11 +2438,11 @@ pub fn draw_layer_ex(
 }
 
 /// Draws part of a layer of an [`ArrayImage`], placed by `transform`.
-pub fn draw_layer_quad_with(image: &ArrayImage, layer: u32, quad: &Quad, transform: &Transform) {
+pub fn draw_layer_quad_with(image: &impl Layered, layer: u32, quad: &Quad, transform: &Transform) {
     assert!(
-        layer < image.layer_count(),
-        "layer {layer} does not exist: the array image has {} layers",
-        image.layer_count()
+        layer < image.layers(),
+        "layer {layer} does not exist: there are {} layers",
+        image.layers()
     );
     context::with(|ctx| {
         assert!(
@@ -2298,9 +2450,69 @@ pub fn draw_layer_quad_with(image: &ArrayImage, layer: u32, quad: &Quad, transfo
             "graphics::draw_layer cannot be used with a custom shader active; \
              send the array image to the shader with Shader::send_texture instead"
         );
-        ctx.gfx
-            .push_texture(image.texture(), layer, image.filter(), quad, transform);
+        ctx.gfx.push_texture(
+            image.layer_texture(),
+            layer,
+            image.layer_filter(),
+            quad,
+            transform,
+        );
     });
+}
+
+/// Something with layers [`draw_layer`] can draw one of: an
+/// [`ArrayImage`], or a [`Canvas`] made with
+/// [`TextureKind::Array`].
+pub trait Layered: layered_sealed::Sealed {
+    #[doc(hidden)]
+    fn layer_texture(&self) -> TextureId;
+    #[doc(hidden)]
+    fn layer_filter(&self) -> Filter;
+    #[doc(hidden)]
+    fn layer_size(&self) -> (u32, u32);
+    #[doc(hidden)]
+    fn layers(&self) -> u32;
+}
+
+mod layered_sealed {
+    pub trait Sealed {}
+    impl Sealed for super::ArrayImage {}
+    impl Sealed for super::Canvas {}
+}
+
+impl Layered for ArrayImage {
+    fn layer_texture(&self) -> TextureId {
+        self.texture()
+    }
+    fn layer_filter(&self) -> Filter {
+        self.filter()
+    }
+    fn layer_size(&self) -> (u32, u32) {
+        (self.width(), self.height())
+    }
+    fn layers(&self) -> u32 {
+        self.layer_count()
+    }
+}
+
+impl Layered for Canvas {
+    fn layer_texture(&self) -> TextureId {
+        assert!(
+            self.texture_type() == TextureKind::Array,
+            "graphics::draw_layer needs an array canvas, not a {:?} one",
+            self.texture_type()
+        );
+        self.texture()
+    }
+    fn layer_filter(&self) -> Filter {
+        self.filter()
+    }
+    fn layer_size(&self) -> (u32, u32) {
+        self.dimensions()
+    }
+    fn layers(&self) -> u32 {
+        self.layer_count()
+    }
 }
 
 /// Loads an image file for each layer of an [`ArrayImage`], the
@@ -2378,6 +2590,18 @@ pub fn is_canvas_format_supported(format: PixelFormat, readable: bool) -> bool {
         ctx.backend.supports_pixel_format(format, true)
             && (!readable || ctx.backend.supports_pixel_format(format, false))
     })
+}
+
+/// The texture shapes this GPU supports, the equivalent of
+/// `love.graphics.getTextureTypes`. Every SDL GPU backend supports all
+/// four, for images and canvases alike.
+pub fn texture_types() -> [(TextureKind, bool); 4] {
+    [
+        (TextureKind::Flat, true),
+        (TextureKind::Array, true),
+        (TextureKind::Cube, true),
+        (TextureKind::Volume, true),
+    ]
 }
 
 /// The formats canvases can have on this GPU, the equivalent of

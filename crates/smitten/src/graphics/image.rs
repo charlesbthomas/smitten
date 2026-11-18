@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use smitten_core::backend::{Backend, TextureId};
+use smitten_core::backend::{Backend, TextureId, TextureKind};
 use smitten_core::{Filter, PixelFormat, Wrap};
 
 use crate::context;
@@ -43,6 +43,8 @@ pub(crate) struct Inner {
     /// Whether the GPU decodes its colors from sRGB, which is what
     /// gamma-correct rendering does for images not made `linear`.
     srgb: Cell<bool>,
+    /// The texture's shape; only a canvas can be other than flat.
+    kind: Cell<TextureKind>,
     _counted: Counted,
 }
 
@@ -132,6 +134,7 @@ impl Image {
                     format: Cell::new(format),
                     readable: Cell::new(true),
                     srgb: Cell::new(format.is_srgb()),
+                    kind: Cell::new(TextureKind::Flat),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -160,6 +163,7 @@ impl Image {
                 format: Cell::new(PixelFormat::Rgba8),
                 readable: Cell::new(true),
                 srgb: Cell::new(false),
+                kind: Cell::new(TextureKind::Flat),
                 _counted: Counted::new(kind),
             }),
         }
@@ -291,6 +295,7 @@ impl Image {
                     format: Cell::new(PixelFormat::Rgba8),
                     readable: Cell::new(true),
                     srgb: Cell::new(srgb),
+                    kind: Cell::new(TextureKind::Flat),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -369,6 +374,16 @@ impl Image {
 
     /// Records that the texture was made with `levels` mipmap levels,
     /// blended as a new image's are.
+    /// The texture's shape, the equivalent of `Texture:getTextureType`.
+    /// Only a [`Canvas`](super::Canvas) can be other than flat.
+    pub fn texture_kind(&self) -> TextureKind {
+        self.inner.kind.get()
+    }
+
+    pub(crate) fn set_texture_kind(&self, kind: TextureKind) {
+        self.inner.kind.set(kind);
+    }
+
     pub(crate) fn mark_mipmapped(&self, levels: u32) {
         self.inner.mipmap_count.set(levels);
         if levels > 1 {

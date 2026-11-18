@@ -2,9 +2,9 @@
 //! `reset`.
 
 use smitten_core::StencilMode;
-use smitten_core::backend::ColorMask;
+use smitten_core::backend::{ColorMask, TargetSlice};
 
-use super::{Canvas, Font, GraphicsState, LineJoin, LineStyle, Shader, Transform};
+use super::{Canvas, Font, GraphicsState, LineJoin, LineStyle, MAX_CANVASES, Shader, Transform};
 use crate::{BlendAlphaMode, BlendMode, Color, CullMode, Filter, VertexWinding};
 
 /// What [`push_ex`](super::push_ex) saves, the equivalent of LÖVE's
@@ -37,6 +37,7 @@ pub(super) struct DrawState {
     shader: Option<Shader>,
     canvas: Option<Canvas>,
     extra_canvases: Vec<Canvas>,
+    canvas_slices: [TargetSlice; MAX_CANVASES],
     scissor: Option<(i32, i32, u32, u32)>,
     stencil: StencilMode,
     stencil_value: u8,
@@ -64,6 +65,7 @@ impl DrawState {
             shader: None,
             canvas: None,
             extra_canvases: Vec::new(),
+            canvas_slices: Default::default(),
             scissor: None,
             stencil: StencilMode::Off,
             stencil_value: 0,
@@ -92,6 +94,7 @@ impl GraphicsState {
             shader: self.shader.clone(),
             canvas: self.canvas.clone(),
             extra_canvases: self.extra_canvases.clone(),
+            canvas_slices: self.canvas_slices,
             scissor: self.scissor,
             stencil: self.batch.stencil,
             stencil_value: self.batch.stencil_value,
@@ -128,7 +131,7 @@ impl GraphicsState {
         }
         self.scissor = state.scissor;
         // Also puts the scissor back, in pixels of the restored target.
-        self.set_canvas_list(state.canvas, state.extra_canvases);
+        self.set_canvas_list(state.canvas, state.extra_canvases, state.canvas_slices);
         self.batch.stencil = state.stencil;
         self.batch.stencil_value = state.stencil_value;
         self.line_width = state.line_width;

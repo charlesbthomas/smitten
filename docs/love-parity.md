@@ -14,7 +14,7 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 24 of LÖVE's 900 functions and methods are still missing, plus 9
+About 21 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **97% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
 GPU features: depth buffers, instancing and canvas formats.
@@ -26,7 +26,7 @@ GPU features: depth buffers, instancing and canvas formats.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 23 | 91% |
+| graphics | 268 | 20 | 93% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -46,22 +46,21 @@ GPU features: depth buffers, instancing and canvas formats.
 
 ### Module functions
 
-- `getSystemLimits` (`GraphicsLimit`), `getTextureTypes`. `renderer_info`,
+- `getSystemLimits` (`GraphicsLimit`). `renderer_info`, `texture_types`,
   `is_supported` (`GraphicsFeature`, a first version) and the format lists
   exist.
 - `setDepthMode`, `getDepthMode`, and depth and stencil buffers on canvases
   (`t.window.depth`, `t.window.stencil`, depth canvas formats).
 - `drawInstanced`, with per-instance vertex attributes
   (`VertexAttributeStep` `perinstance`).
-- `setCanvas` with a layer, cube face or mipmap of a canvas as the target.
-  Several canvases at once are done.
 
 ### Canvas and Texture
 
-- `newCanvas` settings: depth formats, and `type` (array, cube and volume
-  canvases). Color formats, `readable` and MSAA are done.
-- `Texture:getTextureType`, `getDepth`, `getDepthSampleMode`,
-  `setDepthSampleMode`.
+- `newCanvas` settings: depth formats. Color formats, `readable`, MSAA
+  and `type` (array, cube and volume canvases) are done, and so are
+  `setCanvas` with a layer, face, slice or mipmap as the target
+  (`set_canvas_targets`) and `Texture:getTextureType` and `getDepth`.
+- `Texture:getDepthSampleMode`, `setDepthSampleMode`.
 
 ### SpriteBatch
 

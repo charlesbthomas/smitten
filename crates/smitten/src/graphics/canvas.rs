@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::Deref;
 
-use smitten_core::backend::{Backend, RenderTargetDesc};
+use smitten_core::backend::{Backend, RenderTargetDesc, TargetSlice, TextureKind};
 use smitten_core::{Filter, PixelFormat};
 
 use super::stats::Kind;
@@ -34,6 +34,9 @@ pub struct Canvas {
     mipmaps: MipmapMode,
     /// How many samples each pixel holds, 1 for none.
     msaa: u32,
+    kind: TextureKind,
+    /// How many layers, faces or depth slices it has, 1 when flat.
+    layers: u32,
 }
 
 /// Whether a canvas has mipmaps and when they are made, the equivalent of
@@ -82,6 +85,16 @@ pub struct CanvasSettings {
     /// on some GPUs; smitten records the setting for
     /// [`Image::is_readable`] but draws it the same way.
     pub readable: Option<bool>,
+    /// The canvas's shape, LÖVE's `type` setting: flat, an array of
+    /// layers, the six faces of a cube, or a volume. Draw to one layer,
+    /// face or depth slice with
+    /// [`graphics::set_canvas_targets`](super::set_canvas_targets), and
+    /// sample a non-flat canvas in a shader with
+    /// [`Shader::send_texture`](super::Shader::send_texture).
+    pub texture_type: TextureKind,
+    /// How many layers an array canvas has, or how deep a volume canvas
+    /// is. Ignored for a flat canvas, which has 1, and a cube, which has 6.
+    pub layers: u32,
 }
 
 impl Default for CanvasSettings {
@@ -92,6 +105,8 @@ impl Default for CanvasSettings {
             mipmaps: MipmapMode::None,
             msaa: 0,
             readable: None,
+            texture_type: TextureKind::Flat,
+            layers: 1,
         }
     }
 }
@@ -234,10 +249,13 @@ impl Canvas {
                 MipmapMode::Manual => Some(false),
             },
             samples,
+            kind: settings.texture_type,
+            layers: settings.layers,
         })?;
         let msaa = backend.texture_msaa(texture);
         let image = Image::from_texture(texture, width, height, filter, Kind::Canvas);
         image.set_storage(format, settings.readable.unwrap_or(true));
+        image.set_texture_kind(settings.texture_type);
         if settings.mipmaps != MipmapMode::None {
             image.mark_mipmapped(32 - pixels.0.max(pixels.1).max(1).leading_zeros());
         }
@@ -247,7 +265,25 @@ impl Canvas {
             scale,
             mipmaps: settings.mipmaps,
             msaa,
+            kind: settings.texture_type,
+            layers: match settings.texture_type {
+                TextureKind::Flat => 1,
+                TextureKind::Cube => 6,
+                TextureKind::Array | TextureKind::Volume => settings.layers,
+            },
         })
+    }
+
+    /// The canvas's shape, the equivalent of `Texture:getTextureType`.
+    pub fn texture_type(&self) -> TextureKind {
+        self.kind
+    }
+
+    /// How many layers, cube faces or depth slices the canvas has: 1 for
+    /// a flat canvas, 6 for a cube, the equivalent of `getLayerCount` and
+    /// `getDepth`.
+    pub fn layer_count(&self) -> u32 {
+        self.layers
     }
 
     /// Whether the canvas has mipmaps and when they are made.
@@ -296,17 +332,40 @@ impl Canvas {
     /// between drawing a canvas to the screen and changing that canvas
     /// later in the same frame, or the screen shows the later contents.
     pub fn new_image_data(&self) -> Result<ImageData, String> {
-        context::with(|ctx| ctx.gfx.read_canvas(&mut *ctx.backend, self))
+        self.new_image_data_slice(0, 0)
+    }
+
+    /// As [`Canvas::new_image_data`], copying one layer, cube face or
+    /// depth slice at one mipmap level, the equivalent of
+    /// `Canvas:newImageData(slice, mipmap)`. The result is that level's
+    /// size.
+    pub fn new_image_data_slice(&self, layer: u32, mipmap: u32) -> Result<ImageData, String> {
+        if layer >= self.layers {
+            return Err(format!(
+                "layer {layer} does not exist: the canvas has {}",
+                self.layers
+            ));
+        }
+        if mipmap >= self.mipmap_count() {
+            return Err(format!(
+                "mipmap level {mipmap} does not exist: the canvas has {}",
+                self.mipmap_count()
+            ));
+        }
+        let slice = TargetSlice { layer, mipmap };
+        context::with(|ctx| ctx.gfx.read_canvas(&mut *ctx.backend, self, slice))
     }
 
     /// Runs `draw` with this canvas as the target, then goes back to
     /// whatever was the target before.
     pub fn render_to(&self, draw: impl FnOnce()) {
-        let previous = super::canvases();
+        let previous = context::with(|ctx| ctx.gfx.canvas_list());
         super::set_canvas(Some(self));
         draw();
-        let previous: Vec<&Canvas> = previous.iter().collect();
-        super::set_canvases(&previous);
+        context::with(|ctx| {
+            let (canvas, extra, slices) = previous;
+            ctx.gfx.set_canvas_list(canvas, extra, slices)
+        });
     }
 }
 
@@ -325,6 +384,7 @@ impl fmt::Debug for Canvas {
             .field("height", &self.image.height())
             .field("dpi_scale", &self.scale)
             .field("filter", &self.image.filter())
+            .field("type", &self.kind)
             .finish()
     }
 }

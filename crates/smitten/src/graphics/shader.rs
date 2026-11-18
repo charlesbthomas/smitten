@@ -536,7 +536,8 @@ impl sealed::Sealed for Canvas {}
 impl Texture for Canvas {
     fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>) {
         let image: &Image = self;
-        image.binding()
+        let (bound, _, keep) = image.binding();
+        (bound, self.texture_type(), keep)
     }
 }
 
