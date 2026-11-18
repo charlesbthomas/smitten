@@ -54,7 +54,7 @@ pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
 pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
-pub use particles::ParticleSystem;
+pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
 pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::CompressedFormat;
@@ -573,7 +573,7 @@ impl GraphicsState {
     fn push_particles(&mut self, system: &ParticleSystem, local: &Transform) {
         let transform = self.device().then_inner(local);
         let vertices = system.vertices(&transform, self.color);
-        let image = system.image();
+        let image = system.texture();
         self.batch
             .push(Some(image.texture()), image.filter(), &vertices);
     }
