@@ -56,7 +56,7 @@ pub use image_data::{ImageData, ImageFormat, is_compressed};
 pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
-pub use shader::{Shader, ShaderError, Texture, UniformValue};
+pub use shader::{MatrixLayout, Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::CompressedFormat;
 pub use sprite_batch::SpriteBatch;
