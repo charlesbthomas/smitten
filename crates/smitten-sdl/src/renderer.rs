@@ -580,13 +580,14 @@ impl Renderer {
             let expected = format.data_size(level_width, level_height);
             if data.len() != expected {
                 return Err(format!(
-                    "level {level} of a {width}x{height} {format:?} image needs {expected} bytes, got {}",
+                    "level {level} of a {width}x{height} {} image needs {expected} bytes, got {}",
+                    format.name(),
                     data.len()
                 ));
             }
         }
         if !self.supports_compressed_format(format) {
-            return Err(format!("this GPU cannot read {format:?} images"));
+            return Err(format!("this GPU cannot read {} images", format.name()));
         }
         let level_count = levels.len() as u32;
         // Fall back to the linear version where there is no sRGB one.
@@ -3340,7 +3341,23 @@ fn compressed_format(format: CompressedFormat) -> SDL_GPUTextureFormat {
         CompressedFormat::Bc3 => SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM,
         CompressedFormat::Bc4 => SDL_GPU_TEXTUREFORMAT_BC4_R_UNORM,
         CompressedFormat::Bc5 => SDL_GPU_TEXTUREFORMAT_BC5_RG_UNORM,
+        CompressedFormat::Bc6h => SDL_GPU_TEXTUREFORMAT_BC6H_RGB_UFLOAT,
+        CompressedFormat::Bc6hSigned => SDL_GPU_TEXTUREFORMAT_BC6H_RGB_FLOAT,
         CompressedFormat::Bc7 => SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
+        CompressedFormat::Astc4x4 => SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM,
+        CompressedFormat::Astc5x4 => SDL_GPU_TEXTUREFORMAT_ASTC_5x4_UNORM,
+        CompressedFormat::Astc5x5 => SDL_GPU_TEXTUREFORMAT_ASTC_5x5_UNORM,
+        CompressedFormat::Astc6x5 => SDL_GPU_TEXTUREFORMAT_ASTC_6x5_UNORM,
+        CompressedFormat::Astc6x6 => SDL_GPU_TEXTUREFORMAT_ASTC_6x6_UNORM,
+        CompressedFormat::Astc8x5 => SDL_GPU_TEXTUREFORMAT_ASTC_8x5_UNORM,
+        CompressedFormat::Astc8x6 => SDL_GPU_TEXTUREFORMAT_ASTC_8x6_UNORM,
+        CompressedFormat::Astc8x8 => SDL_GPU_TEXTUREFORMAT_ASTC_8x8_UNORM,
+        CompressedFormat::Astc10x5 => SDL_GPU_TEXTUREFORMAT_ASTC_10x5_UNORM,
+        CompressedFormat::Astc10x6 => SDL_GPU_TEXTUREFORMAT_ASTC_10x6_UNORM,
+        CompressedFormat::Astc10x8 => SDL_GPU_TEXTUREFORMAT_ASTC_10x8_UNORM,
+        CompressedFormat::Astc10x10 => SDL_GPU_TEXTUREFORMAT_ASTC_10x10_UNORM,
+        CompressedFormat::Astc12x10 => SDL_GPU_TEXTUREFORMAT_ASTC_12x10_UNORM,
+        CompressedFormat::Astc12x12 => SDL_GPU_TEXTUREFORMAT_ASTC_12x12_UNORM,
     }
 }
 
@@ -3453,7 +3470,26 @@ fn compressed_srgb_format(format: CompressedFormat) -> Option<SDL_GPUTextureForm
         CompressedFormat::Bc2 => Some(SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM_SRGB),
         CompressedFormat::Bc3 => Some(SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM_SRGB),
         CompressedFormat::Bc7 => Some(SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB),
-        CompressedFormat::Bc4 | CompressedFormat::Bc5 => None,
+        CompressedFormat::Astc4x4 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB),
+        CompressedFormat::Astc5x4 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_5x4_UNORM_SRGB),
+        CompressedFormat::Astc5x5 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_5x5_UNORM_SRGB),
+        CompressedFormat::Astc6x5 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_6x5_UNORM_SRGB),
+        CompressedFormat::Astc6x6 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_6x6_UNORM_SRGB),
+        CompressedFormat::Astc8x5 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_8x5_UNORM_SRGB),
+        CompressedFormat::Astc8x6 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_8x6_UNORM_SRGB),
+        CompressedFormat::Astc8x8 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_8x8_UNORM_SRGB),
+        CompressedFormat::Astc10x5 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_10x5_UNORM_SRGB),
+        CompressedFormat::Astc10x6 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_10x6_UNORM_SRGB),
+        CompressedFormat::Astc10x8 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_10x8_UNORM_SRGB),
+        CompressedFormat::Astc10x10 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_10x10_UNORM_SRGB),
+        CompressedFormat::Astc12x10 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_12x10_UNORM_SRGB),
+        CompressedFormat::Astc12x12 => Some(SDL_GPU_TEXTUREFORMAT_ASTC_12x12_UNORM_SRGB),
+        // Floating-point and one- or two-channel formats hold no colors
+        // to encode.
+        CompressedFormat::Bc4
+        | CompressedFormat::Bc5
+        | CompressedFormat::Bc6h
+        | CompressedFormat::Bc6hSigned => None,
     }
 }
 

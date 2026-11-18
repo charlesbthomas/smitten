@@ -2159,7 +2159,8 @@ pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
 // ---------------------------------------------------------------------------
 // Images
 
-/// Loads an image file: PNG, JPEG, or DDS for compressed pixels.
+/// Loads an image file: PNG, JPEG or TGA, or DDS or KTX for compressed
+/// pixels.
 ///
 /// A relative path is looked up as [`crate::filesystem`] describes, which
 /// normally means inside the game's `assets` folder.
@@ -2170,7 +2171,8 @@ pub fn new_image(path: impl AsRef<Path>) -> Image {
     try_new_image(path).unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// Loads an image file (PNG, JPEG, or DDS for compressed pixels),
+/// Loads an image file (PNG, JPEG or TGA, or DDS or KTX for compressed
+/// pixels),
 /// returning an error if it fails.
 pub fn try_new_image(path: impl AsRef<Path>) -> Result<Image, ImageError> {
     image::load(path.as_ref(), ImageSettings::default())
@@ -2793,7 +2795,7 @@ pub fn new_volume_image(paths: &[impl AsRef<Path>]) -> VolumeImage {
     VolumeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// Loads a DDS file of compressed pixels, the equivalent of
+/// Loads a DDS or KTX file of compressed pixels, the equivalent of
 /// `love.image.newCompressedData`. Draw it with
 /// [`Image::from_compressed_data`], or load it straight into an image
 /// with [`new_image`].

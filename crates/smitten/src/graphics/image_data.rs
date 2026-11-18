@@ -346,9 +346,9 @@ pub enum ImageFormat {
 /// Whether `bytes` are a compressed texture file, which loads as a
 /// [`CompressedImageData`](super::CompressedImageData) rather than an
 /// [`ImageData`], the equivalent of `love.image.isCompressed`. Smitten
-/// reads DDS files.
+/// reads DDS and KTX files.
 pub fn is_compressed(bytes: &[u8]) -> bool {
-    super::compressed::is_dds(bytes)
+    super::compressed::is_compressed_file(bytes)
 }
 
 impl fmt::Debug for ImageData {

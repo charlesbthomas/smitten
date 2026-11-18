@@ -518,9 +518,16 @@ pub enum TextureKind {
     Volume,
 }
 
-/// A way of storing pixels compressed in blocks of 4 by 4, which the GPU
-/// reads without unpacking first. These are the BC formats, also called
-/// DXT or S3TC, that desktop GPUs read.
+/// A way of storing pixels compressed in blocks, which the GPU reads
+/// without unpacking first, the equivalent of LÖVE's `PixelFormat` names
+/// for compressed images.
+///
+/// The BC formats, also called DXT or S3TC, are what desktop GPUs read,
+/// in blocks of 4 by 4. The ASTC formats come in many block sizes, all
+/// 16 bytes a block, so larger blocks compress more; most phones and
+/// some desktop GPUs read them. [`Backend::supports_compressed_format`]
+/// says which this GPU reads. ETC and PVRTC have no equivalent in the
+/// GPU API Smitten uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompressedFormat {
     /// Color with on-or-off alpha, 8 bytes a block. Also called DXT1.
@@ -533,22 +540,71 @@ pub enum CompressedFormat {
     Bc4,
     /// Two channels, red and green, 16 bytes a block.
     Bc5,
+    /// Unsigned floating-point color, for HDR images, 16 bytes a block.
+    /// LÖVE's `BC6h`.
+    Bc6h,
+    /// Signed floating-point color, 16 bytes a block. LÖVE's `BC6hs`.
+    Bc6hSigned,
     /// High quality color and alpha, 16 bytes a block.
     Bc7,
+    /// ASTC in blocks of 4 by 4 pixels, 16 bytes a block.
+    Astc4x4,
+    /// ASTC in blocks of 5 by 4 pixels, 16 bytes a block.
+    Astc5x4,
+    /// ASTC in blocks of 5 by 5 pixels, 16 bytes a block.
+    Astc5x5,
+    /// ASTC in blocks of 6 by 5 pixels, 16 bytes a block.
+    Astc6x5,
+    /// ASTC in blocks of 6 by 6 pixels, 16 bytes a block.
+    Astc6x6,
+    /// ASTC in blocks of 8 by 5 pixels, 16 bytes a block.
+    Astc8x5,
+    /// ASTC in blocks of 8 by 6 pixels, 16 bytes a block.
+    Astc8x6,
+    /// ASTC in blocks of 8 by 8 pixels, 16 bytes a block.
+    Astc8x8,
+    /// ASTC in blocks of 10 by 5 pixels, 16 bytes a block.
+    Astc10x5,
+    /// ASTC in blocks of 10 by 6 pixels, 16 bytes a block.
+    Astc10x6,
+    /// ASTC in blocks of 10 by 8 pixels, 16 bytes a block.
+    Astc10x8,
+    /// ASTC in blocks of 10 by 10 pixels, 16 bytes a block.
+    Astc10x10,
+    /// ASTC in blocks of 12 by 10 pixels, 16 bytes a block.
+    Astc12x10,
+    /// ASTC in blocks of 12 by 12 pixels, 16 bytes a block.
+    Astc12x12,
 }
 
 impl CompressedFormat {
     /// Every format, in declaration order.
-    pub const ALL: [CompressedFormat; 6] = [
+    pub const ALL: [CompressedFormat; 22] = [
         CompressedFormat::Bc1,
         CompressedFormat::Bc2,
         CompressedFormat::Bc3,
         CompressedFormat::Bc4,
         CompressedFormat::Bc5,
+        CompressedFormat::Bc6h,
+        CompressedFormat::Bc6hSigned,
         CompressedFormat::Bc7,
+        CompressedFormat::Astc4x4,
+        CompressedFormat::Astc5x4,
+        CompressedFormat::Astc5x5,
+        CompressedFormat::Astc6x5,
+        CompressedFormat::Astc6x6,
+        CompressedFormat::Astc8x5,
+        CompressedFormat::Astc8x6,
+        CompressedFormat::Astc8x8,
+        CompressedFormat::Astc10x5,
+        CompressedFormat::Astc10x6,
+        CompressedFormat::Astc10x8,
+        CompressedFormat::Astc10x10,
+        CompressedFormat::Astc12x10,
+        CompressedFormat::Astc12x12,
     ];
 
-    /// How many bytes one 4 by 4 block takes.
+    /// How many bytes one block takes.
     pub fn block_size(self) -> usize {
         match self {
             CompressedFormat::Bc1 | CompressedFormat::Bc4 => 8,
@@ -556,11 +612,83 @@ impl CompressedFormat {
         }
     }
 
+    /// How many pixels across and down one block covers.
+    pub fn block_dimensions(self) -> (u32, u32) {
+        match self {
+            CompressedFormat::Bc1
+            | CompressedFormat::Bc2
+            | CompressedFormat::Bc3
+            | CompressedFormat::Bc4
+            | CompressedFormat::Bc5
+            | CompressedFormat::Bc6h
+            | CompressedFormat::Bc6hSigned
+            | CompressedFormat::Bc7 => (4, 4),
+            CompressedFormat::Astc4x4 => (4, 4),
+            CompressedFormat::Astc5x4 => (5, 4),
+            CompressedFormat::Astc5x5 => (5, 5),
+            CompressedFormat::Astc6x5 => (6, 5),
+            CompressedFormat::Astc6x6 => (6, 6),
+            CompressedFormat::Astc8x5 => (8, 5),
+            CompressedFormat::Astc8x6 => (8, 6),
+            CompressedFormat::Astc8x8 => (8, 8),
+            CompressedFormat::Astc10x5 => (10, 5),
+            CompressedFormat::Astc10x6 => (10, 6),
+            CompressedFormat::Astc10x8 => (10, 8),
+            CompressedFormat::Astc10x10 => (10, 10),
+            CompressedFormat::Astc12x10 => (12, 10),
+            CompressedFormat::Astc12x12 => (12, 12),
+        }
+    }
+
+    /// Whether it is one of the ASTC formats.
+    pub fn is_astc(self) -> bool {
+        !matches!(
+            self,
+            CompressedFormat::Bc1
+                | CompressedFormat::Bc2
+                | CompressedFormat::Bc3
+                | CompressedFormat::Bc4
+                | CompressedFormat::Bc5
+                | CompressedFormat::Bc6h
+                | CompressedFormat::Bc6hSigned
+                | CompressedFormat::Bc7
+        )
+    }
+
+    /// LÖVE's name for the format, such as `"DXT5"` or `"ASTC8x8"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            CompressedFormat::Bc1 => "DXT1",
+            CompressedFormat::Bc2 => "DXT3",
+            CompressedFormat::Bc3 => "DXT5",
+            CompressedFormat::Bc4 => "BC4",
+            CompressedFormat::Bc5 => "BC5",
+            CompressedFormat::Bc6h => "BC6h",
+            CompressedFormat::Bc6hSigned => "BC6hs",
+            CompressedFormat::Bc7 => "BC7",
+            CompressedFormat::Astc4x4 => "ASTC4x4",
+            CompressedFormat::Astc5x4 => "ASTC5x4",
+            CompressedFormat::Astc5x5 => "ASTC5x5",
+            CompressedFormat::Astc6x5 => "ASTC6x5",
+            CompressedFormat::Astc6x6 => "ASTC6x6",
+            CompressedFormat::Astc8x5 => "ASTC8x5",
+            CompressedFormat::Astc8x6 => "ASTC8x6",
+            CompressedFormat::Astc8x8 => "ASTC8x8",
+            CompressedFormat::Astc10x5 => "ASTC10x5",
+            CompressedFormat::Astc10x6 => "ASTC10x6",
+            CompressedFormat::Astc10x8 => "ASTC10x8",
+            CompressedFormat::Astc10x10 => "ASTC10x10",
+            CompressedFormat::Astc12x10 => "ASTC12x10",
+            CompressedFormat::Astc12x12 => "ASTC12x12",
+        }
+    }
+
     /// How many bytes a `width` by `height` picture takes. A partial block
     /// at an edge takes a whole one.
     pub fn data_size(self, width: u32, height: u32) -> usize {
-        let blocks = |pixels: u32| pixels.div_ceil(4).max(1) as usize;
-        blocks(width) * blocks(height) * self.block_size()
+        let (block_width, block_height) = self.block_dimensions();
+        let blocks = |pixels: u32, block: u32| pixels.div_ceil(block).max(1) as usize;
+        blocks(width, block_width) * blocks(height, block_height) * self.block_size()
     }
 }
 
