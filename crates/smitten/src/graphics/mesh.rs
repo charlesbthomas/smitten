@@ -54,6 +54,10 @@ pub enum MeshDrawMode {
     Strip,
     /// Every three vertices are a separate triangle.
     Triangles,
+    /// Every vertex is a square dot, [`point_size`](crate::graphics::point_size)
+    /// units across and colored by its vertex, as LÖVE's `points` mode.
+    /// The dots are not turned or stretched by the transform, only moved.
+    Points,
 }
 
 /// A shape made of triangles with a position, texture coordinate and color
@@ -129,6 +133,11 @@ impl Mesh {
         self.vertices.extend_from_slice(vertices);
     }
 
+    /// Does nothing: a mesh's vertices are read straight from it each time
+    /// it is drawn. LÖVE's `Mesh:flush` sends changed vertices to the GPU
+    /// early, so ported code can keep calling this.
+    pub fn flush(&self) {}
+
     /// How the vertices are joined into triangles.
     pub fn draw_mode(&self) -> MeshDrawMode {
         self.mode
@@ -177,7 +186,16 @@ impl Mesh {
 
     /// The mesh as a list of separate triangles, placed by `transform`
     /// and tinted by `tint`.
-    pub(crate) fn write_vertices(&self, transform: &Transform, tint: Color, out: &mut Vec<Vertex>) {
+    ///
+    /// `point_size` is how wide a dot of [`MeshDrawMode::Points`] is, in
+    /// pixels of the target.
+    pub(crate) fn write_vertices(
+        &self,
+        transform: &Transform,
+        tint: Color,
+        point_size: f32,
+        out: &mut Vec<Vertex>,
+    ) {
         // The vertices in visiting order.
         let visited: Vec<MeshVertex> = match &self.vertex_map {
             Some(map) => map
@@ -223,6 +241,25 @@ impl Mesh {
                     out.extend(triple.iter().map(place));
                 }
             }
+            MeshDrawMode::Points => {
+                let half = point_size / 2.0;
+                for vertex in visited {
+                    let center = place(vertex);
+                    let [x, y] = center.position;
+                    let corner = |dx: f32, dy: f32| Vertex {
+                        position: [x + dx, y + dy],
+                        ..center
+                    };
+                    out.extend([
+                        corner(-half, -half),
+                        corner(half, -half),
+                        corner(half, half),
+                        corner(-half, -half),
+                        corner(half, half),
+                        corner(-half, half),
+                    ]);
+                }
+            }
         }
     }
 }
@@ -240,7 +277,7 @@ mod tests {
     /// The x positions of the triangles a mesh turns into.
     fn triangles(mesh: &Mesh) -> Vec<f32> {
         let mut out = Vec::new();
-        mesh.write_vertices(&Transform::IDENTITY, Color::WHITE, &mut out);
+        mesh.write_vertices(&Transform::IDENTITY, Color::WHITE, 1.0, &mut out);
         assert_eq!(out.len() % 3, 0);
         out.iter().map(|vertex| vertex.position[0]).collect()
     }
@@ -252,6 +289,21 @@ mod tests {
             triangles(&mesh),
             [0.0, 1.0, 2.0, 0.0, 2.0, 3.0, 0.0, 3.0, 4.0]
         );
+    }
+
+    #[test]
+    fn points_are_squares_around_each_moved_vertex() {
+        let mesh = Mesh::new(&corners(2), MeshDrawMode::Points);
+        let mut transform = Transform::IDENTITY;
+        transform.translate(10.0, 0.0);
+        transform.scale(5.0, 5.0);
+        let mut out = Vec::new();
+        mesh.write_vertices(&transform, Color::WHITE, 4.0, &mut out);
+        assert_eq!(out.len(), 12);
+        let xs: Vec<f32> = out[..6].iter().map(|vertex| vertex.position[0]).collect();
+        // The dot is not scaled with the transform.
+        assert_eq!(xs, [8.0, 12.0, 12.0, 8.0, 12.0, 8.0]);
+        assert_eq!(out[6].position, [13.0, -2.0]);
     }
 
     #[test]
@@ -314,7 +366,7 @@ mod tests {
         let mut transform = Transform::IDENTITY;
         transform.translate(10.0, 20.0);
         let mut out = Vec::new();
-        mesh.write_vertices(&transform, half, &mut out);
+        mesh.write_vertices(&transform, half, 1.0, &mut out);
 
         assert_eq!(out[0].color, [0.5, 0.5, 0.0, 0.5]);
         assert_eq!(out[1].position, [11.0, 20.0]);

@@ -136,6 +136,13 @@ impl Image {
         (self.inner.width.get(), self.inner.height.get())
     }
 
+    /// Whether the pixels came from compressed data, such as a DDS file,
+    /// the equivalent of `Image:isCompressed`. A compressed image cannot
+    /// have its pixels replaced.
+    pub fn is_compressed(&self) -> bool {
+        self.inner.compressed.get()
+    }
+
     /// How the image is sampled when scaled or rotated.
     pub fn filter(&self) -> Filter {
         self.inner.filter.get()
@@ -498,5 +505,45 @@ impl Quad {
     /// Height of the region in pixels.
     pub fn height(&self) -> f32 {
         self.height
+    }
+
+    /// The region as `(x, y, width, height)`, the equivalent of
+    /// `Quad:getViewport`.
+    pub fn viewport(&self) -> (f32, f32, f32, f32) {
+        (self.x, self.y, self.width, self.height)
+    }
+
+    /// Moves the region to `width` by `height` pixels at `(x, y)` in the
+    /// same image, the equivalent of `Quad:setViewport`. Moving one quad
+    /// along a sprite sheet animates whatever draws it.
+    pub fn set_viewport(&mut self, x: f32, y: f32, width: f32, height: f32) {
+        (self.x, self.y, self.width, self.height) = (x, y, width, height);
+    }
+
+    /// The size of the image the region is in, as `(width, height)`, the
+    /// equivalent of `Quad:getTextureDimensions`.
+    pub fn texture_dimensions(&self) -> (f32, f32) {
+        (self.sheet_width, self.sheet_height)
+    }
+
+    /// Changes the size of the image the region is in, the last two
+    /// arguments of LÖVE's `Quad:setViewport`.
+    pub fn set_texture_dimensions(&mut self, width: f32, height: f32) {
+        (self.sheet_width, self.sheet_height) = (width, height);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Quad;
+
+    #[test]
+    fn a_quad_can_be_read_back_and_moved() {
+        let mut quad = Quad::new(0.0, 0.0, 16.0, 16.0, 64.0, 32.0);
+        quad.set_viewport(16.0, 0.0, 16.0, 8.0);
+        assert_eq!(quad.viewport(), (16.0, 0.0, 16.0, 8.0));
+        assert_eq!(quad.texture_dimensions(), (64.0, 32.0));
+        quad.set_texture_dimensions(128.0, 64.0);
+        assert_eq!(quad.texture_dimensions(), (128.0, 64.0));
     }
 }

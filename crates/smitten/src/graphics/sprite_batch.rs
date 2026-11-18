@@ -32,6 +32,25 @@ pub struct SpriteBatch {
     vertices: Vec<Vertex>,
     /// Tints the sprites added or changed from now on.
     color: Color,
+    /// The sprites drawn, as start and count.
+    draw_range: Option<(usize, usize)>,
+    usage: SpriteBatchUsage,
+}
+
+/// How often a batch's sprites are expected to change, the equivalent of
+/// LÖVE's `SpriteBatchUsage`.
+///
+/// It is only a hint. Smitten sends a batch's sprites to the GPU each
+/// time it is drawn whatever the usage, so every usage is equally fast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SpriteBatchUsage {
+    /// Changed now and then. LÖVE's default.
+    #[default]
+    Dynamic,
+    /// Set up once and rarely changed, such as a tile map.
+    Static,
+    /// Rebuilt every frame.
+    Stream,
 }
 
 const VERTICES_PER_SPRITE: usize = 6;
@@ -40,12 +59,50 @@ impl SpriteBatch {
     /// Creates an empty batch that draws `image`, with room reserved for
     /// `capacity` sprites.
     pub fn new(image: &Image, capacity: usize) -> SpriteBatch {
+        SpriteBatch::with_usage(image, capacity, SpriteBatchUsage::default())
+    }
+
+    /// Creates an empty batch as [`SpriteBatch::new`] does, with a usage
+    /// hint, the third argument of LÖVE's `newSpriteBatch`.
+    pub fn with_usage(image: &Image, capacity: usize, usage: SpriteBatchUsage) -> SpriteBatch {
         SpriteBatch {
             image: image.clone(),
             vertices: Vec::with_capacity(capacity * VERTICES_PER_SPRITE),
             color: Color::WHITE,
+            draw_range: None,
+            usage,
         }
     }
+
+    /// The usage hint the batch was created with.
+    pub fn usage(&self) -> SpriteBatchUsage {
+        self.usage
+    }
+
+    /// How many sprites the batch has room for before it next grows, the
+    /// equivalent of `SpriteBatch:getBufferSize`. It is at least the size
+    /// it was created with.
+    pub fn buffer_size(&self) -> usize {
+        self.vertices.capacity() / VERTICES_PER_SPRITE
+    }
+
+    /// The sprites that are drawn, as `(start, count)`, or `None` for all
+    /// of them.
+    pub fn draw_range(&self) -> Option<(usize, usize)> {
+        self.draw_range
+    }
+
+    /// Draws only `count` sprites from index `start`, the equivalent of
+    /// `SpriteBatch:setDrawRange`. `None` draws them all again. Sprites
+    /// outside the range are kept, just not drawn.
+    pub fn set_draw_range(&mut self, range: Option<(usize, usize)>) {
+        self.draw_range = range;
+    }
+
+    /// Does nothing: a batch's sprites are read straight from it each time
+    /// it is drawn. LÖVE's `SpriteBatch:flush` sends changed sprites to
+    /// the GPU early, so ported code can keep calling this.
+    pub fn flush(&self) {}
 
     /// Adds the whole image with its top-left corner at `(x, y)` and
     /// returns the sprite's index, for use with the `set` methods.
@@ -210,8 +267,18 @@ impl SpriteBatch {
     /// Appends the batch's triangles to `out`, placed by `transform` and
     /// tinted by `tint`.
     pub(crate) fn write_vertices(&self, transform: &Transform, tint: Color, out: &mut Vec<Vertex>) {
-        out.reserve(self.vertices.len());
-        out.extend(self.vertices.iter().map(|vertex| {
+        let vertices = match self.draw_range {
+            Some((start, count)) => {
+                let start = (start * VERTICES_PER_SPRITE).min(self.vertices.len());
+                let end = start
+                    .saturating_add(count.saturating_mul(VERTICES_PER_SPRITE))
+                    .min(self.vertices.len());
+                &self.vertices[start..end]
+            }
+            None => &self.vertices[..],
+        };
+        out.reserve(vertices.len());
+        out.extend(vertices.iter().map(|vertex| {
             let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
             Vertex {
                 position: [x, y],
@@ -244,6 +311,31 @@ mod tests {
         let mut out = Vec::new();
         batch.write_vertices(transform, tint, &mut out);
         out
+    }
+
+    #[test]
+    fn the_draw_range_limits_what_is_drawn() {
+        let mut batch = batch();
+        for index in 0..5 {
+            batch.add(index as f32 * 100.0, 0.0);
+        }
+        batch.set_draw_range(Some((1, 2)));
+        let out = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
+        assert_eq!(out.len(), 2 * VERTICES_PER_SPRITE);
+        assert_eq!(out[0].position[0], 100.0);
+        assert_eq!(batch.count(), 5);
+
+        batch.set_draw_range(Some((4, 10)));
+        assert_eq!(drawn(&batch, &Transform::IDENTITY, Color::WHITE).len(), 6);
+        batch.set_draw_range(Some((9, 1)));
+        assert!(drawn(&batch, &Transform::IDENTITY, Color::WHITE).is_empty());
+        batch.set_draw_range(None);
+        assert_eq!(drawn(&batch, &Transform::IDENTITY, Color::WHITE).len(), 30);
+    }
+
+    #[test]
+    fn the_buffer_holds_at_least_what_was_asked_for() {
+        assert!(batch().buffer_size() >= 4);
     }
 
     #[test]
