@@ -224,6 +224,14 @@ impl Transform {
         }
     }
 
+    /// Whether this is a 2D affine transformation, like LÖVE's
+    /// `isAffine2DTransform`. Always `true`: a smitten `Transform` has no
+    /// third dimension, so it cannot be anything else. It is here so code
+    /// ported from LÖVE can keep its checks.
+    pub fn is_affine_2d(&self) -> bool {
+        true
+    }
+
     /// Transforms the point `(x, y)`.
     pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
         (

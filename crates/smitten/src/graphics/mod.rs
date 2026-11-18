@@ -23,6 +23,7 @@ mod screen;
 mod shader;
 mod shapes;
 mod sprite_batch;
+mod state;
 mod stats;
 mod text;
 mod text_object;
@@ -37,7 +38,9 @@ use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId,
 use crate::context;
 use smitten_core::StencilMode;
 
-use crate::{BlendMode, Color, CompareMode, CullMode, Filter, StencilAction, VertexWinding};
+use crate::{
+    BlendAlphaMode, BlendMode, Color, CompareMode, CullMode, Filter, StencilAction, VertexWinding,
+};
 use batch::Batch;
 pub(crate) use screen::Screen;
 
@@ -51,16 +54,17 @@ pub(crate) mod reloading {
 pub use canvas::{Canvas, MipmapMode};
 pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
-pub use image_data::ImageData;
+pub use image_data::{ImageData, ImageFormat, is_compressed};
 pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
-pub use particles::ParticleSystem;
-pub use shader::{Shader, ShaderError, Texture, UniformValue};
+pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
+pub use shader::{MatrixLayout, Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::{CompressedFormat, RendererInfo};
-pub use sprite_batch::SpriteBatch;
+pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
+pub use state::StackType;
 pub use stats::Stats;
-pub use text::{Align, Font, FontError};
+pub use text::{Align, Font, FontError, GlyphData, GlyphFormat, Hinting, Rasterizer};
 pub use text_object::Text;
 pub use transform::Transform;
 #[cfg(feature = "video")]
@@ -94,7 +98,7 @@ pub(crate) struct GraphicsState {
     point_size: f32,
     pub(crate) default_filter: Filter,
     transform: Transform,
-    stack: Vec<Transform>,
+    stack: Vec<state::Saved>,
     batch: Batch,
     /// The font `print` uses. Created on first use so games that never
     /// print text pay nothing for it.
@@ -247,6 +251,7 @@ impl GraphicsState {
         self.batch.clear();
         self.batch.set_shader(None);
         self.batch.blend = BlendMode::default();
+        self.batch.blend_alpha = BlendAlphaMode::default();
         self.batch.stencil = StencilMode::Off;
         self.batch.color_mask = ColorMask::ALL;
         self.batch.wireframe = false;
@@ -579,7 +584,7 @@ impl GraphicsState {
     fn push_particles(&mut self, system: &ParticleSystem, local: &Transform) {
         let transform = self.device().then_inner(local);
         let vertices = system.vertices(&transform, self.color);
-        let image = system.image();
+        let image = system.texture();
         self.batch
             .push(Some(image.texture()), image.filter(), &vertices);
     }
@@ -601,7 +606,8 @@ impl GraphicsState {
         let transform = self.device().then_inner(local);
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
-        mesh.write_vertices(&transform, self.color, &mut vertices);
+        let point_size = self.point_size * self.target_scale();
+        mesh.write_vertices(&transform, self.color, point_size, &mut vertices);
         self.batch.cull = self.mesh_cull.culled(self.front_face);
         match mesh.texture() {
             Some(image) => self
@@ -721,10 +727,33 @@ fn whole_image(image: &Image) -> Quad {
 // Screen
 
 /// Fills the screen, or the active canvas, with `color`, replacing
-/// whatever was there. The scissor does not limit it.
+/// whatever was there, and resets its stencil values to 0. The scissor
+/// does not limit it. See [`clear_ex`] to clear only some of that.
 pub fn clear(color: Color) {
     context::with(|ctx| ctx.gfx.batch.clear_target(color));
 }
+
+/// Clears only the parts of the screen, or the active canvas, that are
+/// given, the equivalent of LÖVE's `clear(color, stencil)` and
+/// `clear(false, …)`.
+///
+/// `color` fills the picture, replacing what was there, and `stencil`
+/// sets every stencil value. `None` leaves that part as it is, so
+/// `clear_ex(None, Some(0))` resets the stencil and keeps the picture.
+/// [`clear`] is `clear_ex(Some(color), Some(0))`. The scissor does not
+/// limit it.
+pub fn clear_ex(color: Option<Color>, stencil: Option<u8>) {
+    context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil));
+}
+
+/// Tells the GPU that the contents of the screen, or of the active
+/// canvas, are no longer needed, the equivalent of `love.graphics.discard`.
+///
+/// LÖVE offers this as a speed hint for mobile GPUs: what is there
+/// afterwards is undefined until it is drawn over or cleared. Smitten's
+/// targets always keep their contents, so this does nothing, and code
+/// ported from LÖVE can keep calling it.
+pub fn discard() {}
 
 /// Sets the color every frame is cleared to before `draw` runs.
 pub fn set_background_color(color: Color) {
@@ -869,7 +898,8 @@ pub fn stencil(draw: impl FnOnce()) {
 /// Changes the stencil values of the pixels covered by what `draw` draws.
 ///
 /// `action` says how: [`StencilAction::Replace`] sets them to `value`,
-/// while the other actions count up, count down or flip them and ignore
+/// while the other actions count up, count down (stopping at 255 and 0,
+/// or wrapping around with the `Wrap` actions) or flip them and ignore
 /// `value`. With `keep_values` the existing values are built on;
 /// otherwise they are all reset to 0 first.
 pub fn stencil_ex(action: StencilAction, value: u8, keep_values: bool, draw: impl FnOnce()) {
@@ -976,14 +1006,65 @@ pub fn point_size() -> f32 {
 
 /// Sets how what is drawn combines with what is already there.
 ///
+/// Colors are taken to be multiplied by their alpha as they are drawn,
+/// except with the modes that only work premultiplied (see
+/// [`BlendMode::default_alpha_mode`]). Use [`set_blend_mode_ex`] to draw
+/// premultiplied colors, such as a canvas, in another mode.
+///
 /// The blend mode stays set until changed, even across frames.
 pub fn set_blend_mode(mode: BlendMode) {
-    context::with(|ctx| ctx.gfx.batch.blend = mode);
+    set_blend_mode_ex(mode, mode.default_alpha_mode());
+}
+
+/// Sets the blend mode and whether the colors drawn are already
+/// multiplied by their alpha, the equivalent of LÖVE's
+/// `setBlendMode(mode, alphamode)`.
+///
+/// ```no_run
+/// use smitten::{graphics, BlendAlphaMode, BlendMode};
+///
+/// # let canvas = graphics::new_canvas(64, 64);
+/// // Add a canvas full of soft glows onto the screen.
+/// graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied);
+/// graphics::draw(&canvas, 0.0, 0.0);
+/// ```
+///
+/// Panics for [`BlendMode::Multiply`], [`BlendMode::Lighten`] or
+/// [`BlendMode::Darken`] with [`BlendAlphaMode::AlphaMultiply`], as LÖVE
+/// raises an error: those modes only work premultiplied.
+/// [`BlendMode::Premultiplied`] is always premultiplied whatever `alpha`
+/// says.
+pub fn set_blend_mode_ex(mode: BlendMode, alpha: BlendAlphaMode) {
+    assert!(
+        !(mode.needs_premultiplied()
+            && mode != BlendMode::Premultiplied
+            && alpha == BlendAlphaMode::AlphaMultiply),
+        "the {mode:?} blend mode only works with BlendAlphaMode::Premultiplied"
+    );
+    context::with(|ctx| {
+        ctx.gfx.batch.blend = mode;
+        ctx.gfx.batch.blend_alpha = alpha;
+    });
 }
 
 /// Returns the current blend mode.
 pub fn blend_mode() -> BlendMode {
     context::with(|ctx| ctx.gfx.batch.blend)
+}
+
+/// Returns the current blend mode and alpha mode, the equivalent of
+/// LÖVE's `getBlendMode`. [`BlendMode::Premultiplied`] comes back as
+/// itself, with [`BlendAlphaMode::Premultiplied`].
+pub fn blend_mode_ex() -> (BlendMode, BlendAlphaMode) {
+    context::with(|ctx| {
+        let mode = ctx.gfx.batch.blend;
+        let alpha = if mode == BlendMode::Premultiplied {
+            BlendAlphaMode::Premultiplied
+        } else {
+            ctx.gfx.batch.blend_alpha
+        };
+        (mode, alpha)
+    })
 }
 
 /// Limits drawing to a rectangle of the screen or the active canvas.
@@ -1003,6 +1084,35 @@ pub fn clear_scissor() {
         ctx.gfx.scissor = None;
         ctx.gfx.apply_scissor();
     });
+}
+
+/// Limits drawing to the part of the current scissor that is also inside
+/// the given rectangle, the equivalent of `love.graphics.intersectScissor`.
+/// With no scissor set, it is the same as [`set_scissor`].
+///
+/// This suits nested panels: each can narrow where it draws without
+/// knowing where its parent allows.
+pub fn intersect_scissor(x: i32, y: i32, width: u32, height: u32) {
+    context::with(|ctx| {
+        let rect = (x, y, width, height);
+        ctx.gfx.scissor = Some(match ctx.gfx.scissor {
+            Some(current) => intersect(current, rect),
+            None => rect,
+        });
+        ctx.gfx.apply_scissor();
+    });
+}
+
+/// The overlap of two rectangles, empty at the corner of the first one's
+/// overlap if they do not meet.
+fn intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> (i32, i32, u32, u32) {
+    let right = |(x, _, w, _): (i32, i32, u32, u32)| i64::from(x) + i64::from(w);
+    let bottom = |(_, y, _, h): (i32, i32, u32, u32)| i64::from(y) + i64::from(h);
+    let left = a.0.max(b.0);
+    let top = a.1.max(b.1);
+    let width = (right(a).min(right(b)) - i64::from(left)).max(0) as u32;
+    let height = (bottom(a).min(bottom(b)) - i64::from(top)).max(0) as u32;
+    (left, top, width, height)
 }
 
 /// Returns the scissor rectangle as `(x, y, width, height)`, if one is set.
@@ -1146,25 +1256,78 @@ pub fn is_gamma_correct() -> bool {
 // ---------------------------------------------------------------------------
 // Transform stack
 
+/// The most [`push`]es that can wait for a [`pop`] at once, the size of
+/// LÖVE's stack.
+pub const MAX_STACK_DEPTH: usize = 64;
+
 /// Saves the current transform so [`pop`] can restore it.
+///
+/// Panics if more than [`MAX_STACK_DEPTH`] pushes are waiting for a
+/// [`pop`], which is almost always a missing `pop` in the game.
 pub fn push() {
+    push_ex(StackType::Transform);
+}
+
+/// Saves the transform and every other drawing setting so [`pop`] can
+/// restore them, the equivalent of `love.graphics.push("all")`.
+///
+/// That is the color, the background color, the font, the blend mode,
+/// the shader, the canvas, the scissor, the stencil test, the line width,
+/// join and style, the point size, the color mask, wireframe drawing, the
+/// default filter, and the mesh cull mode and front face winding. A helper
+/// can then change any of them without the caller having to put them
+/// back.
+///
+/// ```no_run
+/// use smitten::{graphics, BlendMode, Color};
+///
+/// fn draw_glow() {
+///     graphics::push_all();
+///     graphics::set_blend_mode(BlendMode::Add);
+///     graphics::set_color(Color::rgb(1.0, 0.8, 0.3));
+///     // ... draw ...
+///     graphics::pop();
+/// }
+/// ```
+pub fn push_all() {
+    push_ex(StackType::All);
+}
+
+/// Saves what `kind` says, for [`pop`] to restore: [`push`] and
+/// [`push_all`] in one function, as LÖVE's `push(stacktype)`.
+pub fn push_ex(kind: StackType) {
     context::with(|ctx| {
-        let current = ctx.gfx.transform;
-        ctx.gfx.stack.push(current);
+        assert!(
+            ctx.gfx.stack.len() < MAX_STACK_DEPTH,
+            "graphics::push was called more than {MAX_STACK_DEPTH} times without a graphics::pop"
+        );
+        ctx.gfx.push_state(kind);
     });
 }
 
-/// Restores the transform saved by the matching [`push`].
+/// Restores what the matching [`push`] or [`push_all`] saved.
 ///
 /// Panics if there is no matching `push`, which is always a bug in the game.
 pub fn pop() {
-    context::with(|ctx| {
-        ctx.gfx.transform = ctx
-            .gfx
-            .stack
-            .pop()
-            .expect("graphics::pop was called without a matching graphics::push");
-    });
+    context::with(|ctx| ctx.gfx.pop_state());
+}
+
+/// How many [`push`]es are waiting for a [`pop`], the equivalent of
+/// `love.graphics.getStackDepth`. It is 0 at the start of every `draw`.
+pub fn stack_depth() -> usize {
+    context::with(|ctx| ctx.gfx.stack.len())
+}
+
+/// Puts every drawing setting back to how a game starts, the equivalent
+/// of `love.graphics.reset`.
+///
+/// The color becomes white and the background black, drawing goes back to
+/// the screen with the built-in shader and font, the scissor and stencil
+/// test are removed, the blend mode, line and point settings, color mask,
+/// wireframe drawing and default filter go back to their defaults, and the
+/// transform to the origin. What [`push`] saved is kept.
+pub fn reset() {
+    context::with(|ctx| ctx.gfx.reset_state());
 }
 
 /// Moves everything drawn afterwards by `(dx, dy)`.
@@ -1604,7 +1767,9 @@ pub fn draw_particles_ex(
 // ---------------------------------------------------------------------------
 // Text
 
-/// Loads a TrueType or OpenType font file at `size` pixels.
+/// Loads a TrueType or OpenType font file at `size` pixels, or an
+/// AngelCode BMFont if the file name ends in `.fnt` (whose own size is
+/// used then, and whose page images are found next to it).
 ///
 /// A relative path is looked up as [`crate::filesystem`] describes, which
 /// normally means inside the game's `assets` folder.
@@ -1617,9 +1782,60 @@ pub fn new_font(path: impl AsRef<Path>, size: f32) -> Font {
 
 /// Loads a font file at `size` pixels, returning an error if it fails.
 pub fn try_new_font(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
+    try_new_font_ex(path, size, Hinting::Normal, None)
+}
+
+/// Loads a font file with the full set of LÖVE's `newFont` arguments:
+/// its size, how its outlines are fitted to pixels, and how many pixels
+/// its glyphs hold for each unit, or `None` to match the screen.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_font_ex`] to handle the failure instead.
+pub fn new_font_ex(
+    path: impl AsRef<Path>,
+    size: f32,
+    hinting: Hinting,
+    dpi_scale: Option<f32>,
+) -> Font {
+    try_new_font_ex(path, size, hinting, dpi_scale).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// As [`new_font_ex`], returning an error if it fails.
+pub fn try_new_font_ex(
+    path: impl AsRef<Path>,
+    size: f32,
+    hinting: Hinting,
+    dpi_scale: Option<f32>,
+) -> Result<Font, FontError> {
     let path = path.as_ref();
-    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    let font = Font::from_bytes(&bytes, size)?;
+    let is_bmfont = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("fnt"));
+    let font = if is_bmfont {
+        Font::load_bmfont(path)?
+    } else {
+        let bytes =
+            crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+        Font::from_bytes_ex(&bytes, size, hinting, dpi_scale)?
+    };
+    font.watch(path);
+    Ok(font)
+}
+
+/// Loads an AngelCode BMFont from its `.fnt` file, whose page images are
+/// found next to it. Only the text form of `.fnt` files is read, as in
+/// LÖVE. [`new_font`] does the same for a file ending in `.fnt`.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_bmfont`] to handle the failure instead.
+pub fn new_bmfont(path: impl AsRef<Path>) -> Font {
+    try_new_bmfont(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a BMFont, returning an error if it fails.
+pub fn try_new_bmfont(path: impl AsRef<Path>) -> Result<Font, FontError> {
+    let path = path.as_ref();
+    let font = Font::load_bmfont(path)?;
     font.watch(path);
     Ok(font)
 }
@@ -1639,14 +1855,51 @@ pub fn new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Font {
 
 /// Loads a bitmap font, returning an error if it fails.
 pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
+    try_new_image_font_ex(path, glyphs, 0.0)
+}
+
+/// Loads a bitmap font with `extra_spacing` units added after each
+/// character, which may be negative: LÖVE's `newImageFont` with its
+/// `extraspacing` argument.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_font_ex`] to handle the failure instead.
+pub fn new_image_font_ex(path: impl AsRef<Path>, glyphs: &str, extra_spacing: f32) -> Font {
+    try_new_image_font_ex(path, glyphs, extra_spacing).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// As [`new_image_font_ex`], returning an error if it fails.
+pub fn try_new_image_font_ex(
+    path: impl AsRef<Path>,
+    glyphs: &str,
+    extra_spacing: f32,
+) -> Result<Font, FontError> {
     let path = path.as_ref();
     let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    let font = Font::from_image(&bytes, glyphs, 0.0).map_err(|error| match error {
+    let font = Font::from_image(&bytes, glyphs, extra_spacing).map_err(|error| match error {
         FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
         other => other,
     })?;
     font.watch(path);
     Ok(font)
+}
+
+/// Loads a font file at `size` pixels, makes it the current font and
+/// returns it, the equivalent of `love.graphics.setNewFont`.
+///
+/// Panics with the file name if it cannot be loaded.
+pub fn set_new_font(path: impl AsRef<Path>, size: f32) -> Font {
+    let font = new_font(path, size);
+    set_font(&font);
+    font
+}
+
+/// Makes the built-in font at `size` pixels the current font and returns
+/// it, the equivalent of `love.graphics.setNewFont(size)`.
+pub fn set_new_default_font(size: f32) -> Font {
+    let font = new_default_font(size);
+    set_font(&font);
+    font
 }
 
 /// Creates the built-in font at `size` pixels.
@@ -1901,4 +2154,27 @@ pub fn printf_colored_with(
             transform,
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::intersect;
+
+    #[test]
+    fn scissors_intersect_to_their_overlap() {
+        assert_eq!(
+            intersect((0, 0, 100, 100), (50, 20, 100, 30)),
+            (50, 20, 50, 30)
+        );
+        assert_eq!(
+            intersect((10, 10, 20, 20), (0, 0, 100, 100)),
+            (10, 10, 20, 20)
+        );
+    }
+
+    #[test]
+    fn scissors_that_do_not_meet_leave_nothing() {
+        let (_, _, width, height) = intersect((0, 0, 10, 10), (20, 20, 10, 10));
+        assert_eq!((width, height), (0, 0));
+    }
 }

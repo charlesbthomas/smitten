@@ -74,25 +74,35 @@ fn main() {
 | `love.graphics.draw(img, x, y, r, sx, sy, ox, oy)` | `graphics::draw_ex(&img, x, y, r, sx, sy, ox, oy)` | Same arguments in the same order. |
 | `love.graphics.draw(img, quad, x, y)` | `graphics::draw_quad(&img, &quad, x, y)` | |
 | `love.graphics.push()` / `pop()` | `graphics::push()` / `graphics::pop()` | |
-| `love.graphics.newFont(path, size)` | `graphics::new_font(path, size)` | |
+| `love.graphics.push("all")` | `graphics::push_all()` | Saves every drawing setting, not only the transform. `push_ex(StackType)` takes the kind. `pop` restores either. |
+| `love.graphics.getStackDepth()` | `graphics::stack_depth()` | |
+| `love.graphics.reset()` | `graphics::reset()` | |
+| `love.graphics.newFont(path, size)` | `graphics::new_font(path, size)` | A `.fnt` path loads a BMFont. `new_font_ex` takes the hinting and DPI scale. |
 | `love.graphics.newFont(size)` | `graphics::new_default_font(size)` | The same built-in font as LÖVE. |
-| `love.graphics.newImageFont(path, glyphs)` | `graphics::new_image_font(path, glyphs)` | Same image layout as LÖVE. `Font::from_image` takes the extra spacing. |
+| `love.graphics.newImageFont(path, glyphs)` | `graphics::new_image_font(path, glyphs)` | Same image layout as LÖVE. `new_image_font_ex` takes the extra spacing. |
 | `love.graphics.print(text, x, y)` | `graphics::print(text, x, y)` | `print_ex` takes the rotation, scale and origin. |
 | `love.graphics.printf(text, x, y, limit, align)` | `graphics::printf(text, x, y, limit, Align)` | |
 | `font:getWidth(text)` / `font:getWrap(text, limit)` | `font.width(text)` / `font.wrap(text, limit)` | |
+| `font:setFallbacks(...)` / `font:hasGlyphs(text)` | `font.set_fallbacks(&[&other])` / `font.has_glyphs(text)` | |
+| `love.font.newRasterizer(path, size)` / `newGlyphData(r, glyph)` | `font::new_rasterizer(path, size)` / `font::new_glyph_data(&r, glyph)` | `Font::from_rasterizer(&r)` is `newFont(rasterizer)`. |
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
 | `love.graphics.newCanvas(w, h)` | `graphics::new_canvas(w, h)` | A `Canvas` can be passed wherever an `&Image` is expected. |
 | `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
 | `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
-| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`. |
+| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`, `Screen`, `Lighten`, `Darken`. |
+| `love.graphics.setBlendMode("add", "premultiplied")` | `graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied)` | `blend_mode_ex()` returns both, as `getBlendMode`. |
 | `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |
 | `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
+| `love.graphics.clear(color, stencil)` / `clear(false, …)` | `graphics::clear_ex(Some(color), Some(stencil))` / `clear_ex(None, …)` | `None` leaves that part alone. |
+| `love.graphics.intersectScissor(x, y, w, h)` | `graphics::intersect_scissor(x, y, w, h)` | |
 | `love.graphics.stencil(fn)` | `graphics::stencil(\|\| { ... })` | `stencil_ex(action, value, keep_values, fn)` takes the other arguments. |
 | `love.graphics.setStencilTest("greater", 0)` / `setStencilTest()` | `graphics::set_stencil_test(CompareMode::Greater, 0)` / `clear_stencil_test()` | |
 | `love.graphics.newSpriteBatch(image, size)` | `graphics::new_sprite_batch(&image, size)` | Grows as needed; the size only reserves memory. |
 | `batch:add(x, y)` / `batch:add(quad, x, y)` | `batch.add(x, y)` / `batch.add_quad(&quad, x, y)` | Return the sprite's index. `add_ex` and `add_quad_ex` take the full `draw` arguments. |
+| `batch:setDrawRange(start, count)` / `getBufferSize()` | `batch.set_draw_range(Some((start, count)))` / `buffer_size()` | Start counts from 0. `SpriteBatch::with_usage` takes the usage hint. |
+| `quad:getViewport()` / `setViewport(x, y, w, h)` | `quad.viewport()` / `quad.set_viewport(x, y, w, h)` | `texture_dimensions()` and `set_texture_dimensions(w, h)` for the image size. |
 | `batch:set(id, x, y)` / `batch:setColor(r, g, b, a)` / `batch:clear()` | `batch.set(index, x, y)` / `batch.set_color(color)` / `batch.clear()` | Indexes start at 0. |
 | `love.graphics.draw(batch, x, y)` | `graphics::draw_sprite_batch(&batch, x, y)` | |
 | `love.graphics.newParticleSystem(image, max)` | `graphics::new_particle_system(&image, max)` | Setters take the same values as LÖVE's, such as `set_emission_rate`, `set_speed`, `set_sizes`, `set_colors`. |
@@ -103,7 +113,9 @@ fn main() {
 | `love.graphics.setMeshCullMode(mode)` / `setFrontFaceWinding(w)` | `graphics::set_mesh_cull_mode(CullMode)` / `set_front_face_winding(VertexWinding)` | Meshes only, as in LÖVE. |
 | `love.graphics.newShader(code)` | `graphics::new_shader(code)` | WGSL, not GLSL. Defines `fn effect(color, uv, pixel) -> vec4<f32>`. `Shader::from_file(path)` loads a file. |
 | `love.graphics.setShader(shader)` / `setShader()` | `graphics::set_shader(Some(&shader))` / `set_shader(None)` | |
-| `shader:send(name, value)` | `shader.send(name, value)` | Sets a member of the shader's `Params` struct. |
+| `shader:send(name, value)` | `shader.send(name, value)` | Sets a member of the shader's `Params` struct: numbers, vectors, matrices (as columns), a `bool` to a `u32`, or a `Transform`. |
+| `shader:send(name, v1, v2, ...)` | `shader.send_array(name, &values)` | For an `array<T, N>` member. |
+| `shader:send(name, "row", matrix)` | `shader.send_matrix(name, matrix, MatrixLayout::Rows)` | |
 | `love.audio.newSource(path, "static")` | `audio::new_source(path, SourceType::Static)` | `SourceType::Stream` for music. |
 | `source:play()` / `pause()` / `stop()` | `source.play()` / `pause()` / `stop()` | |
 | `source:setLooping(true)` / `setVolume(v)` / `setPitch(p)` | `source.set_looping(true)` / `set_volume(v)` / `set_pitch(p)` | |

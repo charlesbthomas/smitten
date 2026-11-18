@@ -83,6 +83,16 @@ pub fn vibrate(seconds: f32) -> bool {
     context::with(|ctx| ctx.backend.vibrate(seconds))
 }
 
+/// Whether the player is listening to music from another app, the
+/// equivalent of `love.system.hasBackgroundMusic`. A game can check this
+/// to leave its own music off.
+///
+/// LÖVE can only tell on iOS and Android. Smitten cannot tell anywhere
+/// yet, so this is always `false`.
+pub fn has_background_music() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

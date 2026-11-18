@@ -4,7 +4,7 @@
 use smitten_core::backend::{
     BoundTexture, ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex,
 };
-use smitten_core::{BlendMode, Color, Filter, StencilMode, VertexWinding};
+use smitten_core::{BlendAlphaMode, BlendMode, Color, Filter, StencilMode, VertexWinding};
 
 use super::stats::FrameCounts;
 
@@ -20,6 +20,7 @@ pub(crate) struct Batch {
     target: Option<TextureId>,
     /// Applied to everything queued from now on.
     pub blend: BlendMode,
+    pub blend_alpha: BlendAlphaMode,
     pub scissor: Option<Scissor>,
     pub stencil: StencilMode,
     pub stencil_value: u8,
@@ -93,8 +94,21 @@ impl Batch {
         self.target = target;
     }
 
-    /// Fills the current target with `color`, replacing its contents.
+    /// Fills the current target with `color`, replacing its contents, and
+    /// resets its stencil values to zero.
     pub fn clear_target(&mut self, color: Color) {
+        self.clear_target_ex(Some(color), Some(0));
+    }
+
+    /// Fills the current target with `color` and sets its stencil values
+    /// to `stencil`, each only if given.
+    pub fn clear_target_ex(&mut self, color: Option<Color>, stencil: Option<u8>) {
+        let Some(color) = color else {
+            if let Some(value) = stencil {
+                self.clear_stencil_to(value);
+            }
+            return;
+        };
         // Draws still waiting to reach this target would be painted over,
         // so drop them rather than send them to the GPU.
         if let Some(last) = self.passes.last()
@@ -110,7 +124,7 @@ impl Batch {
         self.passes.push(Pass {
             target: self.target,
             clear: Some(color),
-            clear_stencil: true,
+            clear_stencil: stencil,
             first_call: self.calls.len() as u32,
             call_count: 0,
         });
@@ -119,10 +133,16 @@ impl Batch {
     /// Resets the current target's stencil values to zero, keeping its
     /// picture.
     pub fn clear_stencil(&mut self) {
+        self.clear_stencil_to(0);
+    }
+
+    /// Sets the current target's stencil values to `value`, keeping its
+    /// picture.
+    pub fn clear_stencil_to(&mut self, value: u8) {
         self.passes.push(Pass {
             target: self.target,
             clear: None,
-            clear_stencil: true,
+            clear_stencil: Some(value),
             first_call: self.calls.len() as u32,
             call_count: 0,
         });
@@ -140,6 +160,7 @@ impl Batch {
     ) {
         let saved = (
             std::mem::replace(&mut self.blend, blend),
+            std::mem::replace(&mut self.blend_alpha, blend.default_alpha_mode()),
             self.scissor.take(),
             std::mem::replace(&mut self.stencil, StencilMode::Off),
             self.shader.take(),
@@ -149,6 +170,7 @@ impl Batch {
         self.push(texture, filter, triangles);
         (
             self.blend,
+            self.blend_alpha,
             self.scissor,
             self.stencil,
             self.shader,
@@ -198,7 +220,7 @@ impl Batch {
             self.passes.push(Pass {
                 target: self.target,
                 clear: None,
-                clear_stencil: false,
+                clear_stencil: None,
                 first_call: self.calls.len() as u32,
                 call_count: 0,
             });
@@ -228,6 +250,7 @@ impl Batch {
                     && last.layer == layer
                     && last.filter == filter
                     && last.blend == self.blend
+                    && last.blend_alpha == self.blend_alpha
                     && last.scissor == self.scissor
                     && last.stencil == self.stencil
                     && last.stencil_value == self.stencil_value
@@ -256,6 +279,7 @@ impl Batch {
                     layer,
                     filter,
                     blend: self.blend,
+                    blend_alpha: self.blend_alpha,
                     scissor: self.scissor,
                     stencil: self.stencil,
                     stencil_value: self.stencil_value,
@@ -594,7 +618,13 @@ mod tests {
         let passes: Vec<_> = batch
             .passes
             .iter()
-            .map(|pass| (pass.clear.is_some(), pass.clear_stencil, pass.call_count))
+            .map(|pass| {
+                (
+                    pass.clear.is_some(),
+                    pass.clear_stencil.is_some(),
+                    pass.call_count,
+                )
+            })
             .collect();
         // Clearing the stencil keeps the picture drawn so far.
         assert_eq!(passes, [(true, true, 1), (false, true, 3)]);

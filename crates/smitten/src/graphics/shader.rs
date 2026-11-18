@@ -8,7 +8,7 @@ use smitten_core::backend::{
     Backend, BoundTexture, ShaderId, ShaderTexture, TextureKind, UniformField, UniformKind,
 };
 
-use super::{ArrayImage, Canvas, CubeImage, GraphicsState, Image};
+use super::{ArrayImage, Canvas, CubeImage, GraphicsState, Image, Transform};
 use crate::reload::Asset;
 use crate::{Color, context};
 
@@ -44,8 +44,16 @@ use crate::{Color, context};
 /// }
 /// ```
 ///
-/// Members may be `f32`, `i32`, `u32`, `vec2<f32>`, `vec3<f32>` or
-/// `vec4<f32>`. They start out as zero.
+/// Members may be `f32`, `i32` or `u32`, vectors of two to four of them
+/// such as `vec3<f32>` or `vec2<i32>`, the square matrices `mat2x2<f32>`,
+/// `mat3x3<f32>` and `mat4x4<f32>`, or fixed-size arrays of any of these,
+/// set with [`Shader::send_array`]. They start out as zero. See
+/// [`UniformValue`] for what to send to each.
+///
+/// WGSL has no booleans in `Params`: declare a `u32` or `i32` and send it
+/// a `bool`, which arrives as 1 or 0. The elements of an array in
+/// `Params` must be 16 bytes apart, so use `array<vec4<f32>, N>` rather
+/// than `array<f32, N>`.
 ///
 /// A shader can read more textures than the one being drawn. Declare each
 /// with no binding, use it with the sampler named after it, and send it
@@ -147,31 +155,114 @@ impl Shader {
 
     /// Sets the member of `Params` called `name`, returning an error if
     /// there is no such member or it has a different type.
+    ///
+    /// For an array member, this sets its first element.
     pub fn try_send(&self, name: &str, value: impl UniformValue) -> Result<(), ShaderError> {
-        let (kind, components) = value.to_uniform();
-        let fields = self.inner.fields.borrow();
-        let field = fields
-            .iter()
-            .find(|field| field.name == name)
-            .ok_or_else(|| ShaderError::UnknownValue(name.to_string()))?;
-        if field.kind != Some(kind) {
-            return Err(ShaderError::WrongType {
-                name: name.to_string(),
-                sent: kind,
-                declared: field.kind,
-            });
-        }
+        self.try_send_array(name, std::slice::from_ref(&value))
+    }
+
+    /// Sets the first elements of the array member of `Params` called
+    /// `name`, the equivalent of `shader:send(name, value1, value2, ...)`.
+    /// Elements past those sent keep their values.
+    ///
+    /// ```no_run
+    /// # let shader = smitten::graphics::new_shader("");
+    /// // struct Params { lights: array<vec4<f32>, 8>, light_count: u32 }
+    /// let lights = [[100.0, 80.0, 1.0, 0.0], [300.0, 200.0, 0.5, 0.0]];
+    /// shader.send_array("lights", &lights);
+    /// shader.send("light_count", lights.len() as u32);
+    /// ```
+    ///
+    /// A member that is not an array counts as an array of one.
+    ///
+    /// Panics if there is no such member, it has a different type, or it
+    /// has room for fewer values than were sent, which is always a bug in
+    /// the game. Use [`Shader::try_send_array`] to handle the failure
+    /// instead.
+    pub fn send_array<V: UniformValue>(&self, name: &str, values: &[V]) {
+        self.try_send_array(name, values)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    /// Sets the first elements of the array member of `Params` called
+    /// `name`, returning an error if there is no such member, it has a
+    /// different type, or it is too short.
+    pub fn try_send_array<V: UniformValue>(
+        &self,
+        name: &str,
+        values: &[V],
+    ) -> Result<(), ShaderError> {
         {
+            let fields = self.inner.fields.borrow();
+            let field = fields
+                .iter()
+                .find(|field| field.name == name)
+                .ok_or_else(|| ShaderError::UnknownValue(name.to_string()))?;
+            let (count, stride) = match (field.kind, field.array) {
+                (Some(kind), None) => (1, kind.size()),
+                (_, Some(array)) => (array.count as usize, array.stride as usize),
+                (None, None) => (0, 0),
+            };
+            let mut encoded = Vec::with_capacity(values.len());
+            for value in values {
+                let bytes = field
+                    .kind
+                    .and_then(|declared| value.to_uniform(declared).map(|bytes| (declared, bytes)))
+                    .ok_or_else(|| ShaderError::WrongType {
+                        name: name.to_string(),
+                        sent: value.kind(),
+                        declared: field.kind,
+                    })?;
+                encoded.push(bytes);
+            }
+            if values.len() > count {
+                return Err(ShaderError::TooManyValues {
+                    name: name.to_string(),
+                    sent: values.len(),
+                    room: count,
+                });
+            }
             let mut data = self.inner.data.borrow_mut();
-            let start = field.offset as usize;
-            let bytes = &components[..kind.size()];
-            // The backend reported a layout that fits inside the struct.
-            data[start..start + bytes.len()].copy_from_slice(bytes);
+            for (index, (kind, bytes)) in encoded.iter().enumerate() {
+                let start = field.offset as usize + index * stride;
+                // The backend reported a layout that fits inside the struct.
+                data[start..start + kind.size()].copy_from_slice(&bytes[..kind.size()]);
+            }
         }
-        drop(fields);
         // If this shader is the active one, later draws must see the change.
         context::with(|ctx| ctx.gfx.refresh_shader(self));
         Ok(())
+    }
+
+    /// Sets the matrix member of `Params` called `name`, with the matrix
+    /// given as LÖVE's `MatrixLayout` says: a list of rows or of columns.
+    ///
+    /// [`Shader::send`] takes a matrix as a list of columns, as WGSL and
+    /// most Rust math libraries store it. A matrix written out by hand
+    /// reads more naturally as rows:
+    ///
+    /// ```no_run
+    /// use smitten::graphics::MatrixLayout;
+    /// # let shader = smitten::graphics::new_shader("");
+    /// // struct Params { tint: mat3x3<f32> }
+    /// let sepia = [
+    ///     [0.393, 0.769, 0.189],
+    ///     [0.349, 0.686, 0.168],
+    ///     [0.272, 0.534, 0.131],
+    /// ];
+    /// shader.send_matrix("tint", sepia, MatrixLayout::Rows);
+    /// ```
+    ///
+    /// Panics as [`Shader::send`] does.
+    pub fn send_matrix<const N: usize>(
+        &self,
+        name: &str,
+        matrix: [[f32; N]; N],
+        layout: MatrixLayout,
+    ) where
+        [[f32; N]; N]: UniformValue,
+    {
+        self.send(name, layout.to_columns(matrix));
     }
 
     /// Sends a texture to the one the shader declares as `name`, the
@@ -262,12 +353,12 @@ pub(crate) fn reload(
         let old_fields = inner.fields.borrow();
         let old_data = inner.data.borrow();
         for field in &info.fields {
-            let old = old_fields
-                .iter()
-                .find(|old| old.name == field.name && old.kind == field.kind);
-            if let (Some(old), Some(kind)) = (old, field.kind) {
-                let (from, to) = (old.offset as usize, field.offset as usize);
-                data[to..to + kind.size()].copy_from_slice(&old_data[from..from + kind.size()]);
+            let old = old_fields.iter().find(|old| {
+                old.name == field.name && old.kind == field.kind && old.array == field.array
+            });
+            if let Some(old) = old {
+                let (from, to, span) = (old.offset as usize, field.offset as usize, field.span());
+                data[to..to + span].copy_from_slice(&old_data[from..from + span]);
             }
         }
     }
@@ -365,6 +456,29 @@ fn kind_name(kind: TextureKind) -> &'static str {
     }
 }
 
+/// How the numbers of a matrix are listed, the equivalent of LÖVE's
+/// `MatrixLayout`. See [`Shader::send_matrix`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MatrixLayout {
+    /// Each inner array is a row, as a matrix is written on paper. LÖVE's
+    /// default.
+    #[default]
+    Rows,
+    /// Each inner array is a column, as WGSL stores a matrix.
+    Columns,
+}
+
+impl MatrixLayout {
+    fn to_columns<const N: usize>(self, matrix: [[f32; N]; N]) -> [[f32; N]; N] {
+        match self {
+            MatrixLayout::Columns => matrix,
+            MatrixLayout::Rows => {
+                std::array::from_fn(|column| std::array::from_fn(|row| matrix[row][column]))
+            }
+        }
+    }
+}
+
 /// A value that can be passed to [`Shader::send`].
 ///
 /// | Rust | WGSL |
@@ -372,73 +486,141 @@ fn kind_name(kind: TextureKind) -> &'static str {
 /// | `f32` | `f32` |
 /// | `i32` | `i32` |
 /// | `u32` | `u32` |
+/// | `bool` | `u32` or `i32`, as 1 or 0 |
 /// | `[f32; 2]`, `(f32, f32)` | `vec2<f32>` |
 /// | `[f32; 3]` | `vec3<f32>` |
 /// | `[f32; 4]`, [`Color`] | `vec4<f32>` |
+/// | `[i32; 2]` to `[i32; 4]` | `vec2<i32>` to `vec4<i32>` |
+/// | `[u32; 2]` to `[u32; 4]` | `vec2<u32>` to `vec4<u32>` |
+/// | `[[f32; 2]; 2]` to `[[f32; 4]; 4]` | `mat2x2<f32>` to `mat4x4<f32>`, as columns |
+/// | [`Transform`] | `mat3x3<f32>` or `mat4x4<f32>` |
+///
+/// A [`Transform`] arrives as the matrix that maps `vec3(x, y, 1.0)`, or
+/// `vec4(x, y, 0.0, 1.0)`, to where the transform puts the point.
 pub trait UniformValue {
-    /// The WGSL type this value has, and its bytes. Only as many bytes as
-    /// the type needs are used.
+    /// The WGSL type this value most naturally has, for error messages.
     #[doc(hidden)]
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]);
+    fn kind(&self) -> UniformKind;
+
+    /// The bytes of this value as a member of type `declared`, laid out
+    /// as the GPU reads it, or `None` if it cannot be one. Only
+    /// `declared.size()` bytes are used.
+    #[doc(hidden)]
+    fn to_uniform(&self, declared: UniformKind) -> Option<[u8; UniformKind::MAX_SIZE]>;
 }
 
-fn pack(kind: UniformKind, floats: &[f32]) -> (UniformKind, [u8; 16]) {
-    let mut bytes = [0; 16];
-    for (chunk, value) in bytes.chunks_exact_mut(4).zip(floats) {
-        chunk.copy_from_slice(&value.to_ne_bytes());
+/// Writes `values` as 4-byte numbers, one column of `rows` numbers every
+/// `stride` bytes.
+fn pack<T: Copy>(
+    values: &[T],
+    rows: usize,
+    stride: usize,
+    bytes_of: impl Fn(T) -> [u8; 4],
+) -> [u8; UniformKind::MAX_SIZE] {
+    let mut bytes = [0; UniformKind::MAX_SIZE];
+    for (index, value) in values.iter().enumerate() {
+        let start = index / rows * stride + index % rows * 4;
+        bytes[start..start + 4].copy_from_slice(&bytes_of(*value));
     }
-    (kind, bytes)
+    bytes
 }
 
-impl UniformValue for f32 {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        pack(UniformKind::Float, &[*self])
+/// A value of exactly one WGSL type.
+macro_rules! uniform {
+    ($rust:ty, $kind:ident, |$value:ident| $numbers:expr, $bytes_of:expr) => {
+        impl UniformValue for $rust {
+            fn kind(&self) -> UniformKind {
+                UniformKind::$kind
+            }
+
+            fn to_uniform(&self, declared: UniformKind) -> Option<[u8; UniformKind::MAX_SIZE]> {
+                let $value = self;
+                (declared == UniformKind::$kind).then(|| {
+                    let numbers = $numbers;
+                    pack(&numbers, numbers.len(), 0, $bytes_of)
+                })
+            }
+        }
+    };
+}
+
+uniform!(f32, Float, |v| [*v], f32::to_ne_bytes);
+uniform!(i32, Int, |v| [*v], i32::to_ne_bytes);
+uniform!(u32, Uint, |v| [*v], u32::to_ne_bytes);
+uniform!([f32; 2], Vec2, |v| *v, f32::to_ne_bytes);
+uniform!((f32, f32), Vec2, |v| [v.0, v.1], f32::to_ne_bytes);
+uniform!([f32; 3], Vec3, |v| *v, f32::to_ne_bytes);
+uniform!([f32; 4], Vec4, |v| *v, f32::to_ne_bytes);
+uniform!(Color, Vec4, |v| [v.r, v.g, v.b, v.a], f32::to_ne_bytes);
+uniform!([i32; 2], IVec2, |v| *v, i32::to_ne_bytes);
+uniform!([i32; 3], IVec3, |v| *v, i32::to_ne_bytes);
+uniform!([i32; 4], IVec4, |v| *v, i32::to_ne_bytes);
+uniform!([u32; 2], UVec2, |v| *v, u32::to_ne_bytes);
+uniform!([u32; 3], UVec3, |v| *v, u32::to_ne_bytes);
+uniform!([u32; 4], UVec4, |v| *v, u32::to_ne_bytes);
+
+impl UniformValue for bool {
+    fn kind(&self) -> UniformKind {
+        UniformKind::Uint
+    }
+
+    fn to_uniform(&self, declared: UniformKind) -> Option<[u8; UniformKind::MAX_SIZE]> {
+        match declared {
+            UniformKind::Int => (i32::from(*self)).to_uniform(declared),
+            UniformKind::Uint => (u32::from(*self)).to_uniform(declared),
+            _ => None,
+        }
     }
 }
 
-impl UniformValue for i32 {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        let mut bytes = [0; 16];
-        bytes[..4].copy_from_slice(&self.to_ne_bytes());
-        (UniformKind::Int, bytes)
+/// A matrix of `N` columns of `N` numbers.
+macro_rules! matrix {
+    ($n:literal, $kind:ident, $stride:literal) => {
+        impl UniformValue for [[f32; $n]; $n] {
+            fn kind(&self) -> UniformKind {
+                UniformKind::$kind
+            }
+
+            fn to_uniform(&self, declared: UniformKind) -> Option<[u8; UniformKind::MAX_SIZE]> {
+                (declared == UniformKind::$kind)
+                    .then(|| pack(self.as_flattened(), $n, $stride, f32::to_ne_bytes))
+            }
+        }
+    };
+}
+
+matrix!(2, Mat2, 8);
+matrix!(3, Mat3, 16);
+matrix!(4, Mat4, 16);
+
+impl UniformValue for Transform {
+    fn kind(&self) -> UniformKind {
+        UniformKind::Mat4
+    }
+
+    fn to_uniform(&self, declared: UniformKind) -> Option<[u8; UniformKind::MAX_SIZE]> {
+        let [[a, c, tx], [b, d, ty], _] = self.matrix();
+        match declared {
+            UniformKind::Mat3 => [[a, b, 0.0], [c, d, 0.0], [tx, ty, 1.0]].to_uniform(declared),
+            UniformKind::Mat4 => [
+                [a, b, 0.0, 0.0],
+                [c, d, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [tx, ty, 0.0, 1.0],
+            ]
+            .to_uniform(declared),
+            _ => None,
+        }
     }
 }
 
-impl UniformValue for u32 {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        let mut bytes = [0; 16];
-        bytes[..4].copy_from_slice(&self.to_ne_bytes());
-        (UniformKind::Uint, bytes)
+impl<T: UniformValue + ?Sized> UniformValue for &T {
+    fn kind(&self) -> UniformKind {
+        (**self).kind()
     }
-}
 
-impl UniformValue for [f32; 2] {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        pack(UniformKind::Vec2, self)
-    }
-}
-
-impl UniformValue for (f32, f32) {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        pack(UniformKind::Vec2, &[self.0, self.1])
-    }
-}
-
-impl UniformValue for [f32; 3] {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        pack(UniformKind::Vec3, self)
-    }
-}
-
-impl UniformValue for [f32; 4] {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        pack(UniformKind::Vec4, self)
-    }
-}
-
-impl UniformValue for Color {
-    fn to_uniform(&self) -> (UniformKind, [u8; 16]) {
-        pack(UniformKind::Vec4, &[self.r, self.g, self.b, self.a])
+    fn to_uniform(&self, declared: UniformKind) -> Option<[u8; UniformKind::MAX_SIZE]> {
+        (**self).to_uniform(declared)
     }
 }
 
@@ -450,6 +632,15 @@ fn wgsl_name(kind: UniformKind) -> &'static str {
         UniformKind::Vec2 => "vec2<f32>",
         UniformKind::Vec3 => "vec3<f32>",
         UniformKind::Vec4 => "vec4<f32>",
+        UniformKind::IVec2 => "vec2<i32>",
+        UniformKind::IVec3 => "vec3<i32>",
+        UniformKind::IVec4 => "vec4<i32>",
+        UniformKind::UVec2 => "vec2<u32>",
+        UniformKind::UVec3 => "vec3<u32>",
+        UniformKind::UVec4 => "vec4<u32>",
+        UniformKind::Mat2 => "mat2x2<f32>",
+        UniformKind::Mat3 => "mat3x3<f32>",
+        UniformKind::Mat4 => "mat4x4<f32>",
     }
 }
 
@@ -471,6 +662,12 @@ pub enum ShaderError {
         sent: UniformKind,
         /// `None` if the member has a type that cannot be sent at all.
         declared: Option<UniformKind>,
+    },
+    /// More values were sent than the member has room for.
+    TooManyValues {
+        name: String,
+        sent: usize,
+        room: usize,
     },
     /// The shader declares no texture with this name.
     UnknownTexture(String),
@@ -504,6 +701,10 @@ impl fmt::Display for ShaderError {
                     None => write!(f, " but has a type that cannot be sent"),
                 }
             }
+            ShaderError::TooManyValues { name, sent, room } => write!(
+                f,
+                "shader value `{name}` was sent {sent} values but has room for {room}"
+            ),
             ShaderError::UnknownTexture(name) => {
                 write!(f, "the shader declares no texture named `{name}`")
             }
@@ -534,19 +735,82 @@ impl std::error::Error for ShaderError {
 mod tests {
     use super::*;
 
+    fn floats(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_ne_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
     #[test]
     fn values_are_packed_as_the_gpu_reads_them() {
-        let (kind, bytes) = Color::rgba(1.0, 0.5, 0.25, 0.0).to_uniform();
-        assert_eq!(kind, UniformKind::Vec4);
-        assert_eq!(bytes[..4], 1.0f32.to_ne_bytes());
-        assert_eq!(bytes[4..8], 0.5f32.to_ne_bytes());
-        assert_eq!(bytes[8..12], 0.25f32.to_ne_bytes());
+        let bytes = Color::rgba(1.0, 0.5, 0.25, 0.0)
+            .to_uniform(UniformKind::Vec4)
+            .unwrap();
+        assert_eq!(floats(&bytes[..16]), [1.0, 0.5, 0.25, 0.0]);
 
-        let (kind, bytes) = (-3i32).to_uniform();
-        assert_eq!(kind, UniformKind::Int);
+        let bytes = (-3i32).to_uniform(UniformKind::Int).unwrap();
         assert_eq!(bytes[..4], (-3i32).to_ne_bytes());
 
-        assert_eq!((2.0f32, 3.0f32).to_uniform(), [2.0f32, 3.0].to_uniform());
+        assert_eq!(
+            (2.0f32, 3.0f32).to_uniform(UniformKind::Vec2),
+            [2.0f32, 3.0].to_uniform(UniformKind::Vec2)
+        );
+        assert_eq!(Color::WHITE.to_uniform(UniformKind::Vec3), None);
+    }
+
+    #[test]
+    fn booleans_fit_either_integer() {
+        assert_eq!(
+            true.to_uniform(UniformKind::Uint),
+            1u32.to_uniform(UniformKind::Uint)
+        );
+        assert_eq!(
+            false.to_uniform(UniformKind::Int),
+            0i32.to_uniform(UniformKind::Int)
+        );
+        assert_eq!(true.to_uniform(UniformKind::Float), None);
+    }
+
+    #[test]
+    fn matrix_columns_are_padded_to_their_alignment() {
+        let bytes = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+            .to_uniform(UniformKind::Mat3)
+            .unwrap();
+        assert_eq!(
+            floats(&bytes[..48]),
+            [1.0, 2.0, 3.0, 0.0, 4.0, 5.0, 6.0, 0.0, 7.0, 8.0, 9.0, 0.0]
+        );
+        let bytes = [[1.0, 2.0], [3.0, 4.0]]
+            .to_uniform(UniformKind::Mat2)
+            .unwrap();
+        assert_eq!(floats(&bytes[..16]), [1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn rows_are_turned_into_columns() {
+        let rows = [[1.0, 2.0], [3.0, 4.0]];
+        assert_eq!(
+            MatrixLayout::Rows.to_columns(rows),
+            [[1.0, 3.0], [2.0, 4.0]]
+        );
+        assert_eq!(MatrixLayout::Columns.to_columns(rows), rows);
+    }
+
+    #[test]
+    fn a_transform_becomes_the_matrix_that_moves_points_as_it_does() {
+        let mut transform = Transform::IDENTITY;
+        transform.translate(10.0, 20.0);
+        transform.scale(2.0, 3.0);
+        let bytes = transform.to_uniform(UniformKind::Mat3).unwrap();
+        // Columns: x axis, y axis, translation.
+        assert_eq!(
+            floats(&bytes[..48]),
+            [2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 10.0, 20.0, 1.0, 0.0]
+        );
+        let bytes = transform.to_uniform(UniformKind::Mat4).unwrap();
+        assert_eq!(floats(&bytes[48..64]), [10.0, 20.0, 0.0, 1.0]);
+        assert_eq!(transform.to_uniform(UniformKind::Vec4), None);
     }
 
     #[test]

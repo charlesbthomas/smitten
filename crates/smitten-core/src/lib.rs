@@ -17,7 +17,7 @@ mod key;
 mod stencil;
 mod system;
 
-pub use blend::BlendMode;
+pub use blend::{BlendAlphaMode, BlendMode};
 pub use color::Color;
 pub use config::{Config, Scaling};
 pub use cull::{CullMode, VertexWinding};
@@ -28,4 +28,6 @@ pub use input::{
 };
 pub use key::Key;
 pub use stencil::{CompareMode, StencilAction, StencilMode};
-pub use system::{Cursor, DisplayOrientation, MessageBoxKind, PowerInfo, PowerState, WindowState};
+pub use system::{
+    Cursor, DisplayOrientation, FullscreenType, MessageBoxKind, PowerInfo, PowerState, WindowState,
+};
