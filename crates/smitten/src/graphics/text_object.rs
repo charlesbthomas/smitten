@@ -1,6 +1,7 @@
 //! Text laid out once and drawn many times, the equivalent of LÖVE's
 //! `Text`.
 
+use glam::Vec2;
 use std::cell::RefCell;
 
 use smitten_core::backend::{Backend, TextureId, Vertex};
@@ -67,7 +68,7 @@ impl Text {
     pub fn set(&mut self, text: &str) {
         self.clear();
         if !text.is_empty() {
-            self.add(text, 0.0, 0.0);
+            self.add(text, (0.0, 0.0));
         }
     }
 
@@ -77,13 +78,14 @@ impl Text {
     pub fn set_f(&mut self, text: &str, limit: f32, align: Align) {
         self.clear();
         if !text.is_empty() {
-            self.add_f(text, limit, align, 0.0, 0.0);
+            self.add_f(text, limit, align, (0.0, 0.0));
         }
     }
 
     /// Adds `text` with its top-left corner at `(x, y)`, keeping what is
     /// already there. Returns its index, counting from 0.
-    pub fn add(&mut self, text: &str, x: f32, y: f32) -> usize {
+    pub fn add(&mut self, text: &str, position: impl Into<Vec2>) -> usize {
+        let Vec2 { x, y } = position.into();
         self.add_with(
             text,
             &Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0),
@@ -114,7 +116,14 @@ impl Text {
 
     /// Adds `text` wrapped to `limit` units and aligned within that width,
     /// with its top-left corner at `(x, y)`.
-    pub fn add_f(&mut self, text: &str, limit: f32, align: Align, x: f32, y: f32) -> usize {
+    pub fn add_f(
+        &mut self,
+        text: &str,
+        limit: f32,
+        align: Align,
+        position: impl Into<Vec2>,
+    ) -> usize {
+        let Vec2 { x, y } = position.into();
         let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
         self.add_f_with(text, limit, align, &transform)
     }
@@ -135,18 +144,19 @@ impl Text {
     /// tinted by its color as well as the one the text is drawn in.
     pub fn set_colored(&mut self, segments: &[(Color, &str)]) {
         self.clear();
-        self.add_colored(segments, 0.0, 0.0);
+        self.add_colored(segments, (0.0, 0.0));
     }
 
     /// Replaces everything with colored text wrapped to `limit` units.
     pub fn set_f_colored(&mut self, segments: &[(Color, &str)], limit: f32, align: Align) {
         self.clear();
-        self.add_f_colored(segments, limit, align, 0.0, 0.0);
+        self.add_f_colored(segments, limit, align, (0.0, 0.0));
     }
 
     /// Adds text made of colored parts with its top-left corner at
     /// `(x, y)`. Returns its index.
-    pub fn add_colored(&mut self, segments: &[(Color, &str)], x: f32, y: f32) -> usize {
+    pub fn add_colored(&mut self, segments: &[(Color, &str)], position: impl Into<Vec2>) -> usize {
+        let Vec2 { x, y } = position.into();
         let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
         self.add_colored_with(segments, &transform)
     }
@@ -163,9 +173,9 @@ impl Text {
         segments: &[(Color, &str)],
         limit: f32,
         align: Align,
-        x: f32,
-        y: f32,
+        position: impl Into<Vec2>,
     ) -> usize {
+        let Vec2 { x, y } = position.into();
         let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
         self.push_segments(segments, Some((limit, align)), &transform)
     }
@@ -260,10 +270,10 @@ impl Text {
         };
         let height = font.height() * (1.0 + (lines - 1) as f32 * font.line_height());
         let corners = [
-            entry.transform.apply(0.0, 0.0),
-            entry.transform.apply(width, 0.0),
-            entry.transform.apply(width, height),
-            entry.transform.apply(0.0, height),
+            entry.transform.apply((0.0, 0.0)),
+            entry.transform.apply((width, 0.0)),
+            entry.transform.apply((width, height)),
+            entry.transform.apply((0.0, height)),
         ];
         Some(corners.iter().fold(
             [
@@ -272,7 +282,7 @@ impl Text {
                 f32::NEG_INFINITY,
                 f32::NEG_INFINITY,
             ],
-            |[left, top, right, bottom], &(x, y)| {
+            |[left, top, right, bottom], &Vec2 { x, y }| {
                 [left.min(x), top.min(y), right.max(x), bottom.max(y)]
             },
         ))
@@ -318,7 +328,7 @@ impl Text {
                         runs.push((texture, Vec::new()));
                     }
                     let corner = |x: f32, y: f32, u: f32, v: f32| {
-                        let (x, y) = entry.transform.apply(x, y);
+                        let Vec2 { x, y } = entry.transform.apply((x, y));
                         Vertex {
                             position: [x, y],
                             uv: [u, v],
@@ -358,8 +368,8 @@ mod tests {
     fn add_returns_indexes_and_set_starts_over() {
         let mut text = Text::new(&font(), "score");
         assert_eq!(text.len(), 1);
-        assert_eq!(text.add("lives", 0.0, 20.0), 1);
-        assert_eq!(text.add_f("wrapped", 50.0, Align::Center, 0.0, 40.0), 2);
+        assert_eq!(text.add("lives", (0.0, 20.0)), 1);
+        assert_eq!(text.add_f("wrapped", 50.0, Align::Center, (0.0, 40.0)), 2);
         text.set("only this");
         assert_eq!(text.len(), 1);
         text.set("");
@@ -371,11 +381,11 @@ mod tests {
         let font = font();
         let mut text = Text::new(&font, "");
         assert_eq!(text.dimensions(), (0.0, 0.0));
-        text.add("hello", 10.0, 0.0);
+        text.add("hello", (10.0, 0.0));
         let (width, height) = text.dimensions();
         assert!((width - (10.0 + font.width("hello"))).abs() < 1e-3);
         assert!((height - font.height()).abs() < 1e-3);
-        text.add("x", 0.0, 100.0);
+        text.add("x", (0.0, 100.0));
         assert!((text.height() - (100.0 + font.height())).abs() < 1e-3);
     }
 
@@ -392,7 +402,7 @@ mod tests {
     #[test]
     fn right_aligned_text_reaches_the_limit() {
         let mut text = Text::new(&font(), "");
-        text.add_f("hi", 200.0, Align::Right, 0.0, 0.0);
+        text.add_f("hi", 200.0, Align::Right, (0.0, 0.0));
         assert!((text.width() - 200.0).abs() < 1e-3);
         let [left, ..] = text.bounds(0).unwrap();
         assert_eq!(left, 0.0);

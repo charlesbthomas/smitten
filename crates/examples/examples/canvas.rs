@@ -33,9 +33,13 @@ impl Canvases {
             graphics::clear(Color::rgb(0.08, 0.09, 0.16));
 
             graphics::set_color(Color::rgb(0.2, 0.55, 0.35));
-            graphics::rectangle(DrawMode::Fill, 0.0, 72.0, SCENE_WIDTH as f32, 24.0);
+            graphics::rectangle(DrawMode::Fill, (0.0, 72.0), (SCENE_WIDTH as f32, 24.0));
             graphics::set_color(Color::rgb(0.95, 0.35, 0.45));
-            graphics::circle(DrawMode::Fill, 48.0 + (time * 1.3).cos() * 30.0, 60.0, 10.0);
+            graphics::circle(
+                DrawMode::Fill,
+                (48.0 + (time * 1.3).cos() * 30.0, 60.0),
+                10.0,
+            );
 
             // Lights add to what is under them instead of covering it.
             graphics::set_blend_mode(BlendMode::Add);
@@ -44,8 +48,7 @@ impl Canvases {
                 graphics::set_color(Color::rgba(1.0, 0.8, 0.3, 0.45));
                 graphics::circle(
                     DrawMode::Fill,
-                    48.0 + angle.cos() * 24.0,
-                    40.0 + (angle * 1.7).sin() * 16.0,
+                    (48.0 + angle.cos() * 24.0, 40.0 + (angle * 1.7).sin() * 16.0),
                     14.0,
                 );
             }
@@ -77,7 +80,7 @@ impl Game for Canvases {
     fn update(&mut self, _dt: f32) {
         // Add a dab of paint under the mouse. Nothing else on the paint
         // canvas is touched, so earlier dabs stay.
-        let (x, y) = mouse::position();
+        let smitten::Vec2 { x, y } = mouse::position();
         let hue = timer::time() as f32;
         self.paint.render_to(|| {
             graphics::set_color(Color::rgba(
@@ -86,7 +89,7 @@ impl Game for Canvases {
                 0.5 + 0.5 * (hue + 4.0).sin(),
                 0.6,
             ));
-            graphics::circle(DrawMode::Fill, x - PANEL_X, y - MARGIN, 9.0);
+            graphics::circle(DrawMode::Fill, (x - PANEL_X, y - MARGIN), 9.0);
         });
     }
 
@@ -108,7 +111,7 @@ impl Game for Canvases {
         // The panel: stripes limited by a scissor, with the paint on top.
         let panel = PANEL_SIZE as f32;
         graphics::set_color(Color::rgb(0.16, 0.17, 0.21));
-        graphics::rectangle(DrawMode::Fill, PANEL_X, MARGIN, panel, panel);
+        graphics::rectangle(DrawMode::Fill, (PANEL_X, MARGIN), (panel, panel));
 
         graphics::set_scissor(PANEL_X as i32, MARGIN as i32, PANEL_SIZE, PANEL_SIZE);
         graphics::set_color(Color::rgb(0.2, 0.21, 0.26));
@@ -130,18 +133,16 @@ impl Game for Canvases {
         // A canvas holds colors already multiplied by their alpha.
         graphics::set_color(Color::WHITE);
         graphics::set_blend_mode(BlendMode::Premultiplied);
-        graphics::draw(&self.paint, PANEL_X, MARGIN);
+        graphics::draw(&self.paint, (PANEL_X, MARGIN));
         graphics::set_blend_mode(BlendMode::Alpha);
 
         graphics::print(
             "Low-resolution canvas, scaled up",
-            MARGIN,
-            MARGIN + panel + 10.0,
+            (MARGIN, MARGIN + panel + 10.0),
         );
         graphics::print(
             "Move the mouse here to paint. C clears.",
-            PANEL_X,
-            MARGIN + panel + 10.0,
+            (PANEL_X, MARGIN + panel + 10.0),
         );
     }
 

@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -108,26 +109,28 @@ impl Body {
     }
 
     /// The position of the body's origin as `(x, y)`.
-    pub fn position(&self) -> (f32, f32) {
+    pub fn position(&self) -> Vec2 {
         self.read(|body| {
             let position = body.translation();
             (position.x, position.y)
         })
+        .into()
     }
 
     /// The horizontal position of the body's origin.
     pub fn x(&self) -> f32 {
-        self.position().0
+        self.position().x
     }
 
     /// The vertical position of the body's origin.
     pub fn y(&self) -> f32 {
-        self.position().1
+        self.position().y
     }
 
     /// Moves the body to `(x, y)` at once, without sweeping through
     /// what lies between.
-    pub fn set_position(&self, x: f32, y: f32) {
+    pub fn set_position(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.change(|body| body.set_translation(Vector::new(x, y), true));
     }
 
@@ -142,15 +145,17 @@ impl Body {
     }
 
     /// The body's velocity as `(x, y)` in units per second.
-    pub fn linear_velocity(&self) -> (f32, f32) {
+    pub fn linear_velocity(&self) -> Vec2 {
         self.read(|body| {
             let velocity = body.linvel();
             (velocity.x, velocity.y)
         })
+        .into()
     }
 
     /// Sets the body's velocity in units per second.
-    pub fn set_linear_velocity(&self, x: f32, y: f32) {
+    pub fn set_linear_velocity(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.change(|body| body.set_linvel(Vector::new(x, y), true));
     }
 
@@ -171,13 +176,16 @@ impl Body {
     /// on [`World::set_meter`](super::World::set_meter), as in LÖVE. To
     /// say how fast the body should speed up instead, whatever it weighs,
     /// use [`Body::apply_acceleration`].
-    pub fn apply_force(&self, x: f32, y: f32) {
+    pub fn apply_force(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.change(|body| body.add_force(Vector::new(x, y), true));
     }
 
     /// Pushes the body with a force at the world point `(at_x, at_y)` for
     /// the next update only. Off center, this also turns it.
-    pub fn apply_force_at(&self, x: f32, y: f32, at_x: f32, at_y: f32) {
+    pub fn apply_force_at(&self, position: impl Into<Vec2>, at: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        let Vec2 { x: at_x, y: at_y } = at.into();
         self.change(|body| {
             body.add_force_at_point(Vector::new(x, y), Vector::new(at_x, at_y), true)
         });
@@ -193,7 +201,8 @@ impl Body {
     /// Speeds the body up by `(x, y)` units per second, every second, for
     /// the next update only, whatever its mass. Gravity is an acceleration
     /// of this kind. Call it every frame for a steady pull.
-    pub fn apply_acceleration(&self, x: f32, y: f32) {
+    pub fn apply_acceleration(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.change(|body| {
             let mass = body.mass();
             body.add_force(Vector::new(x, y) * mass, true);
@@ -221,13 +230,16 @@ impl Body {
 
     /// Changes the body's velocity at once, as a kick or a jump does. The
     /// change is the impulse divided by the body's mass.
-    pub fn apply_linear_impulse(&self, x: f32, y: f32) {
+    pub fn apply_linear_impulse(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.change(|body| body.apply_impulse(Vector::new(x, y), true));
     }
 
     /// Kicks the body at the world point `(at_x, at_y)`. Off center, this
     /// also spins it.
-    pub fn apply_linear_impulse_at(&self, x: f32, y: f32, at_x: f32, at_y: f32) {
+    pub fn apply_linear_impulse_at(&self, position: impl Into<Vec2>, at: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        let Vec2 { x: at_x, y: at_y } = at.into();
         self.change(|body| {
             body.apply_impulse_at_point(Vector::new(x, y), Vector::new(at_x, at_y), true)
         });
@@ -347,15 +359,20 @@ impl Body {
     }
 
     /// Turns a point given relative to the body into world coordinates.
-    pub fn world_point(&self, local_x: f32, local_y: f32) -> (f32, f32) {
+    pub fn world_point(&self, local_point: impl Into<Vec2>) -> Vec2 {
+        let Vec2 {
+            x: local_x,
+            y: local_y,
+        } = local_point.into();
         let point = self.pose().transform_point(Vector::new(local_x, local_y));
-        (point.x, point.y)
+        (point.x, point.y).into()
     }
 
     /// Turns a world point into coordinates relative to the body.
-    pub fn local_point(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn local_point(&self, position: impl Into<Vec2>) -> Vec2 {
+        let Vec2 { x, y } = position.into();
         let point = self.pose().inverse_transform_point(Vector::new(x, y));
-        (point.x, point.y)
+        (point.x, point.y).into()
     }
 
     /// The world the body is in.
@@ -367,87 +384,99 @@ impl Body {
 
     /// The body's position and angle together, as `(x, y, angle)`.
     pub fn transform(&self) -> (f32, f32, f32) {
-        let (x, y) = self.position();
+        let Vec2 { x, y } = self.position();
         (x, y, self.angle())
     }
 
     /// Moves the body to `(x, y)` and turns it to `angle` at once.
-    pub fn set_transform(&self, x: f32, y: f32, angle: f32) {
+    pub fn set_transform(&self, position: impl Into<Vec2>, angle: f32) {
+        let Vec2 { x, y } = position.into();
         self.change(|body| body.set_position(Pose::new(Vector::new(x, y), angle), true));
     }
 
     /// Moves the body's origin across to `x`, keeping its height.
     pub fn set_x(&self, x: f32) {
         let y = self.y();
-        self.set_position(x, y);
+        self.set_position((x, y));
     }
 
     /// Moves the body's origin up or down to `y`.
     pub fn set_y(&self, y: f32) {
         let x = self.x();
-        self.set_position(x, y);
+        self.set_position((x, y));
     }
 
     /// The body's center of mass in world coordinates: the point it turns
     /// around when spun, and where [`Body::apply_force`] pushes.
-    pub fn world_center(&self) -> (f32, f32) {
+    pub fn world_center(&self) -> Vec2 {
         self.read(|body| {
             let center = body.center_of_mass();
             (center.x, center.y)
         })
+        .into()
     }
 
     /// The body's center of mass relative to its origin, without its
     /// turn.
-    pub fn local_center(&self) -> (f32, f32) {
+    pub fn local_center(&self) -> Vec2 {
         self.read(|body| {
             let center = body.local_center_of_mass();
             (center.x, center.y)
         })
+        .into()
     }
 
     /// Turns a direction given relative to the body into a direction in
     /// the world. Unlike [`Body::world_point`] it only turns, as a
     /// direction has no position.
-    pub fn world_vector(&self, local_x: f32, local_y: f32) -> (f32, f32) {
+    pub fn world_vector(&self, local_point: impl Into<Vec2>) -> Vec2 {
+        let Vec2 {
+            x: local_x,
+            y: local_y,
+        } = local_point.into();
         let vector = self
             .pose()
             .rotation
             .transform_vector(Vector::new(local_x, local_y));
-        (vector.x, vector.y)
+        (vector.x, vector.y).into()
     }
 
     /// Turns a direction in the world into one relative to the body.
-    pub fn local_vector(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn local_vector(&self, position: impl Into<Vec2>) -> Vec2 {
+        let Vec2 { x, y } = position.into();
         let vector = self
             .pose()
             .rotation
             .inverse()
             .transform_vector(Vector::new(x, y));
-        (vector.x, vector.y)
+        (vector.x, vector.y).into()
     }
 
     /// Turns many points given relative to the body into world
     /// coordinates, as [`Body::world_point`] does one.
-    pub fn world_points(&self, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    pub fn world_points(&self, points: &[impl Into<Vec2> + Copy]) -> Vec<Vec2> {
+        let points = crate::math::tuples(points);
+        let points = &points[..];
         let pose = self.pose();
         points
             .iter()
             .map(|&(x, y)| {
                 let point = pose.transform_point(Vector::new(x, y));
-                (point.x, point.y)
+                Vec2::new(point.x, point.y)
             })
             .collect()
     }
 
     /// Turns many world points into coordinates relative to the body.
-    pub fn local_points(&self, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    pub fn local_points(&self, points: &[impl Into<Vec2> + Copy]) -> Vec<Vec2> {
+        let points = crate::math::tuples(points);
+        let points = &points[..];
         let pose = self.pose();
         points
             .iter()
             .map(|&(x, y)| {
                 let point = pose.inverse_transform_point(Vector::new(x, y));
-                (point.x, point.y)
+                Vec2::new(point.x, point.y)
             })
             .collect()
     }
@@ -456,18 +485,24 @@ impl Body {
     /// as `(x, y)` in units per second: the body's velocity plus what its
     /// spin adds there. The rim of a spinning wheel moves faster than its
     /// hub.
-    pub fn linear_velocity_from_world_point(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn linear_velocity_from_world_point(&self, position: impl Into<Vec2>) -> Vec2 {
+        let Vec2 { x, y } = position.into();
         self.read(|body| {
             let velocity = body.velocity_at_point(Vector::new(x, y));
             (velocity.x, velocity.y)
         })
+        .into()
     }
 
     /// How fast the point `(x, y)` relative to the body is moving, in
     /// world units per second.
-    pub fn linear_velocity_from_local_point(&self, local_x: f32, local_y: f32) -> (f32, f32) {
-        let (x, y) = self.world_point(local_x, local_y);
-        self.linear_velocity_from_world_point(x, y)
+    pub fn linear_velocity_from_local_point(&self, local_point: impl Into<Vec2>) -> Vec2 {
+        let Vec2 {
+            x: local_x,
+            y: local_y,
+        } = local_point.into();
+        let Vec2 { x, y } = self.world_point((local_x, local_y));
+        self.linear_velocity_from_world_point((x, y))
     }
 
     /// The body's `(center_x, center_y, mass, inertia)`: its center of
@@ -490,7 +525,11 @@ impl Body {
     /// Their densities then count for nothing until
     /// [`Body::reset_mass_data`] is called or a fixture is added, as in
     /// LÖVE. Only dynamic bodies have mass.
-    pub fn set_mass_data(&self, center_x: f32, center_y: f32, mass: f32, inertia: f32) {
+    pub fn set_mass_data(&self, center: impl Into<Vec2>, mass: f32, inertia: f32) {
+        let Vec2 {
+            x: center_x,
+            y: center_y,
+        } = center.into();
         let mut inner = self.world.borrow_mut();
         let Inner {
             world,
@@ -523,13 +562,13 @@ impl Body {
     /// Sets the body's mass, keeping its center of mass and inertia.
     pub fn set_mass(&self, mass: f32) {
         let (x, y, _, inertia) = self.mass_data();
-        self.set_mass_data(x, y, mass, inertia);
+        self.set_mass_data((x, y), mass, inertia);
     }
 
     /// Sets how hard the body is to spin, keeping its mass and center.
     pub fn set_inertia(&self, inertia: f32) {
         let (x, y, mass, _) = self.mass_data();
-        self.set_mass_data(x, y, mass, inertia);
+        self.set_mass_data((x, y), mass, inertia);
     }
 
     /// Gives the body back the mass, center and inertia its fixtures'
@@ -679,20 +718,35 @@ impl Body {
     }
 
     /// Gives the body a circle centered `(x, y)` from its origin.
-    pub fn add_circle_at(&self, x: f32, y: f32, radius: f32) -> Fixture {
-        self.add_shape(&Shape::circle_at(x, y, radius))
+    pub fn add_circle_at(&self, position: impl Into<Vec2>, radius: f32) -> Fixture {
+        let Vec2 { x, y } = position.into();
+        self.add_shape(&Shape::circle_at((x, y), radius))
     }
 
     /// Gives the body a rectangle of `width` by `height` centered on its
     /// origin.
-    pub fn add_rectangle(&self, width: f32, height: f32) -> Fixture {
-        self.add_shape(&Shape::rectangle(width, height))
+    pub fn add_rectangle(&self, size: impl Into<Vec2>) -> Fixture {
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
+        self.add_shape(&Shape::rectangle((width, height)))
     }
 
     /// Gives the body a rectangle centered `(x, y)` from its origin and
     /// turned by `angle` radians.
-    pub fn add_rectangle_at(&self, x: f32, y: f32, width: f32, height: f32, angle: f32) -> Fixture {
-        self.add_shape(&Shape::rectangle_at(x, y, width, height, angle))
+    pub fn add_rectangle_at(
+        &self,
+        position: impl Into<Vec2>,
+        size: impl Into<Vec2>,
+        angle: f32,
+    ) -> Fixture {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
+        self.add_shape(&Shape::rectangle_at((x, y), (width, height), angle))
     }
 
     /// Gives the body a polygon with these corners, measured from its
@@ -700,14 +754,18 @@ impl Body {
     /// around it; build a dented shape from several fixtures instead.
     ///
     /// Panics if the points do not span an area.
-    pub fn add_polygon(&self, points: &[(f32, f32)]) -> Fixture {
+    pub fn add_polygon(&self, points: &[impl Into<Vec2> + Copy]) -> Fixture {
+        let points = crate::math::tuples(points);
+        let points = &points[..];
         self.add_shape(&Shape::polygon(points))
     }
 
     /// Gives the body a thin line from `(x1, y1)` to `(x2, y2)`, measured
     /// from its origin. Best on static bodies, as ground or walls.
-    pub fn add_edge(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Fixture {
-        self.add_shape(&Shape::edge(x1, y1, x2, y2))
+    pub fn add_edge(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Fixture {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
+        self.add_shape(&Shape::edge((x1, y1), (x2, y2)))
     }
 
     /// Gives the body a chain of lines through these points, measured
@@ -715,7 +773,9 @@ impl Body {
     /// static bodies, for uneven ground.
     ///
     /// Panics with fewer than two points.
-    pub fn add_chain(&self, points: &[(f32, f32)], closed: bool) -> Fixture {
+    pub fn add_chain(&self, points: &[impl Into<Vec2> + Copy], closed: bool) -> Fixture {
+        let points = crate::math::tuples(points);
+        let points = &points[..];
         self.add_shape(&Shape::chain(points, closed))
     }
 }

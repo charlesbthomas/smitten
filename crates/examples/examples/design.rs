@@ -52,30 +52,28 @@ impl Game for Design {
                 graphics::set_color(Color::rgb(shade, shade + 0.05, shade + 0.15));
                 graphics::rectangle(
                     DrawMode::Fill,
-                    column as f32 * 20.0,
-                    height - 60.0 + row as f32 * 20.0,
-                    20.0,
-                    20.0,
+                    (column as f32 * 20.0, height - 60.0 + row as f32 * 20.0),
+                    (20.0, 20.0),
                 );
             }
         }
 
         // The frame marks the edge of the design area.
         graphics::set_color(Color::rgb(1.0, 0.8, 0.4));
-        graphics::rectangle(DrawMode::Line, 0.5, 0.5, width - 1.0, height - 1.0);
-        graphics::circle(DrawMode::Fill, width - 40.0, 36.0, 16.0);
+        graphics::rectangle(DrawMode::Line, (0.5, 0.5), (width - 1.0, height - 1.0));
+        graphics::circle(DrawMode::Fill, (width - 40.0, 36.0), 16.0);
 
         graphics::set_color(Color::WHITE);
         let bob = (timer::time() as f32 * 3.0).sin() * 4.0;
         for index in 0..5 {
-            graphics::draw(&self.heart, 40.0 + index as f32 * 24.0, 60.0 + bob);
+            graphics::draw(&self.heart, (40.0 + index as f32 * 24.0, 60.0 + bob));
         }
 
         // The mouse is reported in design units, so this heart follows it
         // exactly at any window size.
-        let (x, y) = mouse::position();
+        let smitten::Vec2 { x, y } = mouse::position();
         graphics::draw_ex(&self.heart, x.round(), y.round(), 0.0, 1.0, 1.0, 8.0, 8.0);
-        graphics::print(&format!("mouse {:.0}, {:.0}", x, y), 8.0, 8.0);
+        graphics::print(&format!("mouse {:.0}, {:.0}", x, y), (8.0, 8.0));
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {

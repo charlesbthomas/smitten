@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -469,7 +470,11 @@ impl World {
     /// `(gravity_x, gravity_y)` units per second, every second. Positive y
     /// is down, so `World::new(0.0, 9.81 * 30.0)` is Earth's gravity at
     /// the default 30 units to a meter.
-    pub fn new(gravity_x: f32, gravity_y: f32) -> World {
+    pub fn new(gravity: impl Into<Vec2>) -> World {
+        let Vec2 {
+            x: gravity_x,
+            y: gravity_y,
+        } = gravity.into();
         let mut world = PhysicsWorld::new();
         world.gravity = Vector::new(gravity_x, gravity_y);
         world.integration_parameters.length_unit = DEFAULT_METER;
@@ -608,13 +613,14 @@ impl World {
     }
 
     /// Gravity as `(x, y)` in units per second, every second.
-    pub fn gravity(&self) -> (f32, f32) {
+    pub fn gravity(&self) -> Vec2 {
         let gravity = self.inner.borrow().world.gravity;
-        (gravity.x, gravity.y)
+        (gravity.x, gravity.y).into()
     }
 
     /// Changes gravity and wakes every body so it takes effect at once.
-    pub fn set_gravity(&self, x: f32, y: f32) {
+    pub fn set_gravity(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         let mut inner = self.inner.borrow_mut();
         inner.world.gravity = Vector::new(x, y);
         inner.world.wake_up_all(true);
@@ -642,7 +648,8 @@ impl World {
 
     /// Creates a body at `(x, y)`. It has no shape until fixtures are
     /// added to it, for example with [`Body::add_rectangle`].
-    pub fn new_body(&self, x: f32, y: f32, body_type: BodyType) -> Body {
+    pub fn new_body(&self, position: impl Into<Vec2>, body_type: BodyType) -> Body {
+        let Vec2 { x, y } = position.into();
         let builder = match body_type {
             BodyType::Static => RigidBodyBuilder::fixed(),
             BodyType::Dynamic => RigidBodyBuilder::dynamic(),
@@ -745,9 +752,9 @@ impl World {
     /// ```
     /// use smitten::physics::{BodyType, World};
     ///
-    /// let world = World::new(0.0, 600.0);
-    /// let platform = world.new_body(0.0, 0.0, BodyType::Static);
-    /// let top = platform.add_rectangle(200.0, 10.0);
+    /// let world = World::new((0.0, 600.0));
+    /// let platform = world.new_body((0.0, 0.0), BodyType::Static);
+    /// let top = platform.add_rectangle((200.0, 10.0));
     /// world.set_pre_solve(move |contact| {
     ///     // Things below the platform pass up through it: only a
     ///     // contact pushing up out of its top counts.
@@ -785,8 +792,8 @@ impl World {
     /// ```
     /// use smitten::physics::{BodyType, World};
     ///
-    /// let world = World::new(0.0, 600.0);
-    /// let ghost = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    /// let world = World::new((0.0, 600.0));
+    /// let ghost = world.new_body((0.0, 0.0), BodyType::Dynamic);
     /// ghost.add_circle(10.0).set_user_data(1);
     /// // Fixtures with user data 1 pass through everything.
     /// world.set_contact_filter(|pair| pair.a_data != 1 && pair.b_data != 1);
@@ -842,7 +849,8 @@ impl World {
     /// joint's target, moves by `(-x, -y)`, without changing how anything
     /// moves. Useful in a large world, to keep the numbers near the player
     /// small, where they are precise.
-    pub fn translate_origin(&self, x: f32, y: f32) {
+    pub fn translate_origin(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         let shift = Vector::new(x, y);
         let mut inner = self.inner.borrow_mut();
         let ground = inner.ground;
@@ -898,7 +906,9 @@ impl World {
     /// nearest first. Sensors are ignored. Where [`World::ray_cast`]
     /// stops at the first, this is LÖVE's `rayCast` with a callback that
     /// keeps going.
-    pub fn ray_cast_all(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<RayHit> {
+    pub fn ray_cast_all(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Vec<RayHit> {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         let inner = self.inner.borrow();
         let direction = Vector::new(x2 - x1, y2 - y1);
         let ray = Ray::new(Vector::new(x1, y1), direction);
@@ -922,7 +932,9 @@ impl World {
     /// Finds the first fixture a line from `(x1, y1)` to `(x2, y2)` runs
     /// into. Sensors are ignored. A ray that starts inside a fixture hits
     /// it at once, with a fraction of 0.
-    pub fn ray_cast(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Option<RayHit> {
+    pub fn ray_cast(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Option<RayHit> {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         let inner = self.inner.borrow();
         let (origin, direction) = (Vector::new(x1, y1), Vector::new(x2 - x1, y2 - y1));
         let ray = Ray::new(origin, direction);
@@ -942,7 +954,8 @@ impl World {
 
     /// Every fixture that covers the point `(x, y)`, sensors included.
     /// Useful for picking things with the mouse.
-    pub fn fixtures_at(&self, x: f32, y: f32) -> Vec<Fixture> {
+    pub fn fixtures_at(&self, position: impl Into<Vec2>) -> Vec<Fixture> {
+        let Vec2 { x, y } = position.into();
         let inner = self.inner.borrow();
         inner
             .world
@@ -957,7 +970,14 @@ impl World {
     ///
     /// The joint can have a motor and limits; see
     /// [`Joint::set_motor_enabled`] and [`Joint::set_limits`].
-    pub fn new_revolute_joint(&self, a: &Body, b: &Body, x: f32, y: f32, collide: bool) -> Joint {
+    pub fn new_revolute_joint(
+        &self,
+        a: &Body,
+        b: &Body,
+        position: impl Into<Vec2>,
+        collide: bool,
+    ) -> Joint {
+        let Vec2 { x, y } = position.into();
         let anchor = Vector::new(x, y);
         let (pose_a, pose_b) = (a.pose(), b.pose());
         let mut joint = RevoluteJointBuilder::new()
@@ -995,13 +1015,13 @@ impl World {
         &self,
         a: &Body,
         b: &Body,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
+        anchor1: impl Into<Vec2>,
+        anchor2: impl Into<Vec2>,
         max_length: f32,
         collide: bool,
     ) -> Joint {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         let joint = RopeJointBuilder::new(max_length)
             .local_anchor1(a.pose().inverse_transform_point(Vector::new(x1, y1)))
             .local_anchor2(b.pose().inverse_transform_point(Vector::new(x2, y2)))
@@ -1019,12 +1039,12 @@ impl World {
         &self,
         a: &Body,
         b: &Body,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
+        anchor1: impl Into<Vec2>,
+        anchor2: impl Into<Vec2>,
         collide: bool,
     ) -> Joint {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         let (first, second) = (Vector::new(x1, y1), Vector::new(x2, y2));
         let length = (second - first).length();
         // The engine's distance limits only stop stretching, so a stiff
@@ -1049,13 +1069,13 @@ impl World {
         &self,
         a: &Body,
         b: &Body,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
+        anchor1: impl Into<Vec2>,
+        anchor2: impl Into<Vec2>,
         stiffness: f32,
         damping: f32,
     ) -> Joint {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         let (first, second) = (Vector::new(x1, y1), Vector::new(x2, y2));
         let joint = SpringJointBuilder::new((second - first).length(), stiffness, damping)
             .local_anchor1(a.pose().inverse_transform_point(first))
@@ -1076,12 +1096,15 @@ impl World {
         &self,
         a: &Body,
         b: &Body,
-        x: f32,
-        y: f32,
-        axis_x: f32,
-        axis_y: f32,
+        position: impl Into<Vec2>,
+        axis: impl Into<Vec2>,
         collide: bool,
     ) -> Joint {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: axis_x,
+            y: axis_y,
+        } = axis.into();
         let axis = Vector::new(axis_x, axis_y);
         assert!(
             axis.length() > 0.0,
@@ -1114,12 +1137,15 @@ impl World {
         &self,
         a: &Body,
         b: &Body,
-        x: f32,
-        y: f32,
-        axis_x: f32,
-        axis_y: f32,
+        position: impl Into<Vec2>,
+        axis: impl Into<Vec2>,
         collide: bool,
     ) -> Joint {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: axis_x,
+            y: axis_y,
+        } = axis.into();
         let axis = Vector::new(axis_x, axis_y);
         assert!(
             axis.length() > 0.0,
@@ -1144,7 +1170,8 @@ impl World {
     /// there, like a rubber band. Move the target with
     /// [`Joint::set_target`] to drag the body around with the mouse, and
     /// destroy the joint to let go.
-    pub fn new_mouse_joint(&self, body: &Body, x: f32, y: f32) -> Joint {
+    pub fn new_mouse_joint(&self, body: &Body, position: impl Into<Vec2>) -> Joint {
+        let Vec2 { x, y } = position.into();
         let ground = self.ground();
         let (stiffness, damping) = joint::spring(5.0, 0.7);
         let max_force = 1000.0 * body.mass() * self.meter();
@@ -1164,7 +1191,14 @@ impl World {
     /// [torque](Joint::set_max_torque), which start at 0. This is
     /// friction for games seen from above: join each thing to the ground
     /// at its center.
-    pub fn new_friction_joint(&self, a: &Body, b: &Body, x: f32, y: f32, collide: bool) -> Joint {
+    pub fn new_friction_joint(
+        &self,
+        a: &Body,
+        b: &Body,
+        position: impl Into<Vec2>,
+        collide: bool,
+    ) -> Joint {
+        let Vec2 { x, y } = position.into();
         let anchor = Vector::new(x, y);
         let mut joint = GenericJointBuilder::new(JointAxesMask::empty())
             .local_anchor1(a.pose().inverse_transform_point(anchor))
@@ -1222,17 +1256,23 @@ impl World {
         &self,
         a: &Body,
         b: &Body,
-        ground_x1: f32,
-        ground_y1: f32,
-        ground_x2: f32,
-        ground_y2: f32,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
+        ground1: impl Into<Vec2>,
+        ground2: impl Into<Vec2>,
+        anchor1: impl Into<Vec2>,
+        anchor2: impl Into<Vec2>,
         ratio: f32,
         collide: bool,
     ) -> Joint {
+        let Vec2 {
+            x: ground_x1,
+            y: ground_y1,
+        } = ground1.into();
+        let Vec2 {
+            x: ground_x2,
+            y: ground_y2,
+        } = ground2.into();
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         assert!(
             ratio.is_finite() && ratio > 0.0,
             "a pulley's ratio must be positive, got {ratio}"
@@ -1421,14 +1461,14 @@ impl World {
             }
         }
         for (x, y, radius) in circles {
-            graphics::circle(DrawMode::Line, x, y, radius);
+            graphics::circle(DrawMode::Line, (x, y), radius);
         }
         for polygon in polygons {
             graphics::polygon(DrawMode::Line, &polygon);
         }
         for line in lines {
             for pair in line.windows(2) {
-                graphics::line(pair[0].0, pair[0].1, pair[1].0, pair[1].1);
+                graphics::line((pair[0].0, pair[0].1), (pair[1].0, pair[1].1));
             }
         }
     }

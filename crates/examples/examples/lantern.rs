@@ -183,7 +183,7 @@ struct Lantern {
     player: (f32, f32),
     /// The angle the lantern points at.
     aim: f32,
-    last_mouse: (f32, f32),
+    last_mouse: smitten::Vec2,
     /// Whether the mouse was the last thing to point the lantern.
     aim_at_mouse: bool,
     shades: Vec<Shade>,
@@ -366,7 +366,7 @@ impl Lantern {
                         // Each shade has its own voice and its own place
                         // in the breath.
                         voice.set_pitch(0.8 + 0.12 * self.shades.len() as f32);
-                        voice.set_position(x, y, 0.0);
+                        voice.set_position((x, y, 0.0));
                         voice.set_attenuation_distances(70.0, 700.0);
                         voice.play();
                         voice.seek(math::random_range(0.0, 1.9) as f64);
@@ -423,9 +423,12 @@ impl Lantern {
 
     /// Which way the player wants to walk, no longer than 1.
     fn walking(&self) -> (f32, f32) {
-        let (mut x, mut y) = keyboard::direction();
+        let smitten::Vec2 { mut x, mut y } = keyboard::direction();
         if let Some(pad) = joystick::gamepads().first() {
-            let (stick_x, stick_y) = pad.left_stick(0.25);
+            let smitten::Vec2 {
+                x: stick_x,
+                y: stick_y,
+            } = pad.left_stick(0.25);
             x += stick_x;
             y += stick_y;
         }
@@ -442,10 +445,10 @@ impl Lantern {
             self.aim_at_mouse = true;
         }
         if self.aim_at_mouse {
-            self.aim = (mouse.1 - self.player.1).atan2(mouse.0 - self.player.0);
+            self.aim = (mouse.y - self.player.1).atan2(mouse.x - self.player.0);
         }
         if let Some(pad) = joystick::gamepads().first() {
-            let (x, y) = pad.right_stick(0.4);
+            let smitten::Vec2 { x, y } = pad.right_stick(0.4);
             if (x, y) != (0.0, 0.0) {
                 self.aim_at_mouse = false;
                 self.aim = y.atan2(x);
@@ -538,7 +541,7 @@ impl Lantern {
             let wanted = if shade.moving { 1.0 } else { 0.0 };
             shade.loudness += (wanted - shade.loudness) * (dt * 6.0).min(1.0);
             shade.voice.set_volume(shade.loudness);
-            shade.voice.set_position(shade.x, shade.y, 0.0);
+            shade.voice.set_position((shade.x, shade.y, 0.0));
             if shade.muffled == in_sight {
                 shade.muffled = !in_sight;
                 shade
@@ -607,14 +610,18 @@ impl Lantern {
                 if wall {
                     let shade = 0.5 + grain * 0.12;
                     graphics::set_color(Color::rgb(shade * 0.85, shade * 0.8, shade));
-                    graphics::rectangle(DrawMode::Fill, x, y, TILE, TILE);
+                    graphics::rectangle(DrawMode::Fill, (x, y), (TILE, TILE));
                     // A lighter cap, so the walls read as standing up.
                     graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.12));
-                    graphics::rectangle(DrawMode::Fill, x, y, TILE, 6.0);
+                    graphics::rectangle(DrawMode::Fill, (x, y), (TILE, 6.0));
                 } else {
                     let shade = 0.36 + grain * 0.14;
                     graphics::set_color(Color::rgb(shade, shade * 0.93, shade * 0.86));
-                    graphics::rectangle(DrawMode::Fill, x + 1.0, y + 1.0, TILE - 2.0, TILE - 2.0);
+                    graphics::rectangle(
+                        DrawMode::Fill,
+                        (x + 1.0, y + 1.0),
+                        (TILE - 2.0, TILE - 2.0),
+                    );
                 }
             }
         }
@@ -627,20 +634,30 @@ impl Lantern {
         } else {
             Color::rgb(0.3, 0.2, 0.15)
         });
-        graphics::rounded_rectangle(DrawMode::Fill, x - 15.0, y - 17.0, 30.0, 34.0, 12.0, 12.0);
+        graphics::rounded_rectangle(
+            DrawMode::Fill,
+            (x - 15.0, y - 17.0),
+            (30.0, 34.0),
+            (12.0, 12.0),
+        );
         graphics::set_color(Color::rgb(0.12, 0.1, 0.1));
         if open {
-            graphics::rounded_rectangle(DrawMode::Fill, x - 9.0, y - 11.0, 18.0, 28.0, 8.0, 8.0);
+            graphics::rounded_rectangle(
+                DrawMode::Fill,
+                (x - 9.0, y - 11.0),
+                (18.0, 28.0),
+                (8.0, 8.0),
+            );
         } else {
-            graphics::circle(DrawMode::Fill, x + 6.0, y + 2.0, 2.5);
+            graphics::circle(DrawMode::Fill, (x + 6.0, y + 2.0), 2.5);
         }
 
         for ember in self.embers.iter().filter(|ember| !ember.taken) {
             let pulse = 0.5 + 0.5 * (self.time * 4.0 + ember.x).sin();
             graphics::set_color(Color::rgb(1.0, 0.55, 0.15));
-            graphics::circle(DrawMode::Fill, ember.x, ember.y, 6.0 + pulse * 1.5);
+            graphics::circle(DrawMode::Fill, (ember.x, ember.y), 6.0 + pulse * 1.5);
             graphics::set_color(Color::rgb(1.0, 0.9, 0.5));
-            graphics::circle(DrawMode::Fill, ember.x, ember.y, 3.0);
+            graphics::circle(DrawMode::Fill, (ember.x, ember.y), 3.0);
         }
 
         // Shades are part of the room, so they show only where light
@@ -654,7 +671,7 @@ impl Lantern {
             let sway = (self.time * 3.0 + shade.seed).sin() * if shade.lit { 0.0 } else { 1.5 };
             let (x, y) = (shade.x + sway, shade.y);
             graphics::set_color(Color::rgb(0.75, 0.7, 0.9));
-            graphics::circle(DrawMode::Fill, x, y - 2.0, SHADE_RADIUS);
+            graphics::circle(DrawMode::Fill, (x, y - 2.0), SHADE_RADIUS);
             graphics::polygon(
                 DrawMode::Fill,
                 &[
@@ -668,8 +685,8 @@ impl Lantern {
                 ],
             );
             graphics::set_color(Color::rgb(0.1, 0.05, 0.15));
-            graphics::ellipse(DrawMode::Fill, x - 5.0, y - 3.0, 2.5, 4.0);
-            graphics::ellipse(DrawMode::Fill, x + 5.0, y - 3.0, 2.5, 4.0);
+            graphics::ellipse(DrawMode::Fill, (x - 5.0, y - 3.0), (2.5, 4.0));
+            graphics::ellipse(DrawMode::Fill, (x + 5.0, y - 3.0), (2.5, 4.0));
         }
     }
 
@@ -683,7 +700,7 @@ impl Lantern {
                 (left + width, top + height),
                 (left, top + height),
             ];
-            graphics::shadow(x, y, &corners, SHADOW_LENGTH);
+            graphics::shadow((x, y), &corners, SHADOW_LENGTH);
         }
     }
 
@@ -697,10 +714,8 @@ impl Lantern {
         graphics::set_color(color);
         graphics::rectangle(
             DrawMode::Fill,
-            x - reach,
-            y - reach,
-            reach * 2.0,
-            reach * 2.0,
+            (x - reach, y - reach),
+            (reach * 2.0, reach * 2.0),
         );
     }
 
@@ -772,8 +787,8 @@ impl Lantern {
             };
             let alpha = (1.0 - distance / 260.0) * 0.85 * blink;
             graphics::set_color(Color::rgb(1.0, 0.25, 0.2).with_alpha(alpha));
-            graphics::circle(DrawMode::Fill, shade.x - 5.0, shade.y - 3.0, 1.8);
-            graphics::circle(DrawMode::Fill, shade.x + 5.0, shade.y - 3.0, 1.8);
+            graphics::circle(DrawMode::Fill, (shade.x - 5.0, shade.y - 3.0), 1.8);
+            graphics::circle(DrawMode::Fill, (shade.x + 5.0, shade.y - 3.0), 1.8);
         }
 
         let (x, y) = self.player;
@@ -782,13 +797,13 @@ impl Lantern {
             return;
         }
         graphics::set_color(Color::rgb(0.25, 0.3, 0.45));
-        graphics::circle(DrawMode::Fill, x, y, PLAYER_RADIUS);
+        graphics::circle(DrawMode::Fill, (x, y), PLAYER_RADIUS);
         graphics::set_color(Color::rgb(0.9, 0.8, 0.7));
-        graphics::circle(DrawMode::Fill, x, y - 2.0, 5.0);
+        graphics::circle(DrawMode::Fill, (x, y - 2.0), 5.0);
         // The lantern, held out toward where it shines.
         let (lx, ly) = (x + self.aim.cos() * 12.0, y + self.aim.sin() * 12.0);
         graphics::set_color(Color::rgb(1.0, 0.85, 0.45));
-        graphics::circle(DrawMode::Fill, lx, ly, 4.0);
+        graphics::circle(DrawMode::Fill, (lx, ly), 4.0);
     }
 
     fn draw_hud(&self) {
@@ -803,8 +818,7 @@ impl Lantern {
                 self.embers.len(),
                 self.time
             ),
-            12.0,
-            10.0,
+            (12.0, 10.0),
         );
         for heart in 0..HEARTS {
             let alpha = if heart < self.hearts { 1.0 } else { 0.18 };
@@ -829,13 +843,12 @@ impl Lantern {
             };
             let alpha = (7.0 - self.room_time).min(1.0) * 0.85;
             graphics::set_color(Color::WHITE.with_alpha(alpha));
-            graphics::printf(hint, 0.0, HEIGHT - 32.0, WIDTH, Align::Center);
+            graphics::printf(hint, (0.0, HEIGHT - 32.0), WIDTH, Align::Center);
         } else if self.state == State::Playing && self.door_is_open() {
             graphics::set_color(Color::rgb(0.5, 1.0, 0.7).with_alpha(0.85));
             graphics::printf(
                 "The door is open.",
-                0.0,
-                HEIGHT - 32.0,
+                (0.0, HEIGHT - 32.0),
                 WIDTH,
                 Align::Center,
             );
@@ -843,14 +856,14 @@ impl Lantern {
 
         if self.hurt > 0.0 {
             graphics::set_color(Color::rgb(0.8, 0.05, 0.05).with_alpha(self.hurt * 0.5));
-            graphics::rectangle(DrawMode::Fill, 0.0, 0.0, WIDTH, HEIGHT);
+            graphics::rectangle(DrawMode::Fill, (0.0, 0.0), (WIDTH, HEIGHT));
         }
 
         if self.state == State::Playing {
             return;
         }
         graphics::set_color(Color::BLACK.with_alpha(0.6));
-        graphics::rectangle(DrawMode::Fill, 0.0, 0.0, WIDTH, HEIGHT);
+        graphics::rectangle(DrawMode::Fill, (0.0, 0.0), (WIDTH, HEIGHT));
         graphics::set_color(Color::WHITE);
         graphics::set_font(&self.big_font);
         let won = self.state == State::Won;
@@ -859,25 +872,23 @@ impl Lantern {
         } else {
             "The dark took you."
         };
-        graphics::printf(title, 0.0, 190.0, WIDTH, Align::Center);
+        graphics::printf(title, (0.0, 190.0), WIDTH, Align::Center);
         graphics::set_font(&self.small_font);
         if won {
             graphics::printf(
                 &format!("It took {:.1} seconds.", self.time),
-                0.0,
-                260.0,
+                (0.0, 260.0),
                 WIDTH,
                 Align::Center,
             );
             if self.new_record {
                 graphics::set_color(Color::rgb(1.0, 0.85, 0.3));
-                graphics::printf("A new best!", 0.0, 288.0, WIDTH, Align::Center);
+                graphics::printf("A new best!", (0.0, 288.0), WIDTH, Align::Center);
             } else if let Some(best) = self.best {
                 graphics::set_color(Color::WHITE.with_alpha(0.7));
                 graphics::printf(
                     &format!("Your best is {best:.1}."),
-                    0.0,
-                    288.0,
+                    (0.0, 288.0),
                     WIDTH,
                     Align::Center,
                 );
@@ -886,8 +897,7 @@ impl Lantern {
         graphics::set_color(Color::WHITE.with_alpha(0.7));
         graphics::printf(
             "Space to try again.  Escape to quit.",
-            0.0,
-            340.0,
+            (0.0, 340.0),
             WIDTH,
             Align::Center,
         );
@@ -960,7 +970,7 @@ impl Game for Lantern {
         self.walk(walk_x * PLAYER_SPEED * dt, walk_y * PLAYER_SPEED * dt);
         self.take_aim();
         // The player is the one listening.
-        audio::set_position(self.player.0, self.player.1, 0.0);
+        audio::set_position((self.player.0, self.player.1, 0.0));
 
         if walk_x != 0.0 || walk_y != 0.0 {
             self.until_step -= dt;
@@ -1022,7 +1032,7 @@ impl Game for Lantern {
         // hides it.
         graphics::set_color(Color::WHITE);
         graphics::set_blend_mode(BlendMode::Multiply);
-        graphics::draw(&self.light_map, 0.0, 0.0);
+        graphics::draw(&self.light_map, (0.0, 0.0));
         graphics::set_blend_mode(BlendMode::Alpha);
         self.draw_over_the_dark();
         self.draw_hud();

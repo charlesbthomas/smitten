@@ -4,6 +4,7 @@
 //! in: units from the top-left corner of the window, or of the design
 //! area when the game has a design size.
 
+use glam::Vec2;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -14,18 +15,18 @@ use crate::graphics::{ImageData, ImageError};
 use crate::{Cursor, MouseButton};
 
 /// The pointer's position as `(x, y)`.
-pub fn position() -> (f32, f32) {
-    context::with(|ctx| ctx.input.mouse_position)
+pub fn position() -> Vec2 {
+    context::with(|ctx| ctx.input.mouse_position).into()
 }
 
 /// The pointer's horizontal position.
 pub fn x() -> f32 {
-    position().0
+    position().x
 }
 
 /// The pointer's vertical position.
 pub fn y() -> f32 {
-    position().1
+    position().y
 }
 
 /// Returns whether `button` is currently held.
@@ -65,7 +66,8 @@ pub fn is_visible() -> bool {
 
 /// Moves the pointer to `(x, y)`, in the same coordinates as
 /// [`position`]. A `mouse_moved` callback follows.
-pub fn set_position(x: f32, y: f32) {
+pub fn set_position(position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     context::with(|ctx| {
         let view = ctx.gfx.screen.view();
         ctx.backend
@@ -75,12 +77,12 @@ pub fn set_position(x: f32, y: f32) {
 
 /// Moves the pointer horizontally, keeping its vertical position.
 pub fn set_x(x: f32) {
-    set_position(x, self::y());
+    set_position((x, self::y()));
 }
 
 /// Moves the pointer vertically, keeping its horizontal position.
 pub fn set_y(y: f32) {
-    set_position(self::x(), y);
+    set_position((self::x(), y));
 }
 
 /// Chooses one of the operating system's cursors, the equivalent of

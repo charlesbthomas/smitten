@@ -1,3 +1,4 @@
+use glam::Vec2;
 /// A 2D affine transformation: any mix of moving, rotating, scaling and
 /// shearing, the equivalent of LÖVE's `Transform`.
 ///
@@ -11,13 +12,14 @@
 /// transforms, `outer * inner`, applies `inner` first.
 ///
 /// ```
+/// use smitten::Vec2;
 /// use smitten::graphics::Transform;
 ///
 /// let mut transform = Transform::from_transformation(100.0, 50.0, 0.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0);
-/// assert_eq!(transform.transform_point(1.0, 1.0), (102.0, 52.0));
-/// assert_eq!(transform.inverse_transform_point(102.0, 52.0), (1.0, 1.0));
-/// transform.translate(10.0, 0.0);
-/// assert_eq!(transform.transform_point(0.0, 0.0), (120.0, 50.0));
+/// assert_eq!(transform.transform_point((1.0, 1.0)), Vec2::new(102.0, 52.0));
+/// assert_eq!(transform.inverse_transform_point((102.0, 52.0)), Vec2::new(1.0, 1.0));
+/// transform.translate((10.0, 0.0));
+/// assert_eq!(transform.transform_point(Vec2::ZERO), Vec2::new(120.0, 50.0));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
@@ -87,11 +89,11 @@ impl Transform {
         ky: f32,
     ) {
         *self = Self::IDENTITY;
-        self.translate(x, y);
+        self.translate((x, y));
         self.rotate(angle);
         self.scale(sx, sy);
-        self.shear(kx, ky);
-        self.translate(-ox, -oy);
+        self.shear((kx, ky));
+        self.translate((-ox, -oy));
     }
 
     /// Puts this back to the identity.
@@ -103,10 +105,10 @@ impl Transform {
     /// rotate around the origin offset `(ox, oy)`, then place it at `(x, y)`.
     pub fn from_draw_args(x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) -> Self {
         let mut transform = Self::IDENTITY;
-        transform.translate(x, y);
+        transform.translate((x, y));
         transform.rotate(r);
         transform.scale(sx, sy);
-        transform.translate(-ox, -oy);
+        transform.translate((-ox, -oy));
         transform
     }
 
@@ -114,7 +116,8 @@ impl Transform {
     ///
     /// Like the other methods here, this affects what is drawn afterwards
     /// and is itself affected by the rotation and scale applied before it.
-    pub fn translate(&mut self, dx: f32, dy: f32) {
+    pub fn translate(&mut self, delta: impl Into<Vec2>) {
+        let Vec2 { x: dx, y: dy } = delta.into();
         self.tx += self.a * dx + self.c * dy;
         self.ty += self.b * dx + self.d * dy;
     }
@@ -139,7 +142,8 @@ impl Transform {
 
     /// Shears the coordinate system: x gains `kx` times y, and y gains `ky`
     /// times x.
-    pub fn shear(&mut self, kx: f32, ky: f32) {
+    pub fn shear(&mut self, shear: impl Into<Vec2>) {
+        let Vec2 { x: kx, y: ky } = shear.into();
         let (a, b, c, d) = (self.a, self.b, self.c, self.d);
         self.a = a + c * ky;
         self.b = b + d * ky;
@@ -179,17 +183,19 @@ impl Transform {
 
     /// Transforms the point `(x, y)`. The same as [`apply`](Self::apply),
     /// under LÖVE's name.
-    pub fn transform_point(&self, x: f32, y: f32) -> (f32, f32) {
-        self.apply(x, y)
+    pub fn transform_point(&self, position: impl Into<Vec2>) -> Vec2 {
+        let Vec2 { x, y } = position.into();
+        self.apply((x, y))
     }
 
     /// Finds the point that this transformation moves to `(x, y)`, such as
     /// where in the game's world the mouse is. Without an
     /// [`inverse`](Self::inverse) the result is not finite.
-    pub fn inverse_transform_point(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn inverse_transform_point(&self, position: impl Into<Vec2>) -> Vec2 {
+        let Vec2 { x, y } = position.into();
         match self.inverse() {
-            Some(inverse) => inverse.apply(x, y),
-            None => (f32::NAN, f32::NAN),
+            Some(inverse) => inverse.apply((x, y)),
+            None => (f32::NAN, f32::NAN).into(),
         }
     }
 
@@ -244,11 +250,13 @@ impl Transform {
     }
 
     /// Transforms the point `(x, y)`.
-    pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn apply(&self, position: impl Into<Vec2>) -> Vec2 {
+        let Vec2 { x, y } = position.into();
         (
             self.a * x + self.c * y + self.tx,
             self.b * x + self.d * y + self.ty,
         )
+            .into()
     }
 }
 
@@ -273,16 +281,17 @@ mod tests {
     use super::*;
     use std::f32::consts::FRAC_PI_2;
 
-    fn assert_close(actual: (f32, f32), expected: (f32, f32)) {
+    fn assert_close(actual: impl Into<Vec2>, expected: impl Into<Vec2>) {
+        let (actual, expected) = (actual.into(), expected.into());
         assert!(
-            (actual.0 - expected.0).abs() < 1e-4 && (actual.1 - expected.1).abs() < 1e-4,
+            actual.abs_diff_eq(expected, 1e-4),
             "expected {expected:?}, got {actual:?}"
         );
     }
 
     #[test]
     fn identity_leaves_points_alone() {
-        assert_close(Transform::IDENTITY.apply(3.0, -4.0), (3.0, -4.0));
+        assert_close(Transform::IDENTITY.apply((3.0, -4.0)), (3.0, -4.0));
     }
 
     #[test]
@@ -290,8 +299,8 @@ mod tests {
         // As in LÖVE: after scaling by 2, a translation of 10 moves 20 pixels.
         let mut transform = Transform::IDENTITY;
         transform.scale(2.0, 2.0);
-        transform.translate(10.0, 0.0);
-        assert_close(transform.apply(1.0, 1.0), (22.0, 2.0));
+        transform.translate((10.0, 0.0));
+        assert_close(transform.apply((1.0, 1.0)), (22.0, 2.0));
     }
 
     #[test]
@@ -299,7 +308,7 @@ mod tests {
         // With y pointing down the screen, this is clockwise.
         let mut transform = Transform::IDENTITY;
         transform.rotate(FRAC_PI_2);
-        assert_close(transform.apply(1.0, 0.0), (0.0, 1.0));
+        assert_close(transform.apply((1.0, 0.0)), (0.0, 1.0));
     }
 
     #[test]
@@ -307,61 +316,61 @@ mod tests {
         // A 10x10 sprite centered on (100, 100) and turned a quarter: its
         // center stays put and its top-left corner swings to the top-right.
         let transform = Transform::from_draw_args(100.0, 100.0, FRAC_PI_2, 1.0, 1.0, 5.0, 5.0);
-        assert_close(transform.apply(5.0, 5.0), (100.0, 100.0));
-        assert_close(transform.apply(0.0, 0.0), (105.0, 95.0));
+        assert_close(transform.apply((5.0, 5.0)), (100.0, 100.0));
+        assert_close(transform.apply((0.0, 0.0)), (105.0, 95.0));
     }
 
     #[test]
     fn then_inner_matches_applying_one_after_the_other() {
         let mut outer = Transform::IDENTITY;
-        outer.translate(7.0, -2.0);
+        outer.translate((7.0, -2.0));
         outer.rotate(0.6);
         let mut inner = Transform::IDENTITY;
         inner.scale(3.0, 0.5);
-        inner.translate(1.0, 4.0);
+        inner.translate((1.0, 4.0));
 
-        let (ix, iy) = inner.apply(2.0, 9.0);
+        let Vec2 { x: ix, y: iy } = inner.apply((2.0, 9.0));
         assert_close(
-            outer.then_inner(&inner).apply(2.0, 9.0),
-            outer.apply(ix, iy),
+            outer.then_inner(&inner).apply((2.0, 9.0)),
+            outer.apply((ix, iy)),
         );
     }
 
     #[test]
     fn shear_moves_x_by_y() {
         let mut transform = Transform::IDENTITY;
-        transform.shear(0.5, 0.0);
-        assert_close(transform.apply(0.0, 2.0), (1.0, 2.0));
-        assert_close(transform.apply(2.0, 0.0), (2.0, 0.0));
+        transform.shear((0.5, 0.0));
+        assert_close(transform.apply((0.0, 2.0)), (1.0, 2.0));
+        assert_close(transform.apply((2.0, 0.0)), (2.0, 0.0));
         let mut transform = Transform::IDENTITY;
-        transform.shear(0.0, 0.25);
-        assert_close(transform.apply(4.0, 0.0), (4.0, 1.0));
+        transform.shear((0.0, 0.25));
+        assert_close(transform.apply((4.0, 0.0)), (4.0, 1.0));
     }
 
     #[test]
     fn full_transformation_matches_the_steps_in_loves_order() {
         let built = Transform::from_transformation(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0, 0.2, 0.1);
         let mut by_hand = Transform::IDENTITY;
-        by_hand.translate(30.0, 40.0);
+        by_hand.translate((30.0, 40.0));
         by_hand.rotate(0.7);
         by_hand.scale(2.0, 3.0);
-        by_hand.shear(0.2, 0.1);
-        by_hand.translate(-5.0, -6.0);
-        assert_close(built.apply(1.5, -2.0), by_hand.apply(1.5, -2.0));
+        by_hand.shear((0.2, 0.1));
+        by_hand.translate((-5.0, -6.0));
+        assert_close(built.apply((1.5, -2.0)), by_hand.apply((1.5, -2.0)));
         // Without a shear it is what the draw arguments describe.
         let plain = Transform::from_transformation(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0, 0.0, 0.0);
         let draw = Transform::from_draw_args(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0);
-        assert_close(plain.apply(9.0, 1.0), draw.apply(9.0, 1.0));
+        assert_close(plain.apply((9.0, 1.0)), draw.apply((9.0, 1.0)));
     }
 
     #[test]
     fn inverse_undoes_the_transformation() {
         let transform =
             Transform::from_transformation(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0, 0.2, 0.1);
-        let (x, y) = transform.apply(7.0, -3.0);
-        assert_close(transform.inverse_transform_point(x, y), (7.0, -3.0));
+        let Vec2 { x, y } = transform.apply((7.0, -3.0));
+        assert_close(transform.inverse_transform_point((x, y)), (7.0, -3.0));
         let round_trip = transform * transform.inverse().unwrap();
-        assert_close(round_trip.apply(11.0, 12.0), (11.0, 12.0));
+        assert_close(round_trip.apply((11.0, 12.0)), (11.0, 12.0));
     }
 
     #[test]
@@ -369,7 +378,7 @@ mod tests {
         let mut transform = Transform::IDENTITY;
         transform.scale(0.0, 1.0);
         assert!(transform.inverse().is_none());
-        assert!(transform.inverse_transform_point(1.0, 1.0).0.is_nan());
+        assert!(transform.inverse_transform_point((1.0, 1.0)).x.is_nan());
     }
 
     #[test]
@@ -380,10 +389,10 @@ mod tests {
         applied.apply_transform(&inner);
         let mut assigned = outer;
         assigned *= inner;
-        let expected = outer.then_inner(&inner).apply(5.0, 6.0);
-        assert_close(applied.apply(5.0, 6.0), expected);
-        assert_close(assigned.apply(5.0, 6.0), expected);
-        assert_close((outer * inner).apply(5.0, 6.0), expected);
+        let expected = outer.then_inner(&inner).apply((5.0, 6.0));
+        assert_close(applied.apply((5.0, 6.0)), expected);
+        assert_close(assigned.apply((5.0, 6.0)), expected);
+        assert_close((outer * inner).apply((5.0, 6.0)), expected);
     }
 
     #[test]

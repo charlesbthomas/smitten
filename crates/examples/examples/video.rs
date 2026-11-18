@@ -73,9 +73,9 @@ impl Game for Player {
         let bar_w = video_w as f32 * scale;
         let through = (self.video.tell() / self.video.duration()) as f32;
         graphics::set_color(Color::rgb(0.25, 0.25, 0.3));
-        graphics::rectangle(DrawMode::Fill, x, bar_y, bar_w, 8.0);
+        graphics::rectangle(DrawMode::Fill, (x, bar_y), (bar_w, 8.0));
         graphics::set_color(Color::rgb(0.95, 0.6, 0.3));
-        graphics::rectangle(DrawMode::Fill, x, bar_y, bar_w * through, 8.0);
+        graphics::rectangle(DrawMode::Fill, (x, bar_y), (bar_w * through, 8.0));
 
         graphics::set_color(Color::WHITE);
         let state = if self.video.is_playing() {
@@ -90,8 +90,7 @@ impl Game for Player {
                 self.video.duration(),
                 if self.tone_on { "on" } else { "off" },
             ),
-            x,
-            bar_y + 24.0,
+            (x, bar_y + 24.0),
         );
     }
 

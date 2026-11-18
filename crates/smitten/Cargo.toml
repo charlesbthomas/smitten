@@ -23,6 +23,8 @@ video = ["dep:theora-rs", "dep:ogg"]
 
 [dependencies]
 smitten-core.workspace = true
+# Vec2 and friends, re-exported as smitten::math::Vec2.
+glam = "0.34"
 smitten-sdl.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tga"] }
 fontdue = "0.9"

@@ -2,6 +2,7 @@
 
 use crate::Key;
 use crate::context;
+use glam::Vec2;
 
 /// Returns whether `key` is currently held.
 pub fn is_down(key: Key) -> bool {
@@ -29,10 +30,10 @@ pub fn axis(negative: &[Key], positive: &[Key]) -> f32 {
 /// walking diagonally is no faster than walking straight.
 ///
 /// LÖVE has no such call; nearly every game writes it out by hand.
-pub fn direction() -> (f32, f32) {
+pub fn direction() -> Vec2 {
     let x = axis(&[Key::Left, Key::A], &[Key::Right, Key::D]);
     let y = axis(&[Key::Up, Key::W], &[Key::Down, Key::S]);
-    crate::input::limit_length(x, y)
+    crate::input::limit_length(x, y).into()
 }
 
 /// Which key the player's keyboard layout puts at the position `key`
@@ -105,7 +106,12 @@ pub fn set_text_input(enabled: bool) {
 /// as [`mouse::position`](crate::mouse::position), the equivalent of
 /// `love.keyboard.setTextInput(true, x, y, w, h)`. Input methods put
 /// their window beside it, and screen keyboards try not to cover it.
-pub fn set_text_input_area(x: f32, y: f32, width: f32, height: f32) {
+pub fn set_text_input_area(position: impl Into<Vec2>, size: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
+    let Vec2 {
+        x: width,
+        y: height,
+    } = size.into();
     context::with(|ctx| {
         let view = ctx.gfx.screen.view();
         let area = [

@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -200,7 +201,8 @@ impl Fixture {
     }
 
     /// Whether the fixture covers the world point `(x, y)`.
-    pub fn test_point(&self, x: f32, y: f32) -> bool {
+    pub fn test_point(&self, position: impl Into<Vec2>) -> bool {
+        let Vec2 { x, y } = position.into();
         self.read(|collider| {
             collider
                 .shape()
@@ -278,7 +280,9 @@ impl Fixture {
     /// fixture, if it does. A line that starts inside it hits at once,
     /// with a fraction of 0. LÖVE's `Fixture:rayCast`, with the hit point
     /// worked out too.
-    pub fn ray_cast(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Option<RayHit> {
+    pub fn ray_cast(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Option<RayHit> {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         let direction = Vector::new(x2 - x1, y2 - y1);
         let ray = Ray::new(Vector::new(x1, y1), direction);
         let hit = self.read(|collider| {

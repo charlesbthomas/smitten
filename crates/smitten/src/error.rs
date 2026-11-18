@@ -77,7 +77,7 @@ pub struct ErrorReport {
 ///     let text = format!("Oops!\n\n{}", report.message);
 ///     Some(move || {
 ///         graphics::clear(Color::rgb(0.2, 0.0, 0.0));
-///         graphics::print(&text, 40.0, 40.0);
+///         graphics::print(&text, (40.0, 40.0));
 ///     })
 /// });
 /// ```

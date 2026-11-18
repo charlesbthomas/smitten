@@ -20,11 +20,16 @@ struct Shapes;
 
 fn draw_row(mode: DrawMode, y: f32, sweep: f32) {
     let center = |column: usize| 75.0 + column as f32 * COLUMN;
-    graphics::rectangle(mode, center(0) - 45.0, y - 35.0, 90.0, 70.0);
-    graphics::rounded_rectangle(mode, center(1) - 45.0, y - 35.0, 90.0, 70.0, 18.0, 18.0);
-    graphics::circle(mode, center(2), y, 40.0);
-    graphics::ellipse(mode, center(3), y, 50.0, 28.0);
-    graphics::arc(mode, ArcType::Pie, center(4), y, 42.0, 0.0, sweep);
+    graphics::rectangle(mode, (center(0) - 45.0, y - 35.0), (90.0, 70.0));
+    graphics::rounded_rectangle(
+        mode,
+        (center(1) - 45.0, y - 35.0),
+        (90.0, 70.0),
+        (18.0, 18.0),
+    );
+    graphics::circle(mode, (center(2), y), 40.0);
+    graphics::ellipse(mode, (center(3), y), (50.0, 28.0));
+    graphics::arc(mode, ArcType::Pie, (center(4), y), 42.0, 0.0, sweep);
     graphics::polygon(
         mode,
         &[
@@ -58,7 +63,7 @@ impl Game for Shapes {
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.7));
         for (column, name) in NAMES.iter().enumerate() {
             let x = 10.0 + column as f32 * COLUMN;
-            graphics::printf(name, x, 285.0, COLUMN, Align::Center);
+            graphics::printf(name, (x, 285.0), COLUMN, Align::Center);
         }
 
         // The three ways an outlined arc can end.
@@ -70,8 +75,8 @@ impl Game for Shapes {
         ];
         for (index, (kind, name)) in kinds.into_iter().enumerate() {
             let x = 75.0 + index as f32 * COLUMN;
-            graphics::arc(DrawMode::Line, kind, x, 390.0, 42.0, -0.5, sweep - 0.5);
-            graphics::printf(name, x - 65.0, 445.0, COLUMN, Align::Center);
+            graphics::arc(DrawMode::Line, kind, (x, 390.0), 42.0, -0.5, sweep - 0.5);
+            graphics::printf(name, (x - 65.0, 445.0), COLUMN, Align::Center);
         }
 
         // A line through many points, with joined corners.
@@ -85,7 +90,7 @@ impl Game for Shapes {
             })
             .collect();
         graphics::polyline(&wave);
-        graphics::printf("polyline", 440.0, 445.0, 320.0, Align::Center);
+        graphics::printf("polyline", (440.0, 445.0), 320.0, Align::Center);
 
         // Points, here placed around a spiral.
         graphics::set_color(Color::WHITE);
@@ -99,7 +104,7 @@ impl Game for Shapes {
             })
             .collect();
         graphics::points(&spiral);
-        graphics::printf("points", 480.0, 522.0, 100.0, Align::Left);
+        graphics::printf("points", (480.0, 522.0), 100.0, Align::Left);
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {

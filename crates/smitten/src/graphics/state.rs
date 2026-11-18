@@ -179,7 +179,7 @@ mod tests {
     fn push_saves_only_the_transform() {
         let mut gfx = GraphicsState::default();
         gfx.push_state(StackType::Transform);
-        gfx.transform.translate(10.0, 0.0);
+        gfx.transform.translate((10.0, 0.0));
         gfx.color = Color::rgb(1.0, 0.0, 0.0);
         gfx.pop_state();
         assert_eq!(gfx.transform, Transform::IDENTITY);
@@ -190,7 +190,7 @@ mod tests {
     fn push_all_saves_every_setting() {
         let mut gfx = GraphicsState::default();
         gfx.push_state(StackType::All);
-        gfx.transform.translate(10.0, 0.0);
+        gfx.transform.translate((10.0, 0.0));
         gfx.color = Color::rgb(1.0, 0.0, 0.0);
         gfx.background = Color::WHITE;
         gfx.batch.blend = BlendMode::Add;

@@ -16,7 +16,7 @@ pub(crate) struct View {
 impl View {
     pub fn transform(&self) -> Transform {
         let mut transform = Transform::IDENTITY;
-        transform.translate(self.x, self.y);
+        transform.translate((self.x, self.y));
         transform.scale(self.scale, self.scale);
         transform
     }
@@ -181,6 +181,7 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec2;
 
     fn screen(config: Config, pixels: (u32, u32), display_scale: f32) -> Screen {
         let mut screen = Screen::new(&config);
@@ -206,8 +207,8 @@ mod tests {
         assert_eq!(screen.draw_scale(), 2.0);
         assert_eq!(screen.view().to_units(800.0, 600.0), (400.0, 300.0));
         assert_eq!(
-            screen.view().transform().apply(400.0, 300.0),
-            (800.0, 600.0)
+            screen.view().transform().apply((400.0, 300.0)),
+            Vec2::new(800.0, 600.0)
         );
     }
 

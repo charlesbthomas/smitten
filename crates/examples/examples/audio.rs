@@ -53,7 +53,7 @@ impl Game for Audio {
         ];
         graphics::set_color(Color::WHITE);
         for (row, line) in lines.iter().enumerate() {
-            graphics::print(line, 40.0, 40.0 + row as f32 * 28.0);
+            graphics::print(line, (40.0, 40.0 + row as f32 * 28.0));
         }
 
         // A bar showing how far through the music is.
@@ -63,9 +63,9 @@ impl Game for Audio {
             _ => 0.0,
         };
         graphics::set_color(Color::rgb(0.3, 0.32, 0.38));
-        graphics::rectangle(DrawMode::Fill, 40.0, 180.0, width, 12.0);
+        graphics::rectangle(DrawMode::Fill, (40.0, 180.0), (width, 12.0));
         graphics::set_color(Color::rgb(0.95, 0.35, 0.45));
-        graphics::rectangle(DrawMode::Fill, 40.0, 180.0, width * progress, 12.0);
+        graphics::rectangle(DrawMode::Fill, (40.0, 180.0), (width * progress, 12.0));
     }
 
     fn key_pressed(&mut self, key: Key, is_repeat: bool) {

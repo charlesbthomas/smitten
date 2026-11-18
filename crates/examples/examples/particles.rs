@@ -40,7 +40,7 @@ impl Game for Particles {
         let mut fire = ParticleSystem::new(&dot, 600);
         fire.set_emission_rate(220.0);
         fire.set_particle_lifetime(0.4, 0.9);
-        fire.set_emission_area(10.0, 4.0);
+        fire.set_emission_area((10.0, 4.0));
         fire.set_direction(-FRAC_PI_2);
         fire.set_spread(0.6);
         fire.set_speed(60.0, 160.0);
@@ -55,8 +55,8 @@ impl Game for Particles {
         let mut smoke = ParticleSystem::new(&dot, 200);
         smoke.set_emission_rate(25.0);
         smoke.set_particle_lifetime(2.0, 3.5);
-        smoke.set_position(0.0, -40.0);
-        smoke.set_emission_area(8.0, 4.0);
+        smoke.set_position((0.0, -40.0));
+        smoke.set_emission_area((8.0, 4.0));
         smoke.set_direction(-FRAC_PI_2);
         smoke.set_spread(0.5);
         smoke.set_speed(30.0, 60.0);
@@ -85,10 +85,15 @@ impl Game for Particles {
         // Born on a ring and pushed around it, while a pull towards the
         // middle draws them inwards and their spin changes as they age.
         let mut swirl = ParticleSystem::new(&dot, 800);
-        swirl.set_position(600.0, 360.0);
+        swirl.set_position((600.0, 360.0));
         swirl.set_emission_rate(160.0);
         swirl.set_particle_lifetime(1.5, 2.5);
-        swirl.set_emission_area_ex(AreaSpreadDistribution::BorderEllipse, 70.0, 70.0, 0.0, true);
+        swirl.set_emission_area_ex(
+            AreaSpreadDistribution::BorderEllipse,
+            (70.0, 70.0),
+            0.0,
+            true,
+        );
         swirl.set_direction(FRAC_PI_2);
         swirl.set_speed(40.0, 60.0);
         swirl.set_radial_acceleration(-40.0, -20.0);
@@ -117,26 +122,29 @@ impl Game for Particles {
     }
 
     fn draw(&mut self) {
-        let (x, y) = mouse::position();
+        let smitten::Vec2 { x, y } = mouse::position();
         graphics::set_color(Color::WHITE);
-        graphics::draw_particles(&self.smoke, x, y);
+        graphics::draw_particles(&self.smoke, (x, y));
 
         // Adding the particles together makes the middle of the fire and
         // the sparks glow where they overlap.
         graphics::set_blend_mode(BlendMode::Add);
-        graphics::draw_particles(&self.fire, x, y);
-        graphics::draw_particles(&self.sparks, 0.0, 0.0);
-        graphics::draw_particles(&self.swirl, 0.0, 0.0);
+        graphics::draw_particles(&self.fire, (x, y));
+        graphics::draw_particles(&self.sparks, (0.0, 0.0));
+        graphics::draw_particles(&self.swirl, (0.0, 0.0));
         graphics::set_blend_mode(BlendMode::Alpha);
 
         let count =
             self.fire.count() + self.smoke.count() + self.sparks.count() + self.swirl.count();
-        graphics::print(&format!("{count} particles. Click for sparks."), 16.0, 16.0);
+        graphics::print(
+            &format!("{count} particles. Click for sparks."),
+            (16.0, 16.0),
+        );
     }
 
     fn mouse_pressed(&mut self, x: f32, y: f32, button: MouseButton, _presses: u32) {
         if button == MouseButton::Left {
-            self.sparks.set_position(x, y);
+            self.sparks.set_position((x, y));
             self.sparks.emit(150);
         }
     }

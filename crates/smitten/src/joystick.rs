@@ -6,6 +6,7 @@
 //! joystick can be read by its raw buttons, axes and hats, or given a
 //! mapping with [`set_gamepad_mapping`] to make it a gamepad.
 
+use glam::Vec2;
 use std::io;
 use std::path::Path;
 
@@ -171,21 +172,23 @@ impl Joystick {
     /// Sticks rarely rest at exactly zero, so anything pushed less than
     /// `dead_zone` reads as `(0.0, 0.0)`; 0.2 suits most gamepads. Past
     /// that the push grows smoothly from zero and is never longer than 1.
-    pub fn left_stick(&self, dead_zone: f32) -> (f32, f32) {
+    pub fn left_stick(&self, dead_zone: f32) -> Vec2 {
         crate::input::stick_with_dead_zone(
             self.gamepad_axis(GamepadAxis::LeftX),
             self.gamepad_axis(GamepadAxis::LeftY),
             dead_zone,
         )
+        .into()
     }
 
     /// The right stick as a direction. See [`Joystick::left_stick`].
-    pub fn right_stick(&self, dead_zone: f32) -> (f32, f32) {
+    pub fn right_stick(&self, dead_zone: f32) -> Vec2 {
         crate::input::stick_with_dead_zone(
             self.gamepad_axis(GamepadAxis::RightX),
             self.gamepad_axis(GamepadAxis::RightY),
             dead_zone,
         )
+        .into()
     }
 
     /// Whether the gamepad can rumble.

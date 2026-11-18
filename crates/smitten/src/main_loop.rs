@@ -85,7 +85,7 @@ pub(crate) fn run_with(config: Config, body: impl FnOnce(&mut MainLoop)) {
 ///         }
 ///         if main.is_active() {
 ///             main.clear(Color::rgb(0.1, 0.1, 0.2));
-///             graphics::circle(graphics::DrawMode::Fill, x % 800.0, 300.0, 20.0);
+///             graphics::circle(graphics::DrawMode::Fill, (x % 800.0, 300.0), 20.0);
 ///             main.present();
 ///         }
 ///     }

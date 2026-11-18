@@ -56,7 +56,7 @@ fn make_hum() -> SoundData {
 /// Puts a positional source where a point on the screen is, with the
 /// listener at the centre of the window.
 fn place(source: &Source, x: f32, y: f32) {
-    source.set_position(x, y, 0.0);
+    source.set_position((x, y, 0.0));
     source.set_attenuation_distances(REFERENCE_DISTANCE, f32::MAX);
 }
 
@@ -77,11 +77,11 @@ impl SpatialAudio {
 impl Game for SpatialAudio {
     fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.08, 0.09, 0.12));
-        audio::set_position(
+        audio::set_position((
             graphics::width() as f32 / 2.0,
             graphics::height() as f32 / 2.0,
             0.0,
-        );
+        ));
         audio::set_effect(
             "reverb",
             Reverb {
@@ -116,7 +116,7 @@ impl Game for SpatialAudio {
     }
 
     fn update(&mut self, _dt: f32) {
-        let (x, y) = mouse::position();
+        let smitten::Vec2 { x, y } = mouse::position();
         place(&self.hum, x, y);
         self.blips.retain(Source::is_playing);
     }
@@ -130,14 +130,14 @@ impl Game for SpatialAudio {
         // loud.
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.12));
         for ring in [1.0, 2.0, 4.0] {
-            graphics::circle(DrawMode::Line, cx, cy, REFERENCE_DISTANCE * ring);
+            graphics::circle(DrawMode::Line, (cx, cy), REFERENCE_DISTANCE * ring);
         }
         graphics::set_color(Color::rgb(0.4, 0.8, 1.0));
-        graphics::circle(DrawMode::Line, cx, cy, 12.0);
+        graphics::circle(DrawMode::Line, (cx, cy), 12.0);
 
-        let (x, y) = mouse::position();
+        let smitten::Vec2 { x, y } = mouse::position();
         graphics::set_color(Color::rgb(0.95, 0.35, 0.45));
-        graphics::circle(DrawMode::Fill, x, y, 8.0);
+        graphics::circle(DrawMode::Fill, (x, y), 8.0);
 
         // The first fiftieth of a second of the hum, read from its samples.
         let samples = self.hum_data.sample_count().min(882);
@@ -153,7 +153,7 @@ impl Game for SpatialAudio {
             .collect();
         graphics::set_color(Color::rgba(0.95, 0.35, 0.45, 0.7));
         for pair in points.windows(2) {
-            graphics::line(pair[0].0, pair[0].1, pair[1].0, pair[1].1);
+            graphics::line((pair[0].0, pair[0].1), (pair[1].0, pair[1].1));
         }
 
         let on = |flag: bool| if flag { "on" } else { "off" };
@@ -165,7 +165,7 @@ impl Game for SpatialAudio {
         ];
         graphics::set_color(Color::WHITE);
         for (row, line) in lines.iter().enumerate() {
-            graphics::print(line, 20.0, 20.0 + row as f32 * 24.0);
+            graphics::print(line, (20.0, 20.0 + row as f32 * 24.0));
         }
     }
 
@@ -179,7 +179,7 @@ impl Game for SpatialAudio {
             Key::F => self.muffled = !self.muffled,
             Key::Space => {
                 let blip = self.blip.clone();
-                let (x, y) = mouse::position();
+                let smitten::Vec2 { x, y } = mouse::position();
                 place(&blip, x, y);
                 self.route(&blip);
                 blip.play();

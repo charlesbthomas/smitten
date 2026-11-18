@@ -1,3 +1,4 @@
+use glam::Vec2;
 use rapier2d::prelude::*;
 
 /// What kind of outline a [`Shape`] is, the equivalent of LÖVE's
@@ -33,8 +34,8 @@ pub enum ShapeType {
 /// ```
 /// use smitten::physics::{BodyType, Shape, World};
 ///
-/// let world = World::new(0.0, 0.0);
-/// let body = world.new_body(100.0, 100.0, BodyType::Dynamic);
+/// let world = World::new((0.0, 0.0));
+/// let body = world.new_body((100.0, 100.0), BodyType::Dynamic);
 /// let fixture = body.add_shape(&Shape::circle(10.0));
 ///
 /// // Grow the circle.
@@ -65,11 +66,12 @@ impl Shape {
     /// A circle centered on the body's origin. LÖVE's
     /// `newCircleShape(radius)`.
     pub fn circle(radius: f32) -> Shape {
-        Shape::circle_at(0.0, 0.0, radius)
+        Shape::circle_at((0.0, 0.0), radius)
     }
 
     /// A circle centered `(x, y)` from the body's origin.
-    pub fn circle_at(x: f32, y: f32, radius: f32) -> Shape {
+    pub fn circle_at(position: impl Into<Vec2>, radius: f32) -> Shape {
+        let Vec2 { x, y } = position.into();
         assert!(
             radius > 0.0,
             "a circle needs a positive radius, got {radius}"
@@ -82,13 +84,22 @@ impl Shape {
 
     /// A rectangle of `width` by `height` centered on the body's origin.
     /// LÖVE's `newRectangleShape(width, height)`. It is a polygon.
-    pub fn rectangle(width: f32, height: f32) -> Shape {
-        Shape::rectangle_at(0.0, 0.0, width, height, 0.0)
+    pub fn rectangle(size: impl Into<Vec2>) -> Shape {
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
+        Shape::rectangle_at((0.0, 0.0), (width, height), 0.0)
     }
 
     /// A rectangle centered `(x, y)` from the body's origin and turned by
     /// `angle` radians.
-    pub fn rectangle_at(x: f32, y: f32, width: f32, height: f32, angle: f32) -> Shape {
+    pub fn rectangle_at(position: impl Into<Vec2>, size: impl Into<Vec2>, angle: f32) -> Shape {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
         assert!(
             width > 0.0 && height > 0.0,
             "a rectangle needs a positive size, got {width} by {height}"
@@ -104,7 +115,9 @@ impl Shape {
     /// LÖVE's `newPolygonShape`.
     ///
     /// Panics if the points do not span an area.
-    pub fn polygon(points: &[(f32, f32)]) -> Shape {
+    pub fn polygon(points: &[impl Into<Vec2> + Copy]) -> Shape {
+        let points = crate::math::tuples(points);
+        let points = &points[..];
         let points: Vec<Vector> = points.iter().map(|&(x, y)| Vector::new(x, y)).collect();
         let shape = SharedShape::convex_hull(&points)
             .expect("a polygon needs at least three corners that are not in a line");
@@ -112,7 +125,9 @@ impl Shape {
     }
 
     /// A thin line from `(x1, y1)` to `(x2, y2)`. LÖVE's `newEdgeShape`.
-    pub fn edge(x1: f32, y1: f32, x2: f32, y2: f32) -> Shape {
+    pub fn edge(anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Shape {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
         Shape::new(
             SharedShape::segment(Vector::new(x1, y1), Vector::new(x2, y2)),
             Pose::IDENTITY,
@@ -123,7 +138,9 @@ impl Shape {
     /// LÖVE's `newChainShape`.
     ///
     /// Panics with fewer than two points.
-    pub fn chain(points: &[(f32, f32)], closed: bool) -> Shape {
+    pub fn chain(points: &[impl Into<Vec2> + Copy], closed: bool) -> Shape {
+        let points = crate::math::tuples(points);
+        let points = &points[..];
         assert!(points.len() >= 2, "a chain needs at least two points");
         let vertices: Vec<Vector> = points.iter().map(|&(x, y)| Vector::new(x, y)).collect();
         let count = vertices.len() as u32;
@@ -149,7 +166,8 @@ impl Shape {
     /// meets another.
     ///
     /// Panics if this is not an edge or a chain.
-    pub fn set_previous_vertex(&mut self, x: f32, y: f32) {
+    pub fn set_previous_vertex(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.check_lines("set_previous_vertex");
         self.previous = Some((x, y));
     }
@@ -158,21 +176,22 @@ impl Shape {
     /// equivalent of `setNextVertex`. See [`Shape::set_previous_vertex`].
     ///
     /// Panics if this is not an edge or a chain.
-    pub fn set_next_vertex(&mut self, x: f32, y: f32) {
+    pub fn set_next_vertex(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.check_lines("set_next_vertex");
         self.next = Some((x, y));
     }
 
     /// The ghost vertex before an edge or chain, if one was set, the
     /// equivalent of `getPreviousVertex`. Other shapes have none.
-    pub fn previous_vertex(&self) -> Option<(f32, f32)> {
-        self.previous
+    pub fn previous_vertex(&self) -> Option<Vec2> {
+        self.previous.map(Vec2::from)
     }
 
     /// The ghost vertex after an edge or chain, if one was set, the
     /// equivalent of `getNextVertex`. Other shapes have none.
-    pub fn next_vertex(&self) -> Option<(f32, f32)> {
-        self.next
+    pub fn next_vertex(&self) -> Option<Vec2> {
+        self.next.map(Vec2::from)
     }
 
     fn check_lines(&self, method: &str) {
@@ -228,43 +247,44 @@ impl Shape {
     ///
     /// Panics if this is not a circle.
     pub fn with_radius(&self, radius: f32) -> Shape {
-        let (x, y) = self.point();
-        Shape::circle_at(x, y, radius)
+        let Vec2 { x, y } = self.point();
+        Shape::circle_at((x, y), radius)
     }
 
     /// A circle's center, measured from the body's origin. LÖVE's
     /// `CircleShape:getPoint`.
     ///
     /// Panics if this is not a circle.
-    pub fn point(&self) -> (f32, f32) {
+    pub fn point(&self) -> Vec2 {
         assert!(
             self.kind() == ShapeType::Circle,
             "a {:?} shape has no center point; only circles do",
             self.kind()
         );
         let center = self.offset.translation;
-        (center.x, center.y)
+        (center.x, center.y).into()
     }
 
     /// The same circle moved to be centered `(x, y)` from the body's
     /// origin. LÖVE's `CircleShape:setPoint`, on a copy.
     ///
     /// Panics if this is not a circle.
-    pub fn with_point(&self, x: f32, y: f32) -> Shape {
+    pub fn with_point(&self, position: impl Into<Vec2>) -> Shape {
+        let Vec2 { x, y } = position.into();
         assert!(
             self.kind() == ShapeType::Circle,
             "a {:?} shape has no center point; only circles do",
             self.kind()
         );
-        Shape::circle_at(x, y, self.radius())
+        Shape::circle_at((x, y), self.radius())
     }
 
     /// The corners of a polygon, the two ends of an edge, or the points
     /// of a chain, measured from the body's origin. A circle has none.
-    pub fn points(&self) -> Vec<(f32, f32)> {
+    pub fn points(&self) -> Vec<Vec2> {
         let place = |point: Vector| {
             let point = self.offset.transform_point(point);
-            (point.x, point.y)
+            Vec2::new(point.x, point.y)
         };
         let shape = &self.shape;
         if let Some(cuboid) = shape.as_cuboid() {
@@ -324,7 +344,7 @@ impl Shape {
             self.offset.transform_point(vertices[segment[0] as usize]),
             self.offset.transform_point(vertices[segment[1] as usize]),
         );
-        Shape::edge(a.x, a.y, b.x, b.y)
+        Shape::edge((a.x, a.y), (b.x, b.y))
     }
 
     /// Where the shape would be on a body at `(x, y)` turned by `angle`.
@@ -335,7 +355,8 @@ impl Shape {
     /// The smallest box around the shape on a body at `(x, y)` turned by
     /// `angle`, as `(left, top, right, bottom)`. LÖVE's
     /// `Shape:computeAABB`.
-    pub fn bounding_box(&self, x: f32, y: f32, angle: f32) -> (f32, f32, f32, f32) {
+    pub fn bounding_box(&self, position: impl Into<Vec2>, angle: f32) -> (f32, f32, f32, f32) {
+        let Vec2 { x, y } = position.into();
         let aabb = self.shape.compute_aabb(&self.placed(x, y, angle));
         (aabb.mins.x, aabb.mins.y, aabb.maxs.x, aabb.maxs.y)
     }
@@ -367,14 +388,14 @@ impl Shape {
     #[allow(clippy::too_many_arguments)] // Mirrors Shape:rayCast.
     pub fn ray_cast(
         &self,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        x: f32,
-        y: f32,
+        anchor1: impl Into<Vec2>,
+        anchor2: impl Into<Vec2>,
+        position: impl Into<Vec2>,
         angle: f32,
     ) -> Option<(f32, f32, f32)> {
+        let Vec2 { x: x1, y: y1 } = anchor1.into();
+        let Vec2 { x: x2, y: y2 } = anchor2.into();
+        let Vec2 { x, y } = position.into();
         let ray = Ray::new(Vector::new(x1, y1), Vector::new(x2 - x1, y2 - y1));
         let hit = self
             .shape
@@ -384,7 +405,17 @@ impl Shape {
 
     /// Whether the shape, on a body at `(x, y)` turned by `angle`, covers
     /// the point `(point_x, point_y)`. LÖVE's `Shape:testPoint`.
-    pub fn test_point(&self, x: f32, y: f32, angle: f32, point_x: f32, point_y: f32) -> bool {
+    pub fn test_point(
+        &self,
+        position: impl Into<Vec2>,
+        angle: f32,
+        point: impl Into<Vec2>,
+    ) -> bool {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: point_x,
+            y: point_y,
+        } = point.into();
         self.shape
             .contains_point(&self.placed(x, y, angle), Vector::new(point_x, point_y))
     }

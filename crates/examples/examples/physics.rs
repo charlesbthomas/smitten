@@ -52,7 +52,7 @@ impl Physics {
     }
 
     fn drop_something(&mut self, x: f32, y: f32) {
-        let body = self.world.new_body(x, y, BodyType::Dynamic);
+        let body = self.world.new_body((x, y), BodyType::Dynamic);
         let color = Color::rgb(
             math::random_range(0.5, 1.0),
             math::random_range(0.4, 0.8),
@@ -60,7 +60,7 @@ impl Physics {
         );
         let shape = if math::chance(0.5) {
             let size = math::random_range(24.0, 48.0);
-            body.add_rectangle(size, size).set_friction(0.6);
+            body.add_rectangle((size, size)).set_friction(0.6);
             Shape::Crate(size)
         } else {
             let radius = math::random_range(12.0, 24.0);
@@ -75,10 +75,10 @@ impl Physics {
 impl Game for Physics {
     fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.1, 0.11, 0.15));
-        let world = World::new(0.0, 900.0);
+        let world = World::new((0.0, 900.0));
 
         // The room: a floor, two walls and a ceiling on one static body.
-        let room = world.new_body(0.0, 0.0, BodyType::Static);
+        let room = world.new_body((0.0, 0.0), BodyType::Static);
         room.add_chain(
             &[
                 (10.0, 10.0),
@@ -95,9 +95,9 @@ impl Game for Physics {
             (210.0, HEIGHT - 10.0),
         ]);
 
-        let platform = world.new_body(520.0, 380.0, BodyType::Kinematic);
-        platform.add_rectangle(160.0, 16.0).set_friction(0.9);
-        platform.set_linear_velocity(80.0, 0.0);
+        let platform = world.new_body((520.0, 380.0), BodyType::Kinematic);
+        platform.add_rectangle((160.0, 16.0)).set_friction(0.9);
+        platform.set_linear_velocity((80.0, 0.0));
 
         let mut game = Physics {
             world: world.clone(),
@@ -117,9 +117,9 @@ impl Game for Physics {
         let mut previous = room;
         for link in 0..6 {
             let x = 250.0 + link as f32 * 40.0;
-            let plank = world.new_body(x + 20.0, 60.0, BodyType::Dynamic);
-            plank.add_rectangle(36.0, 10.0);
-            world.new_revolute_joint(&previous, &plank, x, 60.0, false);
+            let plank = world.new_body((x + 20.0, 60.0), BodyType::Dynamic);
+            plank.add_rectangle((36.0, 10.0));
+            world.new_revolute_joint(&previous, &plank, (x, 60.0), false);
             previous = plank.clone();
             game.add(plank, Shape::Plank(36.0, 10.0), Color::rgb(0.8, 0.65, 0.4));
         }
@@ -137,19 +137,22 @@ impl Game for Physics {
 
     fn update(&mut self, dt: f32) {
         // The platform turns around at the ends of its track.
-        let (x, _) = self.platform.position();
+        let smitten::Vec2 { x, y: _ } = self.platform.position();
         if x > 620.0 {
-            self.platform.set_linear_velocity(-80.0, 0.0);
+            self.platform.set_linear_velocity((-80.0, 0.0));
         } else if x < 420.0 {
-            self.platform.set_linear_velocity(80.0, 0.0);
+            self.platform.set_linear_velocity((80.0, 0.0));
         }
 
         // Dragging: steer the body toward the mouse by its velocity, so it
         // still pushes what is in its way.
         if let Some(body) = &self.dragged {
-            let (mouse_x, mouse_y) = mouse::position();
-            let (x, y) = body.position();
-            body.set_linear_velocity((mouse_x - x) * 12.0, (mouse_y - y) * 12.0);
+            let smitten::Vec2 {
+                x: mouse_x,
+                y: mouse_y,
+            } = mouse::position();
+            let smitten::Vec2 { x, y } = body.position();
+            body.set_linear_velocity(((mouse_x - x) * 12.0, (mouse_y - y) * 12.0));
         }
 
         // A long frame is split up so nothing tunnels through the floor.
@@ -175,7 +178,7 @@ impl Game for Physics {
         // The room.
         graphics::set_color(Color::rgb(0.3, 0.32, 0.4));
         graphics::set_line_width(4.0);
-        graphics::rectangle(DrawMode::Line, 10.0, 10.0, WIDTH - 20.0, HEIGHT - 20.0);
+        graphics::rectangle(DrawMode::Line, (10.0, 10.0), (WIDTH - 20.0, HEIGHT - 20.0));
         graphics::polygon(
             DrawMode::Fill,
             &[
@@ -186,7 +189,7 @@ impl Game for Physics {
         );
 
         for thing in &self.things {
-            let (x, y) = thing.body.position();
+            let smitten::Vec2 { x, y } = thing.body.position();
             let flash = thing.flash;
             graphics::set_color(Color::rgb(
                 thing.color.r + (1.0 - thing.color.r) * flash,
@@ -195,20 +198,24 @@ impl Game for Physics {
             ));
             // A body's position and angle go straight into the transform.
             graphics::push();
-            graphics::translate(x, y);
+            graphics::translate((x, y));
             graphics::rotate(thing.body.angle());
             match thing.shape {
                 Shape::Crate(size) => {
-                    graphics::rectangle(DrawMode::Fill, -size / 2.0, -size / 2.0, size, size);
+                    graphics::rectangle(DrawMode::Fill, (-size / 2.0, -size / 2.0), (size, size));
                 }
                 Shape::Plank(width, height) => {
-                    graphics::rectangle(DrawMode::Fill, -width / 2.0, -height / 2.0, width, height);
+                    graphics::rectangle(
+                        DrawMode::Fill,
+                        (-width / 2.0, -height / 2.0),
+                        (width, height),
+                    );
                 }
                 Shape::Ball(radius) => {
-                    graphics::circle(DrawMode::Fill, 0.0, 0.0, radius);
+                    graphics::circle(DrawMode::Fill, (0.0, 0.0), radius);
                     graphics::set_color(Color::rgba(0.0, 0.0, 0.0, 0.4));
                     graphics::set_line_width(2.0);
-                    graphics::line(0.0, 0.0, radius, 0.0);
+                    graphics::line((0.0, 0.0), (radius, 0.0));
                 }
             }
             graphics::pop();
@@ -227,8 +234,7 @@ impl Game for Physics {
                 self.world.body_count(),
                 timer::fps()
             ),
-            24.0,
-            22.0,
+            (24.0, 22.0),
         );
     }
 
@@ -238,7 +244,7 @@ impl Game for Physics {
             MouseButton::Right => {
                 self.dragged = self
                     .world
-                    .fixtures_at(x, y)
+                    .fixtures_at((x, y))
                     .iter()
                     .filter_map(|fixture| fixture.body())
                     .find(|body| body.body_type() == BodyType::Dynamic);

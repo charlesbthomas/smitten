@@ -2,6 +2,7 @@
 //! and `GlyphData` from `love.font`. A child of the text module so it can
 //! share the font's measuring code.
 
+use glam::Vec2;
 use std::path::Path;
 
 use smitten_core::backend::Backend;
@@ -101,8 +102,8 @@ impl GlyphData {
 
     /// Where the picture's top-left corner is from the pen on the
     /// baseline: how far right, and how far up.
-    pub fn bearing(&self) -> (f32, f32) {
-        (self.bearing_x, self.bearing_y)
+    pub fn bearing(&self) -> Vec2 {
+        (self.bearing_x, self.bearing_y).into()
     }
 
     /// The box the picture covers from the pen on the baseline, as `[x,
@@ -435,7 +436,7 @@ mod tests {
         assert!(width > 0 && height > 0);
         assert_eq!(glyph.as_bytes().len(), (width * height * 2) as usize);
         // An A sits on the baseline and rises above it.
-        let (_, bearing_y) = glyph.bearing();
+        let Vec2 { x: _, y: bearing_y } = glyph.bearing();
         assert!(bearing_y > 0.0 && bearing_y <= height as f32 + 1.0);
         let [_, min_y, box_width, box_height] = glyph.bounding_box();
         assert_eq!(box_width, width as f32);
@@ -487,7 +488,7 @@ mod tests {
         let a = rasterizer.glyph_data('A');
         assert_eq!(a.format(), GlyphFormat::Rgba8);
         assert_eq!((a.dimensions(), a.advance()), ((2, 3), 3.0));
-        assert_eq!(a.bearing(), (0.0, 3.0));
+        assert_eq!(a.bearing(), Vec2::new(0.0, 3.0));
         assert!(
             a.as_bytes()
                 .chunks(4)
@@ -521,7 +522,7 @@ mod tests {
         );
         let a = rasterizer.glyph_data('A');
         assert_eq!(a.dimensions(), (2, 3));
-        assert_eq!((a.bearing(), a.advance()), ((1.0, 2.0), 5.0));
+        assert_eq!((a.bearing(), a.advance()), (Vec2::new(1.0, 2.0), 5.0));
         // The red channel counts the page's pixels: (1, 1) is the sixth.
         assert_eq!(a.as_bytes()[0], 5);
         assert_eq!(a.as_bytes()[4 * 2], 9);

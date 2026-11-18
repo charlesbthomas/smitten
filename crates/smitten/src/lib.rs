@@ -61,6 +61,7 @@ pub mod window;
 pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
 pub use main_loop::{MainLoop, run_loop};
+pub use math::{Vec2, Vec3};
 pub use result::{Error, Result};
 pub use smitten_core::{
     BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor, DisplayOrientation,

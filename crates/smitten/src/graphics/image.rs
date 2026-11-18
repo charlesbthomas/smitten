@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::cell::Cell;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -659,13 +660,19 @@ impl Quad {
     /// Describes the `width` by `height` region whose top-left corner is at
     /// `(x, y)` in an image of `sheet_width` by `sheet_height` pixels.
     pub fn new(
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        sheet_width: f32,
-        sheet_height: f32,
+        position: impl Into<Vec2>,
+        size: impl Into<Vec2>,
+        sheet_size: impl Into<Vec2>,
     ) -> Self {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
+        let Vec2 {
+            x: sheet_width,
+            y: sheet_height,
+        } = sheet_size.into();
         Self {
             x,
             y,
@@ -695,7 +702,12 @@ impl Quad {
     /// Moves the region to `width` by `height` pixels at `(x, y)` in the
     /// same image, the equivalent of `Quad:setViewport`. Moving one quad
     /// along a sprite sheet animates whatever draws it.
-    pub fn set_viewport(&mut self, x: f32, y: f32, width: f32, height: f32) {
+    pub fn set_viewport(&mut self, position: impl Into<Vec2>, size: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
         (self.x, self.y, self.width, self.height) = (x, y, width, height);
     }
 
@@ -707,7 +719,11 @@ impl Quad {
 
     /// Changes the size of the image the region is in, the last two
     /// arguments of LÖVE's `Quad:setViewport`.
-    pub fn set_texture_dimensions(&mut self, width: f32, height: f32) {
+    pub fn set_texture_dimensions(&mut self, size: impl Into<Vec2>) {
+        let Vec2 {
+            x: width,
+            y: height,
+        } = size.into();
         (self.sheet_width, self.sheet_height) = (width, height);
     }
 }
@@ -718,11 +734,11 @@ mod tests {
 
     #[test]
     fn a_quad_can_be_read_back_and_moved() {
-        let mut quad = Quad::new(0.0, 0.0, 16.0, 16.0, 64.0, 32.0);
-        quad.set_viewport(16.0, 0.0, 16.0, 8.0);
+        let mut quad = Quad::new((0.0, 0.0), (16.0, 16.0), (64.0, 32.0));
+        quad.set_viewport((16.0, 0.0), (16.0, 8.0));
         assert_eq!(quad.viewport(), (16.0, 0.0, 16.0, 8.0));
         assert_eq!(quad.texture_dimensions(), (64.0, 32.0));
-        quad.set_texture_dimensions(128.0, 64.0);
+        quad.set_texture_dimensions((128.0, 64.0));
         assert_eq!(quad.texture_dimensions(), (128.0, 64.0));
     }
 }

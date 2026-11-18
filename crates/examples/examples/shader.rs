@@ -43,13 +43,12 @@ impl Shaders {
             let x = column as f32 * 60.0;
             let height = 120.0 + (time + column as f32 * 0.7).sin() * 60.0;
             graphics::set_color(Color::rgb(0.2, 0.3 + column as f32 * 0.04, 0.6));
-            graphics::rectangle(DrawMode::Fill, x + 6.0, 400.0 - height, 48.0, height);
+            graphics::rectangle(DrawMode::Fill, (x + 6.0, 400.0 - height), (48.0, height));
         }
         graphics::set_color(Color::rgb(1.0, 0.85, 0.4));
         graphics::circle(
             DrawMode::Fill,
-            120.0 + (time * 0.5).sin() * 40.0,
-            90.0,
+            (120.0 + (time * 0.5).sin() * 40.0, 90.0),
             36.0,
         );
 
@@ -71,7 +70,7 @@ impl Shaders {
         }
         graphics::set_shader(None);
 
-        graphics::print("Space switches the screen effect", 16.0, 16.0);
+        graphics::print("Space switches the screen effect", (16.0, 16.0));
     }
 }
 
@@ -99,7 +98,7 @@ impl Game for Shaders {
         graphics::set_color(Color::WHITE);
         graphics::set_blend_mode(BlendMode::Premultiplied);
         graphics::set_shader(Some(&self.wobble));
-        graphics::draw(&self.scene, 0.0, 0.0);
+        graphics::draw(&self.scene, (0.0, 0.0));
         graphics::set_shader(None);
         graphics::set_blend_mode(BlendMode::Alpha);
     }

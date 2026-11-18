@@ -14,6 +14,8 @@
 //! assert!((0.0..=1.0).contains(&height));
 //! ```
 
+pub use glam::{Vec2, Vec3};
+
 use std::cell::RefCell;
 
 use crate::Color;
@@ -413,7 +415,9 @@ fn gradient(hash: u32, x: f32, y: f32, z: f32) -> f32 {
 
 /// Whether a polygon has no dents: every corner turns the same way.
 /// Polygons with fewer than three corners are not convex.
-pub fn is_convex(points: &[(f32, f32)]) -> bool {
+pub fn is_convex(points: &[impl Into<Vec2> + Copy]) -> bool {
+    let points = tuples(points);
+    let points = &points[..];
     if points.len() < 3 {
         return false;
     }
@@ -439,7 +443,9 @@ pub fn is_convex(points: &[(f32, f32)]) -> bool {
 ///
 /// Returns nothing for fewer than three corners, or if the polygon is so
 /// tangled that no triangle can be cut from it.
-pub fn triangulate(points: &[(f32, f32)]) -> Vec<[(f32, f32); 3]> {
+pub fn triangulate(points: &[impl Into<Vec2> + Copy]) -> Vec<[Vec2; 3]> {
+    let points = tuples(points);
+    let points = &points[..];
     if points.len() < 3 {
         return Vec::new();
     }
@@ -477,13 +483,17 @@ pub fn triangulate(points: &[(f32, f32)]) -> Vec<[(f32, f32); 3]> {
             return triangles;
         };
         triangles.push([
-            remaining[(index + count - 1) % count],
-            remaining[index],
-            remaining[(index + 1) % count],
+            remaining[(index + count - 1) % count].into(),
+            remaining[index].into(),
+            remaining[(index + 1) % count].into(),
         ]);
         remaining.remove(index);
     }
-    triangles.push([remaining[0], remaining[1], remaining[2]]);
+    triangles.push([
+        remaining[0].into(),
+        remaining[1].into(),
+        remaining[2].into(),
+    ]);
     triangles
 }
 
@@ -550,7 +560,9 @@ impl BezierCurve {
     /// Creates a curve from its control points.
     ///
     /// Panics if there are fewer than two, since that is not a curve.
-    pub fn new(points: &[(f32, f32)]) -> BezierCurve {
+    pub fn new(points: &[impl Into<Vec2> + Copy]) -> BezierCurve {
+        let points = tuples(points);
+        let points = &points[..];
         assert!(
             points.len() >= 2,
             "a Bezier curve needs at least 2 control points, got {}",
@@ -572,8 +584,8 @@ impl BezierCurve {
     }
 
     /// The control point at `index`, counting from zero.
-    pub fn control_point(&self, index: usize) -> Option<(f32, f32)> {
-        self.points.get(index).copied()
+    pub fn control_point(&self, index: usize) -> Option<Vec2> {
+        self.points.get(index).copied().map(Vec2::from)
     }
 
     /// Moves the control point at `index`. Panics if there is none.
@@ -590,16 +602,16 @@ impl BezierCurve {
     /// Removes and returns the control point at `index`.
     ///
     /// Panics if that would leave fewer than two.
-    pub fn remove_control_point(&mut self, index: usize) -> (f32, f32) {
+    pub fn remove_control_point(&mut self, index: usize) -> Vec2 {
         assert!(
             self.points.len() > 2,
             "a Bezier curve needs at least 2 control points"
         );
-        self.points.remove(index)
+        self.points.remove(index).into()
     }
 
     /// The point on the curve at `t`, where 0 is the start and 1 the end.
-    pub fn evaluate(&self, t: f32) -> (f32, f32) {
+    pub fn evaluate(&self, t: f32) -> Vec2 {
         // De Casteljau: blend neighbours until one point is left.
         let mut points = self.points.clone();
         while points.len() > 1 {
@@ -608,7 +620,7 @@ impl BezierCurve {
             }
             points.pop();
         }
-        points[0]
+        points[0].into()
     }
 
     /// The curve whose points are this curve's velocity: `evaluate(t)` on
@@ -644,12 +656,12 @@ impl BezierCurve {
 
     /// Points along the whole curve, for drawing it as a line. Each step
     /// of `depth` doubles how many there are; LÖVE's default is 5.
-    pub fn render(&self, depth: u32) -> Vec<(f32, f32)> {
+    pub fn render(&self, depth: u32) -> Vec<Vec2> {
         self.render_segment(0.0, 1.0, depth)
     }
 
     /// Points along the curve between `t1` and `t2`.
-    pub fn render_segment(&self, t1: f32, t2: f32, depth: u32) -> Vec<(f32, f32)> {
+    pub fn render_segment(&self, t1: f32, t2: f32, depth: u32) -> Vec<Vec2> {
         let steps = self.degree() << depth.min(12);
         (0..=steps)
             .map(|step| self.evaluate(t1 + (t2 - t1) * step as f32 / steps as f32))
@@ -657,14 +669,16 @@ impl BezierCurve {
     }
 
     /// Moves the whole curve by `(dx, dy)`.
-    pub fn translate(&mut self, dx: f32, dy: f32) {
+    pub fn translate(&mut self, delta: impl Into<Vec2>) {
+        let Vec2 { x: dx, y: dy } = delta.into();
         for point in &mut self.points {
             *point = (point.0 + dx, point.1 + dy);
         }
     }
 
     /// Turns the curve by `angle` radians around `(ox, oy)`.
-    pub fn rotate(&mut self, angle: f32, ox: f32, oy: f32) {
+    pub fn rotate(&mut self, angle: f32, origin: impl Into<Vec2>) {
+        let Vec2 { x: ox, y: oy } = origin.into();
         let (sin, cos) = angle.sin_cos();
         for point in &mut self.points {
             let (x, y) = (point.0 - ox, point.1 - oy);
@@ -673,7 +687,8 @@ impl BezierCurve {
     }
 
     /// Grows or shrinks the curve by `factor` around `(ox, oy)`.
-    pub fn scale(&mut self, factor: f32, ox: f32, oy: f32) {
+    pub fn scale(&mut self, factor: f32, origin: impl Into<Vec2>) {
+        let Vec2 { x: ox, y: oy } = origin.into();
         for point in &mut self.points {
             *point = (ox + (point.0 - ox) * factor, oy + (point.1 - oy) * factor);
         }
@@ -704,12 +719,24 @@ fn split(points: &[(f32, f32)], t: f32) -> (Points, Points) {
     (left, right)
 }
 
+/// Points in any form that converts to [`Vec2`], as the tuples the
+/// geometry code inside Smitten works with.
+pub(crate) fn tuples(points: &[impl Into<Vec2> + Copy]) -> Vec<(f32, f32)> {
+    points
+        .iter()
+        .map(|&point| {
+            let point: Vec2 = point.into();
+            (point.x, point.y)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn close(a: (f32, f32), b: (f32, f32)) -> bool {
-        (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3
+    fn close(a: impl Into<Vec2>, b: impl Into<Vec2>) -> bool {
+        a.into().abs_diff_eq(b.into(), 1e-3)
     }
 
     #[test]
@@ -779,8 +806,8 @@ mod tests {
             [(0.0, 0.0), (5.0, 5.0), (10.0, 0.0)]
         );
         curve.set_control_point(1, (5.0, 9.0));
-        assert_eq!(curve.control_point(1), Some((5.0, 9.0)));
-        assert_eq!(curve.remove_control_point(1), (5.0, 9.0));
+        assert_eq!(curve.control_point(1), Some(Vec2::new(5.0, 9.0)));
+        assert_eq!(curve.remove_control_point(1), Vec2::new(5.0, 9.0));
         assert_eq!(curve.degree(), 1);
         assert_eq!(curve.control_point(7), None);
     }
@@ -788,11 +815,11 @@ mod tests {
     #[test]
     fn a_curve_can_be_moved_turned_and_resized() {
         let mut curve = BezierCurve::new(&[(0.0, 0.0), (10.0, 0.0)]);
-        curve.translate(5.0, 5.0);
+        curve.translate((5.0, 5.0));
         assert_eq!(curve.control_points(), [(5.0, 5.0), (15.0, 5.0)]);
-        curve.scale(2.0, 5.0, 5.0);
+        curve.scale(2.0, (5.0, 5.0));
         assert_eq!(curve.control_points(), [(5.0, 5.0), (25.0, 5.0)]);
-        curve.rotate(std::f32::consts::FRAC_PI_2, 5.0, 5.0);
+        curve.rotate(std::f32::consts::FRAC_PI_2, (5.0, 5.0));
         assert!(close(curve.control_points()[1], (5.0, 25.0)));
     }
 
@@ -992,10 +1019,10 @@ mod tests {
         assert!(!is_convex(&square[..2]));
     }
 
-    fn area(triangles: &[[(f32, f32); 3]]) -> f32 {
+    fn area(triangles: &[[Vec2; 3]]) -> f32 {
         triangles
             .iter()
-            .map(|[a, b, c]| cross(*a, *b, *c).abs() / 2.0)
+            .map(|[a, b, c]| cross((a.x, a.y), (b.x, b.y), (c.x, c.y)).abs() / 2.0)
             .sum()
     }
 

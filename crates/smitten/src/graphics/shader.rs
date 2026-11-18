@@ -1000,7 +1000,7 @@ mod tests {
     #[test]
     fn a_transform_becomes_the_matrix_that_moves_points_as_it_does() {
         let mut transform = Transform::IDENTITY;
-        transform.translate(10.0, 20.0);
+        transform.translate((10.0, 20.0));
         transform.scale(2.0, 3.0);
         let bytes = transform.to_uniform(UniformKind::Mat3).unwrap();
         // Columns: x axis, y axis, translation.

@@ -95,12 +95,12 @@ impl Game for Rumble {
         graphics::set_color(Color::WHITE);
 
         let Some(pad) = joystick::gamepads().into_iter().next() else {
-            graphics::print("Plug in a gamepad to try its rumble.", 40.0, 40.0);
-            graphics::print("Escape quits.", 40.0, 70.0);
+            graphics::print("Plug in a gamepad to try its rumble.", (40.0, 40.0));
+            graphics::print("Escape quits.", (40.0, 70.0));
             return;
         };
 
-        graphics::print(&format!("Gamepad: {}", pad.name()), 40.0, 40.0);
+        graphics::print(&format!("Gamepad: {}", pad.name()), (40.0, 40.0));
         let supported = pad.is_vibration_supported();
         graphics::set_color(if supported {
             Color::rgb(0.5, 0.9, 0.5)
@@ -113,8 +113,7 @@ impl Game for Rumble {
             } else {
                 "It says it cannot rumble. Try the buttons anyway."
             },
-            40.0,
-            70.0,
+            (40.0, 70.0),
         );
 
         // A bar for each motor, filled as far as its trigger is squeezed.
@@ -129,21 +128,20 @@ impl Game for Rumble {
         for (label, axis, y) in bars {
             let amount = pad.gamepad_axis(axis).clamp(0.0, 1.0);
             graphics::set_color(Color::WHITE);
-            graphics::print(label, 40.0, y);
+            graphics::print(label, (40.0, y));
             graphics::set_color(Color::rgb(0.95, 0.6, 0.2));
-            graphics::rectangle(DrawMode::Fill, 40.0, y + 28.0, 400.0 * amount, 24.0);
+            graphics::rectangle(DrawMode::Fill, (40.0, y + 28.0), (400.0 * amount, 24.0));
             graphics::set_color(Color::WHITE);
-            graphics::rectangle(DrawMode::Line, 40.0, y + 28.0, 400.0, 24.0);
+            graphics::rectangle(DrawMode::Line, (40.0, y + 28.0), (400.0, 24.0));
         }
 
         graphics::print(
             "A: short tap     B: two strong seconds     X: stop",
-            40.0,
-            330.0,
+            (40.0, 330.0),
         );
-        graphics::print("Escape quits.", 40.0, 360.0);
+        graphics::print("Escape quits.", (40.0, 360.0));
         graphics::set_color(Color::rgb(0.7, 0.8, 1.0));
-        graphics::print(&self.status, 40.0, 420.0);
+        graphics::print(&self.status, (40.0, 420.0));
     }
 }
 

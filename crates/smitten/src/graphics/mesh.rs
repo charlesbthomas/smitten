@@ -1,4 +1,5 @@
 use super::GraphicsError;
+use glam::Vec2;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -393,7 +394,8 @@ pub struct MeshVertex {
 
 impl MeshVertex {
     /// A white corner at `(x, y)` showing the texture at `(u, v)`.
-    pub fn new(x: f32, y: f32, u: f32, v: f32) -> MeshVertex {
+    pub fn new(position: impl Into<Vec2>, u: f32, v: f32) -> MeshVertex {
+        let Vec2 { x, y } = position.into();
         MeshVertex {
             x,
             y,
@@ -405,7 +407,8 @@ impl MeshVertex {
 
     /// A corner at `(x, y)` with a color and no particular place in a
     /// texture, for meshes drawn without one.
-    pub fn colored(x: f32, y: f32, color: Color) -> MeshVertex {
+    pub fn colored(position: impl Into<Vec2>, color: Color) -> MeshVertex {
+        let Vec2 { x, y } = position.into();
         MeshVertex {
             x,
             y,
@@ -453,16 +456,13 @@ pub enum MeshDrawMode {
 /// // A square that fades from red on the left to blue on the right.
 /// let red = Color::rgb(1.0, 0.0, 0.0);
 /// let blue = Color::rgb(0.0, 0.0, 1.0);
-/// let gradient = Mesh::new(
-///     &[
-///         MeshVertex::colored(0.0, 0.0, red),
-///         MeshVertex::colored(100.0, 0.0, blue),
-///         MeshVertex::colored(100.0, 100.0, blue),
-///         MeshVertex::colored(0.0, 100.0, red),
-///     ],
-///     MeshDrawMode::Fan,
-/// );
-/// graphics::draw_mesh(&gradient, 50.0, 50.0);
+/// let gradient = Mesh::new(&[
+///         MeshVertex::colored((0.0, 0.0), red),
+///         MeshVertex::colored((100.0, 0.0), blue),
+///         MeshVertex::colored((100.0, 100.0), blue),
+///         MeshVertex::colored((0.0, 100.0), red),
+///     ], MeshDrawMode::Fan);
+/// graphics::draw_mesh(&gradient, (50.0, 50.0));
 /// ```
 pub struct Mesh {
     /// Shared with meshes that attach attributes from this one.
@@ -1137,7 +1137,7 @@ impl Mesh {
         let store = self.store.borrow();
         let place = |index: u32| {
             let vertex = store.mesh_vertex(index as usize);
-            let (x, y) = transform.apply(vertex.x, vertex.y);
+            let Vec2 { x, y } = transform.apply((vertex.x, vertex.y));
             Vertex {
                 position: [x, y],
                 uv: [vertex.u, vertex.v],
@@ -1182,7 +1182,7 @@ mod tests {
 
     fn corners(count: usize) -> Vec<MeshVertex> {
         (0..count)
-            .map(|index| MeshVertex::new(index as f32, 0.0, 0.0, 0.0))
+            .map(|index| MeshVertex::new((index as f32, 0.0), 0.0, 0.0))
             .collect()
     }
 
@@ -1207,7 +1207,7 @@ mod tests {
     fn points_are_squares_around_each_moved_vertex() {
         let mesh = Mesh::new(&corners(2), MeshDrawMode::Points);
         let mut transform = Transform::IDENTITY;
-        transform.translate(10.0, 0.0);
+        transform.translate((10.0, 0.0));
         transform.scale(5.0, 5.0);
         let mut out = Vec::new();
         mesh.write_vertices(&transform, Color::WHITE, 4.0, &mut out);
@@ -1270,13 +1270,13 @@ mod tests {
     fn vertex_colors_are_multiplied_by_the_tint_and_positions_transformed() {
         let half = Color::rgba(0.5, 1.0, 1.0, 0.5);
         let vertices = [
-            MeshVertex::colored(0.0, 0.0, Color::rgba(1.0, 0.5, 0.0, 1.0)),
-            MeshVertex::new(1.0, 0.0, 0.25, 0.75),
-            MeshVertex::new(0.0, 1.0, 0.0, 0.0),
+            MeshVertex::colored((0.0, 0.0), Color::rgba(1.0, 0.5, 0.0, 1.0)),
+            MeshVertex::new((1.0, 0.0), 0.25, 0.75),
+            MeshVertex::new((0.0, 1.0), 0.0, 0.0),
         ];
         let mesh = Mesh::new(&vertices, MeshDrawMode::Triangles);
         let mut transform = Transform::IDENTITY;
-        transform.translate(10.0, 20.0);
+        transform.translate((10.0, 20.0));
         let mut out = Vec::new();
         mesh.write_vertices(&transform, half, 1.0, &mut out);
 
@@ -1340,7 +1340,7 @@ mod tests {
     fn a_custom_format_reads_and_writes_the_standard_view() {
         let mut mesh =
             Mesh::with_format_and_count(&custom_format(), 2, MeshDrawMode::Triangles).unwrap();
-        let mut vertex = MeshVertex::colored(4.0, 5.0, Color::rgba(1.0, 0.0, 1.0, 1.0));
+        let mut vertex = MeshVertex::colored((4.0, 5.0), Color::rgba(1.0, 0.0, 1.0, 1.0));
         vertex.u = 0.5;
         mesh.set_vertex(1, vertex);
         let back = mesh.vertex(1).unwrap();
@@ -1356,8 +1356,8 @@ mod tests {
     #[test]
     fn the_standard_format_keeps_whole_vertices() {
         let vertices = [
-            MeshVertex::colored(1.0, 2.0, Color::rgba(0.1, 0.2, 0.3, 0.4)),
-            MeshVertex::new(3.0, 4.0, 0.5, 0.25),
+            MeshVertex::colored((1.0, 2.0), Color::rgba(0.1, 0.2, 0.3, 0.4)),
+            MeshVertex::new((3.0, 4.0), 0.5, 0.25),
         ];
         let mut mesh = Mesh::new(&vertices, MeshDrawMode::Triangles);
         assert_eq!(mesh.vertices(), vertices);

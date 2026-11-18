@@ -106,10 +106,8 @@ impl Paddle {
     fn draw(&self) {
         graphics::rectangle(
             DrawMode::Fill,
-            self.x,
-            self.top(),
-            PADDLE_WIDTH,
-            PADDLE_HEIGHT,
+            (self.x, self.top()),
+            (PADDLE_WIDTH, PADDLE_HEIGHT),
         );
     }
 }
@@ -165,10 +163,8 @@ impl Ball {
         let half = BALL_SIZE / 2.0;
         graphics::rectangle(
             DrawMode::Fill,
-            self.x - half,
-            self.y - half,
-            BALL_SIZE,
-            BALL_SIZE,
+            (self.x - half, self.y - half),
+            (BALL_SIZE, BALL_SIZE),
         );
     }
 }
@@ -342,7 +338,7 @@ impl Pong {
         let dash = 18.0;
         let mut y = 6.0;
         while y < HEIGHT {
-            graphics::rectangle(DrawMode::Fill, WIDTH / 2.0 - 2.0, y, 4.0, dash);
+            graphics::rectangle(DrawMode::Fill, (WIDTH / 2.0 - 2.0, y), (4.0, dash));
             y += dash * 2.0;
         }
 
@@ -351,15 +347,13 @@ impl Pong {
         let column = WIDTH / 2.0 - 60.0;
         graphics::printf(
             &self.left.score.to_string(),
-            0.0,
-            30.0,
+            (0.0, 30.0),
             column,
             Align::Right,
         );
         graphics::printf(
             &self.right.score.to_string(),
-            WIDTH / 2.0 + 60.0,
-            30.0,
+            (WIDTH / 2.0 + 60.0, 30.0),
             column,
             Align::Left,
         );
@@ -380,39 +374,41 @@ impl Pong {
     fn draw_message(&self, headline: &str, detail: &str) {
         // Blank out the center line behind the text.
         graphics::set_color(BACKGROUND);
-        graphics::rectangle(DrawMode::Fill, WIDTH / 2.0 - 4.0, HEIGHT - 160.0, 8.0, 80.0);
+        graphics::rectangle(
+            DrawMode::Fill,
+            (WIDTH / 2.0 - 4.0, HEIGHT - 160.0),
+            (8.0, 80.0),
+        );
         graphics::set_color(FOREGROUND);
         graphics::set_font(&self.text_font);
-        graphics::printf(headline, 0.0, HEIGHT - 150.0, WIDTH, Align::Center);
+        graphics::printf(headline, (0.0, HEIGHT - 150.0), WIDTH, Align::Center);
         graphics::set_color(DIM);
-        graphics::printf(detail, 0.0, HEIGHT - 115.0, WIDTH, Align::Center);
+        graphics::printf(detail, (0.0, HEIGHT - 115.0), WIDTH, Align::Center);
     }
 
     fn draw_title(&self) {
         graphics::set_color(FOREGROUND);
         graphics::set_font(&self.title_font);
-        graphics::printf("PONG", 0.0, 150.0, WIDTH, Align::Center);
+        graphics::printf("PONG", (0.0, 150.0), WIDTH, Align::Center);
 
         graphics::set_font(&self.text_font);
-        graphics::printf("1   Play the computer", 0.0, 320.0, WIDTH, Align::Center);
-        graphics::printf("2   Two players", 0.0, 360.0, WIDTH, Align::Center);
+        graphics::printf("1   Play the computer", (0.0, 320.0), WIDTH, Align::Center);
+        graphics::printf("2   Two players", (0.0, 360.0), WIDTH, Align::Center);
 
         graphics::set_color(DIM);
         graphics::printf(
             "Left: W / S     Right: Up / Down",
-            0.0,
-            480.0,
+            (0.0, 480.0),
             WIDTH,
             Align::Center,
         );
         graphics::printf(
             "Gamepad: A plays the computer, X starts two players",
-            0.0,
-            510.0,
+            (0.0, 510.0),
             WIDTH,
             Align::Center,
         );
-        graphics::printf("Escape quits", 0.0, 540.0, WIDTH, Align::Center);
+        graphics::printf("Escape quits", (0.0, 540.0), WIDTH, Align::Center);
     }
 }
 

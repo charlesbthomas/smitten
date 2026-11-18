@@ -44,6 +44,7 @@ mod mixer;
 mod record;
 mod spatial;
 
+use glam::Vec3;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -337,39 +338,42 @@ impl Source {
     /// listener starts, so a sound that is never placed is heard as it is.
     ///
     /// Only mono sounds are positioned; stereo ones ignore this.
-    pub fn set_position(&self, x: f32, y: f32, z: f32) {
+    pub fn set_position(&self, position: impl Into<Vec3>) {
+        let Vec3 { x, y, z } = position.into();
         self.change_placement(|placement| placement.position = [x, y, z]);
     }
 
     /// Returns where the sound is.
-    pub fn position(&self) -> (f32, f32, f32) {
+    pub fn position(&self) -> Vec3 {
         let [x, y, z] = self.placement().position;
-        (x, y, z)
+        (x, y, z).into()
     }
 
     /// Sets how fast the sound is moving, in distance units per second.
     /// This does not move it; it only shifts its pitch, as a passing car
     /// sounds higher coming and lower going.
-    pub fn set_velocity(&self, x: f32, y: f32, z: f32) {
+    pub fn set_velocity(&self, velocity: impl Into<Vec3>) {
+        let Vec3 { x, y, z } = velocity.into();
         self.change_placement(|placement| placement.velocity = [x, y, z]);
     }
 
     /// Returns the velocity.
-    pub fn velocity(&self) -> (f32, f32, f32) {
+    pub fn velocity(&self) -> Vec3 {
         let [x, y, z] = self.placement().velocity;
-        (x, y, z)
+        (x, y, z).into()
     }
 
     /// Points the sound in a direction, for use with [`Source::set_cone`].
     /// A direction of zero, the default, sounds the same all round.
-    pub fn set_direction(&self, x: f32, y: f32, z: f32) {
+    pub fn set_direction(&self, direction: impl Into<Vec3>) {
+        let Vec3 { x, y, z } = direction.into();
         self.change_placement(|placement| placement.direction = [x, y, z]);
     }
 
     /// Returns the direction.
-    pub fn direction(&self) -> (f32, f32, f32) {
+    pub fn direction(&self) -> Vec3 {
         let [x, y, z] = self.placement().direction;
-        (x, y, z)
+        (x, y, z).into()
     }
 
     /// Makes a directed sound quieter off to the side. Inside a cone
@@ -735,44 +739,47 @@ fn listener() -> spatial::Listener {
 
 /// Places the listener, who hears every positioned source. The listener
 /// starts at the origin.
-pub fn set_position(x: f32, y: f32, z: f32) {
+pub fn set_position(position: impl Into<Vec3>) {
+    let Vec3 { x, y, z } = position.into();
     change_listener(|listener| listener.position = [x, y, z]);
 }
 
 /// Returns where the listener is.
-pub fn position() -> (f32, f32, f32) {
+pub fn position() -> Vec3 {
     let [x, y, z] = listener().position;
-    (x, y, z)
+    (x, y, z).into()
 }
 
 /// Sets how fast the listener is moving, which shifts the pitch of sounds
 /// as [`Source::set_velocity`] describes. It does not move the listener.
-pub fn set_velocity(x: f32, y: f32, z: f32) {
+pub fn set_velocity(velocity: impl Into<Vec3>) {
+    let Vec3 { x, y, z } = velocity.into();
     change_listener(|listener| listener.velocity = [x, y, z]);
 }
 
 /// Returns the listener's velocity.
-pub fn velocity() -> (f32, f32, f32) {
+pub fn velocity() -> Vec3 {
     let [x, y, z] = listener().velocity;
-    (x, y, z)
+    (x, y, z).into()
 }
 
 /// Turns the listener to face `forward`, with the top of their head
 /// toward `up`. They start facing negative z with positive y up, which
 /// puts positive x on their right.
-pub fn set_orientation(forward: (f32, f32, f32), up: (f32, f32, f32)) {
+pub fn set_orientation(forward: impl Into<Vec3>, up: impl Into<Vec3>) {
+    let (forward, up) = (forward.into(), up.into());
     change_listener(|listener| {
-        listener.forward = [forward.0, forward.1, forward.2];
-        listener.up = [up.0, up.1, up.2];
+        listener.forward = forward.to_array();
+        listener.up = up.to_array();
     });
 }
 
 /// Returns the directions the listener faces and their head points.
-pub fn orientation() -> ((f32, f32, f32), (f32, f32, f32)) {
+pub fn orientation() -> (Vec3, Vec3) {
     let listener = listener();
     let [fx, fy, fz] = listener.forward;
     let [ux, uy, uz] = listener.up;
-    ((fx, fy, fz), (ux, uy, uz))
+    ((fx, fy, fz).into(), (ux, uy, uz).into())
 }
 
 /// Chooses how sounds get quieter with distance.

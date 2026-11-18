@@ -168,7 +168,7 @@ fn wandering_lights() -> Vec<Light> {
 
 impl Lighting {
     fn all_lights(&self) -> Vec<Light> {
-        let (x, y) = mouse::position();
+        let smitten::Vec2 { x, y } = mouse::position();
         let mut lights = wandering_lights();
         lights.push(Light {
             x,
@@ -191,10 +191,8 @@ impl Lighting {
                 graphics::set_color(Color::rgb(shade, shade * 0.95, shade * 0.9));
                 graphics::rectangle(
                     DrawMode::Fill,
-                    column as f32 * TILE + 1.0,
-                    row as f32 * TILE + 1.0,
-                    TILE - 2.0,
-                    TILE - 2.0,
+                    (column as f32 * TILE + 1.0, row as f32 * TILE + 1.0),
+                    (TILE - 2.0, TILE - 2.0),
                 );
             }
         }
@@ -236,7 +234,7 @@ impl Lighting {
                         // the block itself stays lit, as if light falls
                         // on its top.
                         for block in blocks {
-                            graphics::shadow(light.x, light.y, &block.corners, SHADOW_LENGTH);
+                            graphics::shadow((light.x, light.y), &block.corners, SHADOW_LENGTH);
                         }
                     });
                     graphics::set_stencil_test(CompareMode::Equal, 0);
@@ -249,10 +247,8 @@ impl Lighting {
                 // they do across an image, so the shader needs no image.
                 graphics::rectangle(
                     DrawMode::Fill,
-                    light.x - light.radius,
-                    light.y - light.radius,
-                    light.radius * 2.0,
-                    light.radius * 2.0,
+                    (light.x - light.radius, light.y - light.radius),
+                    (light.radius * 2.0, light.radius * 2.0),
                 );
                 graphics::set_blend_mode(BlendMode::Alpha);
                 graphics::clear_stencil_test();
@@ -298,7 +294,7 @@ impl Game for Lighting {
             } else {
                 BlendMode::Multiply
             });
-            graphics::draw(&self.light_map, 0.0, 0.0);
+            graphics::draw(&self.light_map, (0.0, 0.0));
             graphics::set_blend_mode(BlendMode::Alpha);
         }
 
@@ -306,7 +302,7 @@ impl Game for Lighting {
         // light map.
         for light in &lights {
             graphics::set_color(light.color);
-            graphics::circle(DrawMode::Fill, light.x, light.y, 5.0);
+            graphics::circle(DrawMode::Fill, (light.x, light.y), 5.0);
         }
 
         graphics::set_color(Color::WHITE);
@@ -321,8 +317,7 @@ impl Game for Lighting {
                 if self.shadows_on { "on" } else { "off" },
                 self.ambient,
             ),
-            12.0,
-            HEIGHT as f32 - 26.0,
+            (12.0, HEIGHT as f32 - 26.0),
         );
     }
 

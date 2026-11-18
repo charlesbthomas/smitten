@@ -171,7 +171,7 @@ impl Game for Benchmark {
                 self.batch
                     .add_ex(heart.x, heart.y, heart.angle, 1.0, 1.0, center_x, center_y);
             }
-            graphics::draw_sprite_batch(&self.batch, 0.0, 0.0);
+            graphics::draw_sprite_batch(&self.batch, (0.0, 0.0));
         } else {
             for heart in &self.hearts {
                 graphics::set_color(heart.tint);

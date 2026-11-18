@@ -45,11 +45,11 @@ fn draw_grid() {
     graphics::set_color(Color::rgb(0.2, 0.22, 0.28));
     for column in 0..=WIDTH / 40 {
         let x = column as f32 * 40.0;
-        graphics::line(x, 0.0, x, HEIGHT as f32);
+        graphics::line((x, 0.0), (x, HEIGHT as f32));
     }
     for row in 0..=HEIGHT / 40 {
         let y = row as f32 * 40.0;
-        graphics::line(0.0, y, WIDTH as f32, y);
+        graphics::line((0.0, y), (WIDTH as f32, y));
     }
 }
 
@@ -77,12 +77,15 @@ impl Game for Stencil {
     }
 
     fn draw(&mut self) {
-        let (mouse_x, mouse_y) = mouse::position();
+        let smitten::Vec2 {
+            x: mouse_x,
+            y: mouse_y,
+        } = mouse::position();
         let turn = timer::time() as f32 * 0.5;
 
         // Mark the holes. Nothing drawn in here shows up by itself.
         graphics::stencil(|| {
-            graphics::circle(DrawMode::Fill, mouse_x, mouse_y, 90.0);
+            graphics::circle(DrawMode::Fill, (mouse_x, mouse_y), 90.0);
             draw_star(520.0, 250.0, 130.0, turn);
         });
 
@@ -96,7 +99,7 @@ impl Game for Stencil {
 
         graphics::clear_stencil_test();
         graphics::set_color(Color::WHITE);
-        graphics::print("Move the mouse to move the hole.", 16.0, 16.0);
+        graphics::print("Move the mouse to move the hole.", (16.0, 16.0));
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {

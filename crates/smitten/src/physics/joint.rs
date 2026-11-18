@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::rc::Rc;
 
 use rapier2d::prelude::*;
@@ -252,11 +253,11 @@ impl Joint {
     /// Where the joint holds on to each body, in world coordinates, as
     /// `((x1, y1), (x2, y2))`. For a mouse joint the first is the target
     /// and the second the point being dragged.
-    pub fn anchors(&self) -> ((f32, f32), (f32, f32)) {
+    pub fn anchors(&self) -> (Vec2, Vec2) {
         self.read(|joint, inner| {
             let frames = Joint::frames(joint, inner);
             let (one, two) = (frames.one.translation, frames.two.translation);
-            ((one.x, one.y), (two.x, two.y))
+            (Vec2::new(one.x, one.y), Vec2::new(two.x, two.y))
         })
     }
 
@@ -268,9 +269,9 @@ impl Joint {
     /// The force the joint applied to its second body during the last
     /// update, as `(x, y)`. Useful for breaking a joint that is pulled
     /// too hard.
-    pub fn reaction_force(&self) -> (f32, f32) {
+    pub fn reaction_force(&self) -> Vec2 {
         if let Some((force, _)) = self.coupling_reaction() {
-            return force;
+            return force.into();
         }
         self.read(|joint, inner| {
             let data = &joint.data;
@@ -297,6 +298,7 @@ impl Joint {
             let force = -impulse * per_second(inner);
             (force.x, force.y)
         })
+        .into()
     }
 
     /// The torque the joint applied to its second body during the last
@@ -517,7 +519,7 @@ impl Joint {
     /// The direction a prismatic joint slides in, or a wheel joint's
     /// suspension works in, in the world, as `(x, y)` one unit long. It
     /// turns with the first body.
-    pub fn axis(&self) -> (f32, f32) {
+    pub fn axis(&self) -> Vec2 {
         self.expect(&[JointType::Prismatic, JointType::Wheel], "axis");
         self.read(|joint, inner| {
             let axis = Joint::frames(joint, inner)
@@ -526,6 +528,7 @@ impl Joint {
                 .transform_vector(Vector::X);
             (axis.x, axis.y)
         })
+        .into()
     }
 
     /// How far a prismatic or wheel joint has slid along its axis since
@@ -685,14 +688,15 @@ impl Joint {
     }
 
     /// Where a mouse joint pulls its body to.
-    pub fn target(&self) -> (f32, f32) {
+    pub fn target(&self) -> Vec2 {
         self.expect(&[JointType::Mouse], "target");
         self.anchors().0
     }
 
     /// Moves the point a mouse joint pulls its body to. Call it with the
     /// mouse position every frame while dragging.
-    pub fn set_target(&self, x: f32, y: f32) {
+    pub fn set_target(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.expect(&[JointType::Mouse], "target");
         // The target is held by the world's hidden ground body, which
         // sits at the origin.
@@ -744,16 +748,18 @@ impl Joint {
 
     /// Where a motor joint holds its second body, relative to the first
     /// body's position and angle.
-    pub fn linear_offset(&self) -> (f32, f32) {
+    pub fn linear_offset(&self) -> Vec2 {
         self.expect(&[JointType::Motor], "linear offset");
         self.read(|joint, _| {
             let offset = joint.data.local_frame1.translation;
             (offset.x, offset.y)
         })
+        .into()
     }
 
     /// Changes where a motor joint holds its second body.
-    pub fn set_linear_offset(&self, x: f32, y: f32) {
+    pub fn set_linear_offset(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.expect(&[JointType::Motor], "linear offset");
         self.change(|joint| joint.local_frame1.translation = Vector::new(x, y));
     }
@@ -966,9 +972,9 @@ impl Joint {
 
     /// The fixed points a pulley joint's ropes run over, as `((x1, y1),
     /// (x2, y2))`.
-    pub fn ground_anchors(&self) -> ((f32, f32), (f32, f32)) {
+    pub fn ground_anchors(&self) -> (Vec2, Vec2) {
         let (a, b, _, _) = self.pulley("ground anchors");
-        ((a.x, a.y), (b.x, b.y))
+        ((a.x, a.y).into(), (b.x, b.y).into())
     }
 
     /// How long a pulley joint's first rope is now: from its first ground

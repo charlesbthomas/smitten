@@ -8,12 +8,12 @@
 //! use smitten::physics::{BodyType, World};
 //!
 //! // Gravity pulls down at 600 units per second, every second.
-//! let world = World::new(0.0, 600.0);
+//! let world = World::new((0.0, 600.0));
 //!
-//! let ground = world.new_body(400.0, 580.0, BodyType::Static);
-//! ground.add_rectangle(800.0, 40.0);
+//! let ground = world.new_body((400.0, 580.0), BodyType::Static);
+//! ground.add_rectangle((800.0, 40.0));
 //!
-//! let ball = world.new_body(400.0, 100.0, BodyType::Dynamic);
+//! let ball = world.new_body((400.0, 100.0), BodyType::Dynamic);
 //! ball.add_circle(20.0).set_restitution(0.5);
 //!
 //! for _ in 0..120 {
@@ -34,6 +34,8 @@
 //! The simulation is done by the Rapier engine, where LÖVE uses Box2D, so
 //! the API matches LÖVE's but the exact motion does not. This module works
 //! without a running game, except for [`World::draw_debug`].
+
+use glam::Vec2;
 
 mod body;
 mod coupling;
@@ -58,7 +60,7 @@ pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};
 /// touch. LÖVE's `love.physics.getDistance`.
 ///
 /// Panics if the two belong to different worlds or either was destroyed.
-pub fn distance(a: &Fixture, b: &Fixture) -> (f32, (f32, f32), (f32, f32)) {
+pub fn distance(a: &Fixture, b: &Fixture) -> (f32, Vec2, Vec2) {
     use rapier2d::parry::query::{self, ClosestPoints};
 
     assert!(
@@ -76,14 +78,16 @@ pub fn distance(a: &Fixture, b: &Fixture) -> (f32, (f32, f32), (f32, f32)) {
     let (one, two) = (collider(a), collider(b));
     let (pose_one, pose_two) = (*one.position(), *two.position());
     match query::closest_points(&pose_one, one.shape(), &pose_two, two.shape(), f32::MAX) {
-        Ok(ClosestPoints::WithinMargin(p, q)) => ((q - p).length(), (p.x, p.y), (q.x, q.y)),
+        Ok(ClosestPoints::WithinMargin(p, q)) => {
+            ((q - p).length(), (p.x, p.y).into(), (q.x, q.y).into())
+        }
         _ => {
             // Overlapping: report where they touch.
             let point = query::contact(&pose_one, one.shape(), &pose_two, two.shape(), 0.0)
                 .ok()
                 .flatten()
                 .map_or_else(|| pose_one.translation, |contact| contact.point1);
-            (0.0, (point.x, point.y), (point.x, point.y))
+            (0.0, (point.x, point.y).into(), (point.x, point.y).into())
         }
     }
 }

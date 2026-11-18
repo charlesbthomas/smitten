@@ -95,26 +95,26 @@ impl Game for Sprites {
 
         // A floor, a sun and a few rays, drawn with shapes.
         graphics::set_color(Color::rgb(0.2, 0.18, 0.3));
-        graphics::rectangle(DrawMode::Fill, 0.0, height - 80.0, width, 80.0);
+        graphics::rectangle(DrawMode::Fill, (0.0, height - 80.0), (width, 80.0));
 
         graphics::push();
-        graphics::translate(width - 120.0, 120.0);
+        graphics::translate((width - 120.0, 120.0));
         graphics::rotate(timer::time() as f32 * 0.3);
         graphics::set_color(Color::rgb(1.0, 0.8, 0.4));
-        graphics::circle(DrawMode::Fill, 0.0, 0.0, 40.0);
+        graphics::circle(DrawMode::Fill, (0.0, 0.0), 40.0);
         graphics::set_line_width(4.0);
-        graphics::circle(DrawMode::Line, 0.0, 0.0, 56.0);
+        graphics::circle(DrawMode::Line, (0.0, 0.0), 56.0);
         for ray in 0..8 {
             graphics::push();
             graphics::rotate(ray as f32 * std::f32::consts::TAU / 8.0);
-            graphics::line(70.0, 0.0, 95.0, 0.0);
+            graphics::line((70.0, 0.0), (95.0, 0.0));
             graphics::pop();
         }
         graphics::pop();
 
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.4));
         graphics::set_line_width(2.0);
-        graphics::rectangle(DrawMode::Line, 20.0, 20.0, 160.0, 90.0);
+        graphics::rectangle(DrawMode::Line, (20.0, 20.0), (160.0, 90.0));
 
         // The hearts, each tinted and spun around its center.
         let (center_x, center_y) = (

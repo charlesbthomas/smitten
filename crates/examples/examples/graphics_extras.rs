@@ -60,17 +60,16 @@ impl Game for Extras {
         let title = Text::new(&big, "Graphics extras");
         let small = Font::default_at(13.0);
         let mut labels = Text::new(&small, "");
-        labels.add("Hover the square", 40.0, 250.0);
-        labels.add_f("Plain / mipmapped", 220.0, Align::Center, 260.0, 250.0);
-        labels.add("Array image layers", 540.0, 250.0);
+        labels.add("Hover the square", (40.0, 250.0));
+        labels.add_f("Plain / mipmapped", 220.0, Align::Center, (260.0, 250.0));
+        labels.add("Array image layers", (540.0, 250.0));
         labels.add_f(
             "Cube image by direction, then array image by layer, read in a shader",
             360.0,
             Align::Left,
-            40.0,
-            470.0,
+            (40.0, 470.0),
         );
-        labels.add("Color mask: no red", 560.0, 380.0);
+        labels.add("Color mask: no red", (560.0, 380.0));
 
         // A fine checkerboard shimmers when drawn small, unless it has
         // mipmaps to draw from.
@@ -142,13 +141,13 @@ impl Game for Extras {
 
     fn draw(&mut self) {
         graphics::set_color(Color::WHITE);
-        graphics::draw_text(&self.title, 40.0, 30.0);
+        graphics::draw_text(&self.title, (40.0, 30.0));
         graphics::set_color(Color::rgb(0.7, 0.72, 0.8));
-        graphics::draw_text(&self.labels, 0.0, 0.0);
+        graphics::draw_text(&self.labels, (0.0, 0.0));
 
         // The mouse in the square's own coordinates.
-        let (mx, my) = mouse::position();
-        let (lx, ly) = self.square.inverse_transform_point(mx, my);
+        let smitten::Vec2 { x: mx, y: my } = mouse::position();
+        let smitten::Vec2 { x: lx, y: ly } = self.square.inverse_transform_point((mx, my));
         let inside = (0.0..80.0).contains(&lx) && (0.0..80.0).contains(&ly);
         graphics::push();
         graphics::apply_transform(&self.square);
@@ -157,7 +156,7 @@ impl Game for Extras {
         } else {
             Color::rgb(0.4, 0.45, 0.6)
         });
-        graphics::rectangle(DrawMode::Fill, 0.0, 0.0, 80.0, 80.0);
+        graphics::rectangle(DrawMode::Fill, (0.0, 0.0), (80.0, 80.0));
         graphics::pop();
 
         graphics::set_color(Color::WHITE);
@@ -170,12 +169,12 @@ impl Game for Extras {
         }
 
         graphics::set_shader(Some(&self.shader));
-        graphics::rectangle(DrawMode::Fill, 40.0, 320.0, 480.0, 140.0);
+        graphics::rectangle(DrawMode::Fill, (40.0, 320.0), (480.0, 140.0));
         graphics::set_shader(None);
 
         // White drawn without its red channel leaves cyan.
         graphics::set_color_mask(false, true, true, true);
-        graphics::rectangle(DrawMode::Fill, 580.0, 300.0, 140.0, 70.0);
+        graphics::rectangle(DrawMode::Fill, (580.0, 300.0), (140.0, 70.0));
         graphics::set_color_mask(true, true, true, true);
 
         let stats = graphics::stats();
@@ -189,8 +188,7 @@ impl Game for Extras {
                 stats.fonts,
                 stats.texture_memory as f32 / 1_000_000.0
             ),
-            40.0,
-            560.0,
+            (40.0, 560.0),
         );
     }
 }

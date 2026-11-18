@@ -97,11 +97,11 @@ impl Game for Input {
     fn draw(&mut self) {
         graphics::set_color(Color::rgb(0.95, 0.75, 0.3));
         for &(x, y) in &self.dots {
-            graphics::circle(DrawMode::Fill, x, y, 6.0);
+            graphics::circle(DrawMode::Fill, (x, y), 6.0);
         }
 
         graphics::set_color(Color::rgb(0.3, 0.7, 0.95));
-        graphics::rectangle(DrawMode::Fill, self.x - 20.0, self.y - 20.0, 40.0, 40.0);
+        graphics::rectangle(DrawMode::Fill, (self.x - 20.0, self.y - 20.0), (40.0, 40.0));
 
         let held = mouse::is_down(MouseButton::Left);
         graphics::set_color(if held {
@@ -110,13 +110,18 @@ impl Game for Input {
             Color::WHITE
         });
         graphics::set_line_width(3.0);
-        let (mouse_x, mouse_y) = mouse::position();
-        graphics::circle(DrawMode::Line, mouse_x, mouse_y, self.ring_radius);
+        let smitten::Vec2 {
+            x: mouse_x,
+            y: mouse_y,
+        } = mouse::position();
+        graphics::circle(DrawMode::Line, (mouse_x, mouse_y), self.ring_radius);
 
         graphics::set_color(Color::rgb(0.4, 0.9, 0.5));
         for id in touch::touches() {
-            if let (Some((x, y)), Some(pressure)) = (touch::position(id), touch::pressure(id)) {
-                graphics::circle(DrawMode::Fill, x, y, 16.0 + 24.0 * pressure);
+            if let (Some(smitten::Vec2 { x, y }), Some(pressure)) =
+                (touch::position(id), touch::pressure(id))
+            {
+                graphics::circle(DrawMode::Fill, (x, y), 16.0 + 24.0 * pressure);
             }
         }
     }

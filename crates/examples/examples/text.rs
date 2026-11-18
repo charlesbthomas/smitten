@@ -46,7 +46,7 @@ impl Game for Text {
 
         graphics::set_font(&self.title);
         graphics::set_color(Color::rgb(0.95, 0.35, 0.45));
-        graphics::printf("Hello, Smitten", 0.0, 30.0, width, Align::Center);
+        graphics::printf("Hello, Smitten", (0.0, 30.0), width, Align::Center);
 
         graphics::set_font(&self.body);
         let column = (width - 100.0) / 4.0;
@@ -56,16 +56,15 @@ impl Game for Text {
         {
             let x = 20.0 + index as f32 * (column + 20.0);
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.08));
-            graphics::rectangle(DrawMode::Fill, x, 120.0, column, 190.0);
+            graphics::rectangle(DrawMode::Fill, (x, 120.0), (column, 190.0));
             graphics::set_color(Color::WHITE);
-            graphics::printf(PARAGRAPH, x, 120.0, column, align);
+            graphics::printf(PARAGRAPH, (x, 120.0), column, align);
         }
 
         graphics::set_color(Color::rgb(0.5, 0.85, 0.6));
         graphics::print(
             &format!("Space pressed {} times (saved between runs)", self.presses),
-            20.0,
-            340.0,
+            (20.0, 340.0),
         );
 
         graphics::set_font(&self.pixel);
@@ -97,7 +96,7 @@ impl Game for Text {
         );
 
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.6));
-        graphics::print(&format!("{} FPS", timer::fps()), 20.0, 570.0);
+        graphics::print(&format!("{} FPS", timer::fps()), (20.0, 570.0));
     }
 
     fn key_pressed(&mut self, key: Key, is_repeat: bool) {

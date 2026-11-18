@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::f32::consts::TAU;
 
 use smitten_core::backend::Vertex;
@@ -236,17 +237,20 @@ impl ParticleSystem {
     /// corner, that the particle turns and scales around and that sits on
     /// the particle's position. The default is the image's center, or
     /// each quad's center when quads are set.
-    pub fn set_offset(&mut self, x: f32, y: f32) {
+    pub fn set_offset(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.offset = Some((x, y));
     }
 
     /// Returns the point particles turn and scale around. Until one is
     /// set, this is the center of the image.
-    pub fn offset(&self) -> (f32, f32) {
-        self.offset.unwrap_or((
-            self.texture.width() as f32 / 2.0,
-            self.texture.height() as f32 / 2.0,
-        ))
+    pub fn offset(&self) -> Vec2 {
+        self.offset
+            .unwrap_or((
+                self.texture.width() as f32 / 2.0,
+                self.texture.height() as f32 / 2.0,
+            ))
+            .into()
     }
 
     /// Sets the sizes a particle passes through over its life, as scale
@@ -332,7 +336,8 @@ impl ParticleSystem {
     /// Sets where new particles appear, relative to where the system is
     /// drawn. Move this to leave a trail behind a moving object; see also
     /// [`move_to`](ParticleSystem::move_to).
-    pub fn set_position(&mut self, x: f32, y: f32) {
+    pub fn set_position(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.position = (x, y);
         self.previous_position = (x, y);
     }
@@ -341,19 +346,21 @@ impl ParticleSystem {
     /// next [`update`](ParticleSystem::update) emits along the way from
     /// the old position, so a fast-moving emitter leaves a smooth trail
     /// rather than clumps.
-    pub fn move_to(&mut self, x: f32, y: f32) {
+    pub fn move_to(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.position = (x, y);
     }
 
     /// Returns where new particles appear.
-    pub fn position(&self) -> (f32, f32) {
-        self.position
+    pub fn position(&self) -> Vec2 {
+        self.position.into()
     }
 
     /// Spreads new particles evenly over a box reaching `dx` to each side
     /// of the position and `dy` above and below it.
-    pub fn set_emission_area(&mut self, dx: f32, dy: f32) {
-        self.set_emission_area_ex(AreaSpreadDistribution::Uniform, dx, dy, 0.0, false);
+    pub fn set_emission_area(&mut self, delta: impl Into<Vec2>) {
+        let Vec2 { x: dx, y: dy } = delta.into();
+        self.set_emission_area_ex(AreaSpreadDistribution::Uniform, (dx, dy), 0.0, false);
     }
 
     /// Sets the area new particles appear in with the full set of LÖVE's
@@ -363,11 +370,11 @@ impl ParticleSystem {
     pub fn set_emission_area_ex(
         &mut self,
         distribution: AreaSpreadDistribution,
-        dx: f32,
-        dy: f32,
+        delta: impl Into<Vec2>,
         angle: f32,
         relative_direction: bool,
     ) {
+        let Vec2 { x: dx, y: dy } = delta.into();
         self.area = EmissionArea {
             distribution,
             dx: dx.abs(),
@@ -805,10 +812,10 @@ impl ParticleSystem {
             let (sin, cos) = angle.sin_cos();
             let corner = |px: f32, py: f32, u: f32, v: f32| {
                 let (dx, dy) = ((px - offset_x) * size, (py - offset_y) * size);
-                let (x, y) = transform.apply(
+                let Vec2 { x, y } = transform.apply((
                     particle.x + dx * cos - dy * sin,
                     particle.y + dx * sin + dy * cos,
-                );
+                ));
                 Vertex {
                     position: [x, y],
                     uv: [u, v],
@@ -1119,7 +1126,7 @@ mod tests {
         particles.set_colors(&[Color::WHITE]);
         particles.set_relative_rotation(true);
         particles.set_insert_mode(ParticleInsertMode::Random);
-        particles.set_emission_area_ex(AreaSpreadDistribution::Ellipse, -3.0, 4.0, 1.0, true);
+        particles.set_emission_area_ex(AreaSpreadDistribution::Ellipse, (-3.0, 4.0), 1.0, true);
 
         assert_eq!(particles.emission_rate(), 5.0);
         assert_eq!(particles.emitter_lifetime(), Some(2.0));
@@ -1150,9 +1157,9 @@ mod tests {
                 relative_direction: true,
             }
         );
-        assert_eq!(particles.offset(), (4.0, 4.0));
-        particles.set_offset(1.0, 2.0);
-        assert_eq!(particles.offset(), (1.0, 2.0));
+        assert_eq!(particles.offset(), Vec2::new(4.0, 4.0));
+        particles.set_offset((1.0, 2.0));
+        assert_eq!(particles.offset(), Vec2::new(1.0, 2.0));
         assert_eq!(particles.buffer_size(), 10);
     }
 
@@ -1216,9 +1223,9 @@ mod tests {
         let mut particles = system(10);
         particles.set_particle_lifetime(5.0, 5.0);
         particles.set_insert_mode(ParticleInsertMode::Bottom);
-        particles.set_position(0.0, 0.0);
+        particles.set_position((0.0, 0.0));
         particles.emit(1);
-        particles.set_position(100.0, 0.0);
+        particles.set_position((100.0, 0.0));
         particles.emit(1);
         // The newer particle at x = 100 is drawn first, underneath.
         let vertices = particles.vertices(&Transform::IDENTITY, Color::WHITE);
@@ -1231,7 +1238,7 @@ mod tests {
         let mut particles = system(100);
         particles.set_particle_lifetime(5.0, 5.0);
         particles.set_emission_rate(4.0);
-        particles.move_to(100.0, 0.0);
+        particles.move_to((100.0, 0.0));
         particles.update(1.0);
         let vertices = particles.vertices(&Transform::IDENTITY, Color::WHITE);
         let centers: Vec<f32> = vertices
@@ -1322,7 +1329,12 @@ mod tests {
         let mut particles = system(100);
         particles.set_particle_lifetime(5.0, 5.0);
         particles.set_speed(10.0, 10.0);
-        particles.set_emission_area_ex(AreaSpreadDistribution::BorderEllipse, 5.0, 5.0, 0.0, true);
+        particles.set_emission_area_ex(
+            AreaSpreadDistribution::BorderEllipse,
+            (5.0, 5.0),
+            0.0,
+            true,
+        );
         particles.emit(50);
         for particle in &particles.particles {
             // Moving the same way as the particle lies from the center.
@@ -1336,8 +1348,7 @@ mod tests {
         particles.set_particle_lifetime(5.0, 5.0);
         particles.set_emission_area_ex(
             AreaSpreadDistribution::BorderRectangle,
-            1.0,
-            0.0,
+            (1.0, 0.0),
             0.0,
             false,
         );
@@ -1352,8 +1363,7 @@ mod tests {
         swirling.set_particle_lifetime(5.0, 5.0);
         swirling.set_emission_area_ex(
             AreaSpreadDistribution::BorderRectangle,
-            1.0,
-            0.0,
+            (1.0, 0.0),
             0.0,
             false,
         );
@@ -1420,8 +1430,8 @@ mod tests {
         particles.set_particle_lifetime(2.0, 2.0);
         // Two 4x2 frames side by side in the 8x8 image.
         particles.set_quads(&[
-            Quad::new(0.0, 0.0, 4.0, 2.0, 8.0, 8.0),
-            Quad::new(4.0, 0.0, 4.0, 2.0, 8.0, 8.0),
+            Quad::new((0.0, 0.0), (4.0, 2.0), (8.0, 8.0)),
+            Quad::new((4.0, 0.0), (4.0, 2.0), (8.0, 8.0)),
         ]);
         particles.emit(1);
         let first = particles.vertices(&Transform::IDENTITY, Color::WHITE);
@@ -1438,7 +1448,7 @@ mod tests {
     fn the_offset_is_the_point_on_the_particle() {
         let mut particles = system(1);
         particles.set_particle_lifetime(2.0, 2.0);
-        particles.set_offset(0.0, 0.0);
+        particles.set_offset((0.0, 0.0));
         particles.emit(1);
         let vertices = particles.vertices(&Transform::IDENTITY, Color::WHITE);
         assert_eq!(vertices[0].position, [0.0, 0.0]);

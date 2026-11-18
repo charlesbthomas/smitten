@@ -1,3 +1,4 @@
+use glam::Vec2;
 use std::cell::RefCell;
 use std::ops::Range;
 
@@ -18,13 +19,13 @@ use crate::Color;
 /// ```no_run
 /// # use smitten::graphics::{self, Image, Quad, SpriteBatch};
 /// let tiles = Image::load("tiles.png")?;
-/// let grass = Quad::new(0.0, 0.0, 16.0, 16.0, 64.0, 64.0);
+/// let grass = Quad::new((0.0, 0.0), (16.0, 16.0), (64.0, 64.0));
 /// let mut map = SpriteBatch::new(&tiles, 1000);
 /// for column in 0..40 {
-///     map.add_quad(&grass, column as f32 * 16.0, 0.0);
+///     map.add_quad(&grass, (column as f32 * 16.0, 0.0));
 /// }
 /// // Every frame, in `draw`:
-/// graphics::draw_sprite_batch(&map, 0.0, 0.0);
+/// graphics::draw_sprite_batch(&map, (0.0, 0.0));
 /// # Ok::<(), smitten::Error>(())
 /// ```
 ///
@@ -153,7 +154,8 @@ impl SpriteBatch {
 
     /// Adds the whole image with its top-left corner at `(x, y)` and
     /// returns the sprite's index, for use with the `set` methods.
-    pub fn add(&mut self, x: f32, y: f32) -> usize {
+    pub fn add(&mut self, position: impl Into<Vec2>) -> usize {
+        let Vec2 { x, y } = position.into();
         self.add_ex(x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
     }
 
@@ -166,7 +168,8 @@ impl SpriteBatch {
     }
 
     /// Adds the part of the image described by `quad` at `(x, y)`.
-    pub fn add_quad(&mut self, quad: &Quad, x: f32, y: f32) -> usize {
+    pub fn add_quad(&mut self, quad: &Quad, position: impl Into<Vec2>) -> usize {
+        let Vec2 { x, y } = position.into();
         self.add_quad_ex(quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
     }
 
@@ -193,7 +196,8 @@ impl SpriteBatch {
     ///
     /// Panics if the batch draws a plain [`Image`], or the layer does not
     /// exist.
-    pub fn add_layer(&mut self, layer: u32, x: f32, y: f32) -> usize {
+    pub fn add_layer(&mut self, layer: u32, position: impl Into<Vec2>) -> usize {
+        let Vec2 { x, y } = position.into();
         self.add_layer_ex(layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
     }
 
@@ -215,7 +219,8 @@ impl SpriteBatch {
     }
 
     /// Adds the part of layer `layer` described by `quad` at `(x, y)`.
-    pub fn add_layer_quad(&mut self, layer: u32, quad: &Quad, x: f32, y: f32) -> usize {
+    pub fn add_layer_quad(&mut self, layer: u32, quad: &Quad, position: impl Into<Vec2>) -> usize {
+        let Vec2 { x, y } = position.into();
         self.add_layer_quad_ex(layer, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
     }
 
@@ -254,7 +259,8 @@ impl SpriteBatch {
     /// `(x, y)`. Its tint becomes the batch's current color.
     ///
     /// Panics if no sprite has that index.
-    pub fn set(&mut self, index: usize, x: f32, y: f32) {
+    pub fn set(&mut self, index: usize, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.set_ex(index, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
     }
 
@@ -278,7 +284,8 @@ impl SpriteBatch {
 
     /// Replaces the sprite at `index` with the part of the image described
     /// by `quad`, at `(x, y)`.
-    pub fn set_quad(&mut self, index: usize, quad: &Quad, x: f32, y: f32) {
+    pub fn set_quad(&mut self, index: usize, quad: &Quad, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.set_quad_ex(index, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
     }
 
@@ -310,7 +317,8 @@ impl SpriteBatch {
     ///
     /// Panics if no sprite has that index, the batch draws a plain
     /// [`Image`], or the layer does not exist.
-    pub fn set_layer(&mut self, index: usize, layer: u32, x: f32, y: f32) {
+    pub fn set_layer(&mut self, index: usize, layer: u32, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
         self.set_layer_ex(index, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
     }
 
@@ -335,7 +343,14 @@ impl SpriteBatch {
 
     /// Replaces the sprite at `index` with the part of layer `layer`
     /// described by `quad`, at `(x, y)`.
-    pub fn set_layer_quad(&mut self, index: usize, layer: u32, quad: &Quad, x: f32, y: f32) {
+    pub fn set_layer_quad(
+        &mut self,
+        index: usize,
+        layer: u32,
+        quad: &Quad,
+        position: impl Into<Vec2>,
+    ) {
+        let Vec2 { x, y } = position.into();
         self.set_layer_quad_ex(index, layer, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
     }
 
@@ -592,7 +607,7 @@ impl SpriteBatch {
             Source::Image(image) => (image.width() as f32, image.height() as f32),
             Source::Array(image) => (image.width() as f32, image.height() as f32),
         };
-        Quad::new(0.0, 0.0, width, height, width, height)
+        Quad::new((0.0, 0.0), (width, height), (width, height))
     }
 
     /// The sprites that are drawn, after the draw range.
@@ -632,7 +647,7 @@ impl SpriteBatch {
             (quad.y + quad.height) / quad.sheet_height,
         );
         let corner = |x: f32, y: f32, u: f32, v: f32| {
-            let (x, y) = transform.apply(x, y);
+            let Vec2 { x, y } = transform.apply((x, y));
             Vertex {
                 position: [x, y],
                 uv: [u, v],
@@ -661,7 +676,7 @@ impl SpriteBatch {
             &self.vertices[drawn.start * VERTICES_PER_SPRITE..drawn.end * VERTICES_PER_SPRITE];
         out.reserve(vertices.len());
         out.extend(vertices.iter().map(|vertex| {
-            let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
+            let Vec2 { x, y } = transform.apply((vertex.position[0], vertex.position[1]));
             Vertex {
                 position: [x, y],
                 uv: vertex.uv,
@@ -699,7 +714,7 @@ mod tests {
     fn the_draw_range_limits_what_is_drawn() {
         let mut batch = batch();
         for index in 0..5 {
-            batch.add(index as f32 * 100.0, 0.0);
+            batch.add((index as f32 * 100.0, 0.0));
         }
         batch.set_draw_range(Some((1, 2)));
         let out = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
@@ -721,8 +736,8 @@ mod tests {
 
         let mut batch = batch();
         assert!(batch.attached_mesh().is_none());
-        batch.add(0.0, 0.0);
-        batch.add(100.0, 0.0);
+        batch.add((0.0, 0.0));
+        batch.add((100.0, 0.0));
         let shades = Mesh::with_format_and_count(
             &[VertexAttribute::new("Shade", VertexDataType::Float, 1)],
             8,
@@ -767,18 +782,18 @@ mod tests {
     #[test]
     fn add_returns_indexes_in_order_and_counts_sprites() {
         let mut batch = batch();
-        assert_eq!(batch.add(0.0, 0.0), 0);
-        assert_eq!(batch.add(10.0, 0.0), 1);
+        assert_eq!(batch.add((0.0, 0.0)), 0);
+        assert_eq!(batch.add((10.0, 0.0)), 1);
         assert_eq!(batch.count(), 2);
         batch.clear();
         assert_eq!(batch.count(), 0);
-        assert_eq!(batch.add(0.0, 0.0), 0);
+        assert_eq!(batch.add((0.0, 0.0)), 0);
     }
 
     #[test]
     fn a_sprite_covers_the_whole_image_where_it_was_added() {
         let mut batch = batch();
-        batch.add(100.0, 50.0);
+        batch.add((100.0, 50.0));
         let vertices = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
 
         assert_eq!(vertices.len(), 6);
@@ -792,8 +807,8 @@ mod tests {
     #[test]
     fn a_quad_picks_part_of_the_image() {
         let mut batch = batch();
-        let quad = Quad::new(32.0, 0.0, 16.0, 16.0, 64.0, 32.0);
-        batch.add_quad(&quad, 0.0, 0.0);
+        let quad = Quad::new((32.0, 0.0), (16.0, 16.0), (64.0, 32.0));
+        batch.add_quad(&quad, (0.0, 0.0));
         let vertices = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
 
         assert_eq!(vertices[0].uv, [0.5, 0.0]);
@@ -804,9 +819,9 @@ mod tests {
     #[test]
     fn set_replaces_one_sprite_and_leaves_the_rest() {
         let mut batch = batch();
-        batch.add(0.0, 0.0);
-        batch.add(10.0, 0.0);
-        batch.set(0, 500.0, 500.0);
+        batch.add((0.0, 0.0));
+        batch.add((10.0, 0.0));
+        batch.set(0, (500.0, 500.0));
         let vertices = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
 
         assert_eq!(batch.count(), 2);
@@ -818,17 +833,17 @@ mod tests {
     #[should_panic(expected = "out of range")]
     fn setting_a_sprite_that_was_never_added_panics() {
         let mut batch = batch();
-        batch.add(0.0, 0.0);
-        batch.set(1, 0.0, 0.0);
+        batch.add((0.0, 0.0));
+        batch.set(1, (0.0, 0.0));
     }
 
     #[test]
     fn each_sprite_keeps_the_color_it_was_added_with() {
         let mut batch = batch();
         batch.set_color(Color::rgb(1.0, 0.0, 0.0));
-        batch.add(0.0, 0.0);
+        batch.add((0.0, 0.0));
         batch.set_color(Color::WHITE);
-        batch.add(0.0, 0.0);
+        batch.add((0.0, 0.0));
         let vertices = drawn(
             &batch,
             &Transform::IDENTITY,
@@ -843,9 +858,9 @@ mod tests {
     #[test]
     fn drawing_moves_every_sprite_by_the_transform() {
         let mut batch = batch();
-        batch.add(1.0, 2.0);
+        batch.add((1.0, 2.0));
         let mut transform = Transform::IDENTITY;
-        transform.translate(10.0, 20.0);
+        transform.translate((10.0, 20.0));
         transform.scale(2.0, 2.0);
         let vertices = drawn(&batch, &transform, Color::WHITE);
 
@@ -860,12 +875,12 @@ mod tests {
     #[test]
     fn sprites_of_an_array_image_keep_their_layers() {
         let mut batch = layered();
-        assert_eq!(batch.add_layer(2, 0.0, 0.0), 0);
-        assert_eq!(batch.add(16.0, 0.0), 1);
+        assert_eq!(batch.add_layer(2, (0.0, 0.0)), 0);
+        assert_eq!(batch.add((16.0, 0.0)), 1);
         assert_eq!(batch.layer(0), 2);
         assert_eq!(batch.layer(1), 0);
 
-        batch.set_layer(1, 1, 32.0, 0.0);
+        batch.set_layer(1, 1, (32.0, 0.0));
         assert_eq!(batch.layer(1), 1);
         let vertices = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
         // A whole layer is the size of the array image.
@@ -879,7 +894,7 @@ mod tests {
     fn neighbouring_sprites_on_one_layer_share_a_run() {
         let mut batch = layered();
         for layer in [0, 0, 1, 1, 1, 0] {
-            batch.add_layer(layer, 0.0, 0.0);
+            batch.add_layer(layer, (0.0, 0.0));
         }
         assert_eq!(batch.layer_runs(), [(0, 0..12), (1, 12..30), (0, 30..36)]);
         // Runs are counted from the first sprite drawn.
@@ -891,19 +906,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "layer 3 does not exist")]
     fn a_missing_layer_panics() {
-        layered().add_layer(3, 0.0, 0.0);
+        layered().add_layer(3, (0.0, 0.0));
     }
 
     #[test]
     #[should_panic(expected = "only a sprite batch of an ArrayImage has layers")]
     fn a_plain_image_has_no_layers() {
-        batch().add_layer(0, 0.0, 0.0);
+        batch().add_layer(0, (0.0, 0.0));
     }
 
     #[test]
     fn switching_to_a_plain_image_shows_layer_zero() {
         let mut batch = layered();
-        batch.add_layer(2, 0.0, 0.0);
+        batch.add_layer(2, (0.0, 0.0));
         let image = Image::from_texture(TextureId(1), 64, 32, Filter::Nearest, Kind::Image);
         batch.set_image(&image);
         assert_eq!(batch.layer(0), 0);

@@ -112,10 +112,10 @@ impl Block {
         let mut top = f32::MAX;
         for &(x, y, width, height) in KINDS[self.kind].parts {
             for (corner_x, corner_y) in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
-                let (_, world_y) = self.body.world_point(
+                let smitten::Vec2 { x: _, y: world_y } = self.body.world_point((
                     (x + corner_x * width) * CELL,
                     (y + corner_y * height) * CELL,
-                );
+                ));
                 top = top.min(world_y);
             }
         }
@@ -124,7 +124,7 @@ impl Block {
 
     /// Whether it has come to rest, so that it counts toward the height.
     fn is_resting(&self) -> bool {
-        let (vx, vy) = self.body.linear_velocity();
+        let smitten::Vec2 { x: vx, y: vy } = self.body.linear_velocity();
         // Loose enough to keep counting while the tower sways.
         self.landed.is_some_and(|seconds| seconds > 0.6)
             && vx.hypot(vy) < 60.0
@@ -260,13 +260,11 @@ impl Topple {
         };
         let body = self
             .world
-            .new_body(x, self.camera + DROPPER_Y, BodyType::Dynamic);
+            .new_body((x, self.camera + DROPPER_Y), BodyType::Dynamic);
         for &(part_x, part_y, width, height) in KINDS[kind].parts {
             body.add_rectangle_at(
-                part_x * CELL,
-                part_y * CELL,
-                width * CELL,
-                height * CELL,
+                (part_x * CELL, part_y * CELL),
+                (width * CELL, height * CELL),
                 0.0,
             )
             .set_friction(0.9)
@@ -301,7 +299,7 @@ impl Topple {
             return;
         }
         self.shake = self.shake.max(strength * 9.0);
-        self.dust.set_position(x, y);
+        self.dust.set_position((x, y));
         self.dust.emit((strength * 22.0) as usize + 3);
         self.sounds
             .thud
@@ -349,7 +347,7 @@ impl Topple {
     fn steering(&self) -> f32 {
         let mut steer = keyboard::axis(&[Key::Left, Key::A], &[Key::Right, Key::D]);
         if let Some(pad) = joystick::gamepads().first() {
-            steer += pad.left_stick(0.2).0;
+            steer += pad.left_stick(0.2).x;
             if pad.is_gamepad_down(GamepadButton::DpadLeft) {
                 steer -= 1.0;
             }
@@ -366,25 +364,23 @@ impl Game for Topple {
         graphics::set_background_color(Color::rgb(0.09, 0.1, 0.16));
         graphics::set_line_style(LineStyle::Smooth);
 
-        let world = World::new(0.0, 900.0);
+        let world = World::new((0.0, 900.0));
         world.set_meter(METER);
 
         // The platform turns on a pin through its middle.
-        let post = world.new_body(WIDTH / 2.0, PLATFORM_Y + 60.0, BodyType::Static);
+        let post = world.new_body((WIDTH / 2.0, PLATFORM_Y + 60.0), BodyType::Static);
         let platform = world.new_body(
-            WIDTH / 2.0,
-            PLATFORM_Y + PLATFORM_HEIGHT / 2.0,
+            (WIDTH / 2.0, PLATFORM_Y + PLATFORM_HEIGHT / 2.0),
             BodyType::Dynamic,
         );
         platform
-            .add_rectangle(PLATFORM_WIDTH, PLATFORM_HEIGHT)
+            .add_rectangle((PLATFORM_WIDTH, PLATFORM_HEIGHT))
             .set_friction(1.0)
             .set_density(PLATFORM_DENSITY);
         world.new_revolute_joint(
             &post,
             &platform,
-            WIDTH / 2.0,
-            PLATFORM_Y + PLATFORM_HEIGHT / 2.0,
+            (WIDTH / 2.0, PLATFORM_Y + PLATFORM_HEIGHT / 2.0),
             false,
         );
 
@@ -529,7 +525,7 @@ impl Game for Topple {
             .values()
             .filter(|block| {
                 // Not one that is on its way over the side.
-                let (vx, vy) = block.body.linear_velocity();
+                let smitten::Vec2 { x: vx, y: vy } = block.body.linear_velocity();
                 block.landed.is_some() && vx.hypot(vy) < 150.0
             })
             .map(Block::top)
@@ -549,10 +545,10 @@ impl Game for Topple {
 
     fn draw(&mut self) {
         graphics::push();
-        graphics::translate(
+        graphics::translate((
             math::random_range(-1.0, 1.0) * self.shake,
             math::random_range(-1.0, 1.0) * self.shake - self.camera,
-        );
+        ));
         self.draw_world();
         graphics::pop();
         self.draw_hud();
@@ -600,10 +596,8 @@ impl Topple {
             graphics::set_color(fill);
             graphics::rectangle(
                 DrawMode::Fill,
-                (x - width / 2.0) * CELL,
-                (y - height / 2.0) * CELL,
-                width * CELL,
-                height * CELL,
+                ((x - width / 2.0) * CELL, (y - height / 2.0) * CELL),
+                (width * CELL, height * CELL),
             );
         }
         graphics::set_color(edge);
@@ -611,10 +605,11 @@ impl Topple {
         for &(x, y, width, height) in KINDS[kind].parts {
             graphics::rectangle(
                 DrawMode::Line,
-                (x - width / 2.0) * CELL + 1.0,
-                (y - height / 2.0) * CELL + 1.0,
-                width * CELL - 2.0,
-                height * CELL - 2.0,
+                (
+                    (x - width / 2.0) * CELL + 1.0,
+                    (y - height / 2.0) * CELL + 1.0,
+                ),
+                (width * CELL - 2.0, height * CELL - 2.0),
             );
         }
     }
@@ -628,11 +623,11 @@ impl Topple {
         for meter in 1..=top_meter {
             let y = PLATFORM_Y - meter as f32 * METER;
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.07));
-            graphics::line(0.0, y, WIDTH, y);
+            graphics::line((0.0, y), (WIDTH, y));
             // Not under the height readout in the corner.
             if y - self.camera > 76.0 {
                 graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.35));
-                graphics::print(&format!("{meter} m"), 8.0, y - 20.0);
+                graphics::print(&format!("{meter} m"), (8.0, y - 20.0));
             }
         }
 
@@ -641,8 +636,8 @@ impl Topple {
             let y = PLATFORM_Y - self.best;
             graphics::set_color(Color::rgba(1.0, 0.85, 0.3, 0.7));
             graphics::set_line_width(2.0);
-            graphics::dashed_line(0.0, y, WIDTH, y, 14.0, 10.0);
-            graphics::printf("best", 0.0, y - 22.0, WIDTH - 10.0, Align::Right);
+            graphics::dashed_line((0.0, y), (WIDTH, y), 14.0, 10.0);
+            graphics::printf("best", (0.0, y - 22.0), WIDTH - 10.0, Align::Right);
         }
 
         // The post and the platform on it.
@@ -655,37 +650,34 @@ impl Topple {
                 (WIDTH / 2.0 - 46.0, PLATFORM_Y + 500.0),
             ],
         );
-        let (x, y) = self.platform.position();
+        let smitten::Vec2 { x, y } = self.platform.position();
         graphics::push();
-        graphics::translate(x, y);
+        graphics::translate((x, y));
         graphics::rotate(self.platform.angle());
         graphics::set_color(Color::rgb(0.75, 0.78, 0.86));
         graphics::rounded_rectangle(
             DrawMode::Fill,
-            -PLATFORM_WIDTH / 2.0,
-            -PLATFORM_HEIGHT / 2.0,
-            PLATFORM_WIDTH,
-            PLATFORM_HEIGHT,
-            5.0,
-            5.0,
+            (-PLATFORM_WIDTH / 2.0, -PLATFORM_HEIGHT / 2.0),
+            (PLATFORM_WIDTH, PLATFORM_HEIGHT),
+            (5.0, 5.0),
         );
         graphics::pop();
         graphics::set_color(Color::rgb(0.45, 0.48, 0.58));
-        graphics::circle(DrawMode::Fill, x, y, 5.0);
+        graphics::circle(DrawMode::Fill, (x, y), 5.0);
 
         for block in self.blocks.values() {
-            let (x, y) = block.body.position();
+            let smitten::Vec2 { x, y } = block.body.position();
             let color = KINDS[block.kind].color;
             let fill = color.lerp(Color::WHITE, block.flash * 0.7);
             graphics::push();
-            graphics::translate(x, y);
+            graphics::translate((x, y));
             graphics::rotate(block.body.angle());
             Self::draw_shape(block.kind, fill, Color::rgba(0.0, 0.0, 0.0, 0.3));
             graphics::pop();
         }
 
         graphics::set_color(Color::WHITE);
-        graphics::draw_particles(&self.dust, 0.0, 0.0);
+        graphics::draw_particles(&self.dust, (0.0, 0.0));
 
         // The block waiting to be dropped, and a line showing where it
         // will fall.
@@ -693,9 +685,9 @@ impl Topple {
             let y = self.camera + DROPPER_Y;
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.12));
             graphics::set_line_width(1.0);
-            graphics::line(x, y, x, PLATFORM_Y + 200.0);
+            graphics::line((x, y), (x, PLATFORM_Y + 200.0));
             graphics::push();
-            graphics::translate(x, y);
+            graphics::translate((x, y));
             graphics::rotate(turns as f32 * FRAC_PI_2);
             let color = KINDS[kind].color;
             Self::draw_shape(
@@ -710,7 +702,10 @@ impl Topple {
     fn draw_hud(&self) {
         graphics::set_font(&self.small_font);
         graphics::set_color(Color::WHITE);
-        graphics::print(&format!("Height {:.1} m", self.height / METER), 16.0, 12.0);
+        graphics::print(
+            &format!("Height {:.1} m", self.height / METER),
+            (16.0, 12.0),
+        );
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.6));
         graphics::print(
             &format!(
@@ -718,8 +713,7 @@ impl Topple {
                 self.run_best / METER,
                 self.best.max(self.run_best) / METER
             ),
-            16.0,
-            34.0,
+            (16.0, 34.0),
         );
 
         // Hearts, with the lost ones faded.
@@ -741,9 +735,9 @@ impl Topple {
         // The block that comes after this one.
         if !self.over {
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.6));
-            graphics::printf("next", WIDTH - 130.0, 56.0, 114.0, Align::Right);
+            graphics::printf("next", (WIDTH - 130.0, 56.0), 114.0, Align::Right);
             graphics::push();
-            graphics::translate(WIDTH - 60.0, 104.0);
+            graphics::translate((WIDTH - 60.0, 104.0));
             graphics::scale(0.5, 0.5);
             let color = KINDS[self.upcoming].color;
             Self::draw_shape(self.upcoming, color, Color::rgba(0.0, 0.0, 0.0, 0.3));
@@ -755,40 +749,37 @@ impl Topple {
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, alpha));
             graphics::printf(
                 "Left and Right move.  Up turns.  Space drops.",
-                0.0,
-                HEIGHT - 36.0,
+                (0.0, HEIGHT - 36.0),
                 WIDTH,
                 Align::Center,
             );
         }
         if let Some((text, seconds)) = &self.message {
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, seconds.min(1.0)));
-            graphics::printf(text, 0.0, HEIGHT - 62.0, WIDTH, Align::Center);
+            graphics::printf(text, (0.0, HEIGHT - 62.0), WIDTH, Align::Center);
         }
 
         if self.over {
             graphics::set_color(Color::rgba(0.0, 0.0, 0.0, 0.55));
-            graphics::rectangle(DrawMode::Fill, 0.0, 0.0, WIDTH, HEIGHT);
+            graphics::rectangle(DrawMode::Fill, (0.0, 0.0), (WIDTH, HEIGHT));
             graphics::set_color(Color::WHITE);
             graphics::set_font(&self.big_font);
-            graphics::printf("Toppled!", 0.0, 190.0, WIDTH, Align::Center);
+            graphics::printf("Toppled!", (0.0, 190.0), WIDTH, Align::Center);
             graphics::set_font(&self.small_font);
             graphics::printf(
                 &format!("You built {:.1} m.", self.run_best / METER),
-                0.0,
-                260.0,
+                (0.0, 260.0),
                 WIDTH,
                 Align::Center,
             );
             if self.new_record {
                 graphics::set_color(Color::rgb(1.0, 0.85, 0.3));
-                graphics::printf("A new best!", 0.0, 288.0, WIDTH, Align::Center);
+                graphics::printf("A new best!", (0.0, 288.0), WIDTH, Align::Center);
             }
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.7));
             graphics::printf(
                 "Space to build again.  Escape to quit.",
-                0.0,
-                340.0,
+                (0.0, 340.0),
                 WIDTH,
                 Align::Center,
             );

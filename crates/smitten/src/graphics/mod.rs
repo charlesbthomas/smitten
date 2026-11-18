@@ -33,6 +33,7 @@ mod transform;
 #[cfg(feature = "video")]
 mod video;
 
+use glam::Vec2;
 use std::path::Path;
 
 use smitten_core::backend::{
@@ -466,8 +467,11 @@ impl GraphicsState {
     fn apply_scissor(&mut self) {
         let base = self.base();
         self.batch.scissor = self.scissor.map(|(x, y, width, height)| {
-            let (left, top) = base.apply(x as f32, y as f32);
-            let (right, bottom) = base.apply(x as f32 + width as f32, y as f32 + height as f32);
+            let Vec2 { x: left, y: top } = base.apply((x as f32, y as f32));
+            let Vec2 {
+                x: right,
+                y: bottom,
+            } = base.apply((x as f32 + width as f32, y as f32 + height as f32));
             let (left, top) = (left.round(), top.round());
             Scissor {
                 x: left as i32,
@@ -590,9 +594,9 @@ impl GraphicsState {
                 // coordinates, taken from how much the transform enlarges
                 // areas.
                 let device = self.device();
-                let (ox, oy) = device.apply(0.0, 0.0);
-                let (ax, ay) = device.apply(1.0, 0.0);
-                let (bx, by) = device.apply(0.0, 1.0);
+                let Vec2 { x: ox, y: oy } = device.apply((0.0, 0.0));
+                let Vec2 { x: ax, y: ay } = device.apply((1.0, 0.0));
+                let Vec2 { x: bx, y: by } = device.apply((0.0, 1.0));
                 let area = ((ax - ox) * (by - oy) - (bx - ox) * (ay - oy)).abs();
                 if area > 1e-12 { 1.0 / area.sqrt() } else { 0.0 }
             }
@@ -612,7 +616,7 @@ impl GraphicsState {
         let vertices: Vec<Vertex> = triangles
             .iter()
             .map(|&(x, y, coverage)| {
-                let (x, y) = device.apply(x, y);
+                let Vec2 { x, y } = device.apply((x, y));
                 Vertex {
                     position: [x, y],
                     uv: [0.0, 0.0],
@@ -634,7 +638,7 @@ impl GraphicsState {
             .iter()
             .map(|&(x, y)| {
                 let uv = uv_of(x, y);
-                let (x, y) = device.apply(x, y);
+                let Vec2 { x, y } = device.apply((x, y));
                 Vertex {
                     position: [x, y],
                     uv,
@@ -674,7 +678,7 @@ impl GraphicsState {
             (quad.y + quad.height) / quad.sheet_height,
         );
         let corner = |x: f32, y: f32, u: f32, v: f32| {
-            let (x, y) = transform.apply(x, y);
+            let Vec2 { x, y } = transform.apply((x, y));
             Vertex {
                 position: [x, y],
                 uv: [u, v],
@@ -858,7 +862,7 @@ impl GraphicsState {
         text.with_runs(backend, |texture, run| {
             vertices.clear();
             vertices.extend(run.iter().map(|vertex| {
-                let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
+                let Vec2 { x, y } = transform.apply((vertex.position[0], vertex.position[1]));
                 let [r, g, b, a] = vertex.color;
                 Vertex {
                     position: [x, y],
@@ -915,7 +919,7 @@ impl GraphicsState {
                 run_texture = Some(texture);
             }
             let corner = |x: f32, y: f32, u: f32, v: f32| {
-                let (x, y) = transform.apply(x, y);
+                let Vec2 { x, y } = transform.apply((x, y));
                 Vertex {
                     position: [x, y],
                     uv: [u, v],
@@ -949,7 +953,7 @@ fn color_array(color: Color) -> [f32; 4] {
 
 fn whole_image(image: &Image) -> Quad {
     let (width, height) = (image.width() as f32, image.height() as f32);
-    Quad::new(0.0, 0.0, width, height, width, height)
+    Quad::new((0.0, 0.0), (width, height), (width, height))
 }
 
 // ---------------------------------------------------------------------------
@@ -1396,7 +1400,7 @@ pub fn save_screenshot(path: impl AsRef<Path>) {
 /// use smitten::CompareMode;
 ///
 /// // Draw a picture only inside a circle.
-/// graphics::stencil(|| graphics::circle(DrawMode::Fill, 200.0, 200.0, 80.0));
+/// graphics::stencil(|| graphics::circle(DrawMode::Fill, (200.0, 200.0), 80.0));
 /// graphics::set_stencil_test(CompareMode::Greater, 0);
 /// // ... draw the picture ...
 /// graphics::clear_stencil_test();
@@ -1530,7 +1534,7 @@ pub fn set_blend_mode(mode: BlendMode) {
 /// # let canvas = smitten::graphics::Canvas::new(64, 64).unwrap();
 /// // Add a canvas full of soft glows onto the screen.
 /// graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied);
-/// graphics::draw(&canvas, 0.0, 0.0);
+/// graphics::draw(&canvas, (0.0, 0.0));
 /// ```
 ///
 /// Panics for [`BlendMode::Multiply`], [`BlendMode::Lighten`] or
@@ -1922,8 +1926,9 @@ pub fn reset() {
 }
 
 /// Moves everything drawn afterwards by `(dx, dy)`.
-pub fn translate(dx: f32, dy: f32) {
-    context::with(|ctx| ctx.gfx.transform.translate(dx, dy));
+pub fn translate(delta: impl Into<Vec2>) {
+    let Vec2 { x: dx, y: dy } = delta.into();
+    context::with(|ctx| ctx.gfx.transform.translate((dx, dy)));
 }
 
 /// Rotates everything drawn afterwards by `angle` radians around the
@@ -1944,8 +1949,9 @@ pub fn origin() {
 
 /// Shears everything drawn afterwards: x gains `kx` times y, and y gains
 /// `ky` times x.
-pub fn shear(kx: f32, ky: f32) {
-    context::with(|ctx| ctx.gfx.transform.shear(kx, ky));
+pub fn shear(shear: impl Into<Vec2>) {
+    let Vec2 { x: kx, y: ky } = shear.into();
+    context::with(|ctx| ctx.gfx.transform.shear((kx, ky)));
 }
 
 /// Applies `transform` on top of the current transform, as if its calls
@@ -1967,21 +1973,28 @@ pub fn transform() -> Transform {
 
 /// Where the point `(x, y)` lands on the screen, in units, under the
 /// current transform.
-pub fn transform_point(x: f32, y: f32) -> (f32, f32) {
-    context::with(|ctx| ctx.gfx.transform.transform_point(x, y))
+pub fn transform_point(position: impl Into<Vec2>) -> Vec2 {
+    let Vec2 { x, y } = position.into();
+    context::with(|ctx| ctx.gfx.transform.transform_point((x, y)))
 }
 
 /// Which point the current transform puts at `(x, y)` on the screen, such
 /// as where the mouse is in a scrolled and zoomed world.
-pub fn inverse_transform_point(x: f32, y: f32) -> (f32, f32) {
-    context::with(|ctx| ctx.gfx.transform.inverse_transform_point(x, y))
+pub fn inverse_transform_point(position: impl Into<Vec2>) -> Vec2 {
+    let Vec2 { x, y } = position.into();
+    context::with(|ctx| ctx.gfx.transform.inverse_transform_point((x, y)))
 }
 
 // ---------------------------------------------------------------------------
 // Shapes
 
 /// Draws a rectangle with its top-left corner at `(x, y)`.
-pub fn rectangle(mode: DrawMode, x: f32, y: f32, width: f32, height: f32) {
+pub fn rectangle(mode: DrawMode, position: impl Into<Vec2>, size: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
+    let Vec2 {
+        x: width,
+        y: height,
+    } = size.into();
     polygon(
         mode,
         &[
@@ -1994,7 +2007,8 @@ pub fn rectangle(mode: DrawMode, x: f32, y: f32, width: f32, height: f32) {
 }
 
 /// Draws a circle centered on `(x, y)`.
-pub fn circle(mode: DrawMode, x: f32, y: f32, radius: f32) {
+pub fn circle(mode: DrawMode, center: impl Into<Vec2>, radius: f32) {
+    let Vec2 { x, y } = center.into();
     // More pixels per unit need more corners to look round.
     let scale = context::with(|ctx| ctx.gfx.target_scale());
     polygon(mode, &shapes::circle_points(x, y, radius, scale));
@@ -2007,7 +2021,9 @@ pub fn circle(mode: DrawMode, x: f32, y: f32, radius: f32) {
 /// as it does across an image. So a shader can paint a rectangle, circle
 /// or any other filled shape with no image at all. This holds for every
 /// filled shape, not only polygons.
-pub fn polygon(mode: DrawMode, points: &[(f32, f32)]) {
+pub fn polygon(mode: DrawMode, points: &[impl Into<Vec2> + Copy]) {
+    let points = crate::math::tuples(points);
+    let points = &points[..];
     context::with(|ctx| {
         let triangles = match mode {
             DrawMode::Fill => shapes::fill_convex(points),
@@ -2024,13 +2040,16 @@ pub fn polygon(mode: DrawMode, points: &[(f32, f32)]) {
 /// radii along each axis, as in the long form of `love.graphics.rectangle`.
 pub fn rounded_rectangle(
     mode: DrawMode,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    rx: f32,
-    ry: f32,
+    position: impl Into<Vec2>,
+    size: impl Into<Vec2>,
+    radii: impl Into<Vec2>,
 ) {
+    let Vec2 { x, y } = position.into();
+    let Vec2 {
+        x: width,
+        y: height,
+    } = size.into();
+    let Vec2 { x: rx, y: ry } = radii.into();
     let scale = context::with(|ctx| ctx.gfx.target_scale());
     polygon(
         mode,
@@ -2039,7 +2058,9 @@ pub fn rounded_rectangle(
 }
 
 /// Draws an ellipse centered on `(x, y)` with radii `rx` and `ry`.
-pub fn ellipse(mode: DrawMode, x: f32, y: f32, rx: f32, ry: f32) {
+pub fn ellipse(mode: DrawMode, center: impl Into<Vec2>, radii: impl Into<Vec2>) {
+    let Vec2 { x, y } = center.into();
+    let Vec2 { x: rx, y: ry } = radii.into();
     let scale = context::with(|ctx| ctx.gfx.target_scale());
     polygon(mode, &shapes::ellipse_points(x, y, rx, ry, scale));
 }
@@ -2049,12 +2070,12 @@ pub fn ellipse(mode: DrawMode, x: f32, y: f32, rx: f32, ry: f32) {
 pub fn arc(
     mode: DrawMode,
     arc_type: ArcType,
-    x: f32,
-    y: f32,
+    center: impl Into<Vec2>,
     radius: f32,
     angle1: f32,
     angle2: f32,
 ) {
+    let Vec2 { x, y } = center.into();
     context::with(|ctx| {
         let scale = ctx.gfx.target_scale();
         let mut path = shapes::arc_points(x, y, radius, radius, angle1, angle2, scale);
@@ -2074,7 +2095,9 @@ pub fn arc(
 }
 
 /// Draws a square of the current point size centered on each point.
-pub fn points(points: &[(f32, f32)]) {
+pub fn points(points: &[impl Into<Vec2> + Copy]) {
+    let points = crate::math::tuples(points);
+    let points = &points[..];
     context::with(|ctx| {
         let half = ctx.gfx.point_size / 2.0;
         let mut triangles = Vec::with_capacity(points.len() * 6);
@@ -2106,7 +2129,13 @@ pub fn points(points: &[(f32, f32)]) {
 /// still zero. The `lighting` example does exactly this.
 ///
 /// LÖVE has no such call; games there work the corners out by hand.
-pub fn shadow(light_x: f32, light_y: f32, polygon: &[(f32, f32)], length: f32) {
+pub fn shadow(light: impl Into<Vec2>, polygon: &[impl Into<Vec2> + Copy], length: f32) {
+    let polygon = crate::math::tuples(polygon);
+    let polygon = &polygon[..];
+    let Vec2 {
+        x: light_x,
+        y: light_y,
+    } = light.into();
     context::with(|ctx| {
         let triangles = shapes::shadow((light_x, light_y), polygon, length);
         ctx.gfx.push_shape(&triangles);
@@ -2115,7 +2144,9 @@ pub fn shadow(light_x: f32, light_y: f32, polygon: &[(f32, f32)], length: f32) {
 
 /// Draws connected lines through `points` in order, with joined corners.
 /// The equivalent of `love.graphics.line` with more than two points.
-pub fn polyline(points: &[(f32, f32)]) {
+pub fn polyline(points: &[impl Into<Vec2> + Copy]) {
+    let points = crate::math::tuples(points);
+    let points = &points[..];
     context::with(|ctx| {
         let triangles = shapes::stroke(points, false, &ctx.gfx.stroke());
         ctx.gfx.push_covered(&triangles);
@@ -2127,7 +2158,9 @@ pub fn polyline(points: &[(f32, f32)]) {
 /// dashes use the current line width, join and style.
 ///
 /// LÖVE has no dashed lines; this saves working the pieces out by hand.
-pub fn dashed_polyline(points: &[(f32, f32)], dash: f32, gap: f32) {
+pub fn dashed_polyline(points: &[impl Into<Vec2> + Copy], dash: f32, gap: f32) {
+    let points = crate::math::tuples(points);
+    let points = &points[..];
     context::with(|ctx| {
         let stroke = ctx.gfx.stroke();
         let mut triangles = Vec::new();
@@ -2140,12 +2173,16 @@ pub fn dashed_polyline(points: &[(f32, f32)], dash: f32, gap: f32) {
 
 /// Draws a straight dashed line between two points. See
 /// [`dashed_polyline`].
-pub fn dashed_line(x1: f32, y1: f32, x2: f32, y2: f32, dash: f32, gap: f32) {
+pub fn dashed_line(from: impl Into<Vec2>, to: impl Into<Vec2>, dash: f32, gap: f32) {
+    let Vec2 { x: x1, y: y1 } = from.into();
+    let Vec2 { x: x2, y: y2 } = to.into();
     dashed_polyline(&[(x1, y1), (x2, y2)], dash, gap);
 }
 
 /// Draws a straight line between two points.
-pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
+pub fn line(from: impl Into<Vec2>, to: impl Into<Vec2>) {
+    let Vec2 { x: x1, y: y1 } = from.into();
+    let Vec2 { x: x2, y: y2 } = to.into();
     context::with(|ctx| {
         let triangles = shapes::stroke(&[(x1, y1), (x2, y2)], false, &ctx.gfx.stroke());
         ctx.gfx.push_covered(&triangles);
@@ -2184,7 +2221,8 @@ impl ImageData {
 }
 
 /// Draws an image with its top-left corner at `(x, y)`.
-pub fn draw(image: &Image, x: f32, y: f32) {
+pub fn draw(image: &Image, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_ex(image, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2202,7 +2240,8 @@ pub fn draw_ex(image: &Image, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32,
 /// `love.graphics.draw(video, x, y)`. Drawing moves the picture on to
 /// the video's position.
 #[cfg(feature = "video")]
-pub fn draw_video(video: &Video, x: f32, y: f32) {
+pub fn draw_video(video: &Video, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_video_ex(video, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2227,7 +2266,8 @@ pub fn draw_quad_with(image: &Image, quad: &Quad, transform: &Transform) {
 }
 
 /// Draws the part of an image described by `quad` at `(x, y)`.
-pub fn draw_quad(image: &Image, quad: &Quad, x: f32, y: f32) {
+pub fn draw_quad(image: &Image, quad: &Quad, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_quad_ex(image, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2255,7 +2295,8 @@ pub fn draw_quad_ex(
 // Sprite batches
 
 /// Draws every sprite in a batch, with the batch's origin at `(x, y)`.
-pub fn draw_sprite_batch(sprites: &SpriteBatch, x: f32, y: f32) {
+pub fn draw_sprite_batch(sprites: &SpriteBatch, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_sprite_batch_ex(sprites, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2283,7 +2324,8 @@ pub fn draw_sprite_batch_ex(
 // Meshes
 
 /// Draws a mesh with its origin at `(x, y)`, tinted by the current color.
-pub fn draw_mesh(mesh: &Mesh, x: f32, y: f32) {
+pub fn draw_mesh(mesh: &Mesh, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_mesh_ex(mesh, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2305,7 +2347,8 @@ pub fn draw_mesh_ex(mesh: &Mesh, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f
 ///
 /// Panics if a per-instance attribute's mesh has fewer vertices than
 /// `instances`. A mesh drawn as [`MeshDrawMode::Points`] is drawn once.
-pub fn draw_instanced(mesh: &Mesh, instances: u32, x: f32, y: f32) {
+pub fn draw_instanced(mesh: &Mesh, instances: u32, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_instanced_ex(mesh, instances, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2334,7 +2377,8 @@ pub fn draw_instanced_ex(
 // Particles
 
 /// Draws a particle system with its origin at `(x, y)`.
-pub fn draw_particles(system: &ParticleSystem, x: f32, y: f32) {
+pub fn draw_particles(system: &ParticleSystem, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_particles_ex(system, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2463,7 +2507,8 @@ pub fn font() -> Font {
 
 /// Draws text with its top-left corner at `(x, y)` in the current font and
 /// color. Line breaks in the text start new lines.
-pub fn print(text: &str, x: f32, y: f32) {
+pub fn print(text: &str, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     print_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2477,7 +2522,8 @@ pub fn print_ex(text: &str, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, o
 
 /// Draws text wrapped to `limit` pixels wide and aligned within that
 /// width, the equivalent of `love.graphics.printf`.
-pub fn printf(text: &str, x: f32, y: f32, limit: f32, align: Align) {
+pub fn printf(text: &str, position: impl Into<Vec2>, limit: f32, align: Align) {
+    let Vec2 { x, y } = position.into();
     printf_ex(text, x, y, limit, align, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2521,7 +2567,8 @@ pub fn printf_with(text: &str, limit: f32, align: Align, transform: &Transform) 
 
 /// Draws a [`Text`] with its top-left corner at `(x, y)` in the current
 /// color.
-pub fn draw_text(text: &Text, x: f32, y: f32) {
+pub fn draw_text(text: &Text, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_text_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2547,7 +2594,8 @@ pub fn draw_text_with(text: &Text, transform: &Transform) {
 /// Panics if there is no such layer, or if a custom shader is active: a
 /// shader reads an array image by declaring a `texture_2d_array<f32>` and
 /// being sent it with [`Shader::send_texture`].
-pub fn draw_layer(image: &impl Layered, layer: u32, x: f32, y: f32) {
+pub fn draw_layer(image: &impl Layered, layer: u32, position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     draw_layer_ex(image, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
 }
 
@@ -2567,7 +2615,7 @@ pub fn draw_layer_ex(
 ) {
     let (width, height) = image.layer_size();
     let (width, height) = (width as f32, height as f32);
-    let quad = Quad::new(0.0, 0.0, width, height, width, height);
+    let quad = Quad::new((0.0, 0.0), (width, height), (width, height));
     draw_layer_quad_with(
         image,
         layer,
@@ -2811,9 +2859,10 @@ pub fn system_limits() -> SystemLimits {
 /// ```no_run
 /// use smitten::{Color, graphics};
 ///
-/// graphics::print_colored(&[(Color::WHITE, "Score: "), (Color::rgb(1.0, 0.8, 0.2), "120")], 10.0, 10.0);
+/// graphics::print_colored(&[(Color::WHITE, "Score: "), (Color::rgb(1.0, 0.8, 0.2), "120")], (10.0, 10.0));
 /// ```
-pub fn print_colored(segments: &[(Color, &str)], x: f32, y: f32) {
+pub fn print_colored(segments: &[(Color, &str)], position: impl Into<Vec2>) {
+    let Vec2 { x, y } = position.into();
     let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
     print_colored_with(segments, &local);
 }
@@ -2829,7 +2878,13 @@ pub fn print_colored_with(segments: &[(Color, &str)], transform: &Transform) {
 /// Draws text made of colored parts, wrapped to `limit` units and aligned
 /// within that width, the equivalent of `love.graphics.printf(coloredtext,
 /// ...)`.
-pub fn printf_colored(segments: &[(Color, &str)], x: f32, y: f32, limit: f32, align: Align) {
+pub fn printf_colored(
+    segments: &[(Color, &str)],
+    position: impl Into<Vec2>,
+    limit: f32,
+    align: Align,
+) {
+    let Vec2 { x, y } = position.into();
     let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
     printf_colored_with(segments, limit, align, &local);
 }

@@ -37,8 +37,8 @@ fn flag_vertices(time: f32) -> Vec<MeshVertex> {
             let lift = (along * 9.0 - time * 5.0).sin() * 18.0 * along;
             let x = along * FLAG_WIDTH;
             [
-                MeshVertex::new(x, lift, along, 0.0),
-                MeshVertex::new(x, FLAG_HEIGHT + lift, along, 1.0),
+                MeshVertex::new((x, lift), along, 0.0),
+                MeshVertex::new((x, FLAG_HEIGHT + lift), along, 1.0),
             ]
         })
         .collect()
@@ -51,20 +51,20 @@ impl Game for Meshes {
         let (dusk, night) = (Color::rgb(0.95, 0.45, 0.35), Color::rgb(0.15, 0.1, 0.4));
         let gradient = Mesh::new(
             &[
-                MeshVertex::colored(0.0, 0.0, night),
-                MeshVertex::colored(220.0, 0.0, night),
-                MeshVertex::colored(220.0, 160.0, dusk),
-                MeshVertex::colored(0.0, 160.0, dusk),
+                MeshVertex::colored((0.0, 0.0), night),
+                MeshVertex::colored((220.0, 0.0), night),
+                MeshVertex::colored((220.0, 160.0), dusk),
+                MeshVertex::colored((0.0, 160.0), dusk),
             ],
             MeshDrawMode::Fan,
         );
 
         // A white center, then a ring of colors that ends where it began.
-        let mut rim = vec![MeshVertex::colored(0.0, 0.0, Color::WHITE)];
+        let mut rim = vec![MeshVertex::colored((0.0, 0.0), Color::WHITE)];
         rim.extend((0..=48).map(|step| {
             let turn = step as f32 / 48.0;
             let angle = turn * TAU;
-            MeshVertex::colored(90.0 * angle.cos(), 90.0 * angle.sin(), rainbow(turn))
+            MeshVertex::colored((90.0 * angle.cos(), 90.0 * angle.sin()), rainbow(turn))
         }));
         let wheel = Mesh::new(&rim, MeshDrawMode::Fan);
 
@@ -86,7 +86,7 @@ impl Game for Meshes {
 
     fn draw(&mut self) {
         graphics::set_color(Color::WHITE);
-        graphics::draw_mesh(&self.gradient, 50.0, 60.0);
+        graphics::draw_mesh(&self.gradient, (50.0, 60.0));
         graphics::draw_mesh_ex(
             &self.wheel,
             160.0,
@@ -100,17 +100,21 @@ impl Game for Meshes {
 
         // The pole, then the flag.
         graphics::set_color(Color::rgb(0.6, 0.6, 0.65));
-        graphics::rectangle(graphics::DrawMode::Fill, 392.0, 110.0, 8.0, 400.0);
+        graphics::rectangle(graphics::DrawMode::Fill, (392.0, 110.0), (8.0, 400.0));
         graphics::set_color(Color::WHITE);
-        graphics::draw_mesh(&self.flag, 400.0, 120.0);
+        graphics::draw_mesh(&self.flag, (400.0, 120.0));
 
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.7));
-        graphics::printf("a color at each corner", 50.0, 230.0, 220.0, Align::Center);
-        graphics::printf("a fan", 50.0, 505.0, 220.0, Align::Center);
+        graphics::printf(
+            "a color at each corner",
+            (50.0, 230.0),
+            220.0,
+            Align::Center,
+        );
+        graphics::printf("a fan", (50.0, 505.0), 220.0, Align::Center);
         graphics::printf(
             "an image on a moving strip",
-            400.0,
-            530.0,
+            (400.0, 530.0),
             320.0,
             Align::Center,
         );
