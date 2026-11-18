@@ -84,6 +84,7 @@ fn main() {
 | `love.graphics.printf(text, x, y, limit, align)` | `graphics::printf(text, x, y, limit, Align)` | |
 | `font:getWidth(text)` / `font:getWrap(text, limit)` | `font.width(text)` / `font.wrap(text, limit)` | |
 | `font:setFallbacks(...)` / `font:hasGlyphs(text)` | `font.set_fallbacks(&[&other])` / `font.has_glyphs(text)` | |
+| `love.font.newRasterizer(path, size)` / `newGlyphData(r, glyph)` | `font::new_rasterizer(path, size)` / `font::new_glyph_data(&r, glyph)` | `Font::from_rasterizer(&r)` is `newFont(rasterizer)`. |
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
