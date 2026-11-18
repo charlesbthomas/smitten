@@ -36,11 +36,11 @@ impl Rumble {
 }
 
 impl Game for Rumble {
-    fn load() -> Self {
-        Rumble {
+    fn load() -> smitten::Result<Self> {
+        Ok(Rumble {
             status: "Nothing asked for yet.".to_string(),
             held: false,
-        }
+        })
     }
 
     fn update(&mut self, _dt: f32) {

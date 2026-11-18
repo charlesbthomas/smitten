@@ -299,7 +299,7 @@ impl Shader {
     /// Elements past those sent keep their values.
     ///
     /// ```no_run
-    /// # let shader = smitten::graphics::new_shader("");
+    /// # let shader = smitten::graphics::Shader::new("").unwrap();
     /// // struct Params { lights: array<vec4<f32>, 8>, light_count: u32 }
     /// let lights = [[100.0, 80.0, 1.0, 0.0], [300.0, 200.0, 0.5, 0.0]];
     /// shader.send_array("lights", &lights);
@@ -376,7 +376,7 @@ impl Shader {
     ///
     /// ```no_run
     /// use smitten::graphics::MatrixLayout;
-    /// # let shader = smitten::graphics::new_shader("");
+    /// # let shader = smitten::graphics::Shader::new("").unwrap();
     /// // struct Params { tint: mat3x3<f32> }
     /// let sepia = [
     ///     [0.393, 0.769, 0.189],
@@ -819,6 +819,7 @@ fn wgsl_name(kind: UniformKind) -> &'static str {
 }
 
 /// Why a shader could not be created or given a value.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum ShaderError {
     /// The file could not be read.

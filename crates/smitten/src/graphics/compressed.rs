@@ -9,9 +9,9 @@ use super::ImageError;
 
 /// Pixels compressed in a form the GPU reads directly, the equivalent of
 /// LÖVE's `CompressedImageData`. Load one with
-/// [`graphics::new_compressed_data`](super::new_compressed_data) and draw
+/// [`CompressedImageData::from_file`](super::CompressedImageData::from_file) and draw
 /// it with [`Image::from_compressed_data`](super::Image::from_compressed_data),
-/// or let [`graphics::new_image`](super::new_image) load a `.dds` or
+/// or let [`Image::load`](super::Image::load) load a `.dds` or
 /// `.ktx` file.
 ///
 /// A compressed image takes a quarter to an eighth of the GPU memory of an

@@ -575,19 +575,10 @@ pub fn dimensions() -> (u32, u32) {
 /// Sets the window's icon from an image file (PNG, JPEG or TGA), looked up like
 /// any other asset. To set it from the start, use [`crate::Config::icon`].
 ///
-/// Panics with the file name if it cannot be loaded. Use [`try_set_icon`]
-/// to handle the failure instead.
-///
 /// Some platforms take a game's icon from somewhere else: macOS shows the
 /// application bundle's icon in the Dock, and Windows shows the icon built
 /// into the executable in Explorer.
-pub fn set_icon(path: impl AsRef<Path>) {
-    try_set_icon(path).unwrap_or_else(|error| panic!("{error}"));
-}
-
-/// Sets the window's icon from an image file, returning an error if it
-/// fails.
-pub fn try_set_icon(path: impl AsRef<Path>) -> Result<(), ImageError> {
+pub fn set_icon(path: impl AsRef<Path>) -> Result<(), ImageError> {
     let (width, height, rgba) = crate::graphics::image::load_rgba(path.as_ref())?;
     set_icon_rgba(width, height, &rgba)
 }
@@ -665,7 +656,7 @@ pub fn msaa() -> u32 {
 /// `setMode`. Returns how many samples the GPU gave, which may be fewer.
 ///
 /// Canvases are not affected; see
-/// [`Canvas::with_msaa`](crate::graphics::Canvas::with_msaa). With a
+/// [`CanvasSettings::msaa`](crate::graphics::CanvasSettings::msaa). With a
 /// [`Scaling::PixelPerfect`](crate::Scaling::PixelPerfect) design size the
 /// game draws to a canvas first, so this does not smooth it.
 pub fn set_msaa(samples: u32) -> u32 {

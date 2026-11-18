@@ -75,7 +75,7 @@ impl SpatialAudio {
 }
 
 impl Game for SpatialAudio {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.08, 0.09, 0.12));
         audio::set_position(
             graphics::width() as f32 / 2.0,
@@ -104,15 +104,15 @@ impl Game for SpatialAudio {
         hum.set_looping(true);
         hum.play();
 
-        SpatialAudio {
+        Ok(SpatialAudio {
             hum,
             hum_data,
-            blip: audio::new_source("blip.wav", SourceType::Static),
+            blip: Source::load("blip.wav", SourceType::Static)?,
             blips: Vec::new(),
             reverb: false,
             echo: false,
             muffled: false,
-        }
+        })
     }
 
     fn update(&mut self, _dt: f32) {

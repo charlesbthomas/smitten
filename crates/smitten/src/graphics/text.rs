@@ -210,7 +210,7 @@ impl Font {
 
     /// Creates a font from an AngelCode BMFont: the text of its `.fnt`
     /// file, and the bytes of each page image it names, in the order of
-    /// their ids. [`graphics::new_font`](crate::graphics::new_font) loads
+    /// their ids. [`Font::load`](crate::graphics::Font::load) loads
     /// a `.fnt` file and its pages for you.
     ///
     /// Only the text form of `.fnt` files is read, as in LÖVE.
@@ -236,7 +236,7 @@ impl Font {
 
     /// Loads a `.fnt` file and the page images it names, which are looked
     /// for next to it.
-    pub(crate) fn load_bmfont(path: &Path) -> Result<Font, FontError> {
+    pub(crate) fn read_bmfont(path: &Path) -> Result<Font, FontError> {
         let (file, pages) = read_bmfont(path)?;
         let pages: Vec<&[u8]> = pages.iter().map(Vec::as_slice).collect();
         let disk_dir = crate::filesystem::resolve(path)
@@ -526,6 +526,7 @@ fn in_file(path: &Path, error: FontError) -> FontError {
 }
 
 /// Why a font could not be created.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum FontError {
     /// The file could not be read.

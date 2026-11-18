@@ -4,7 +4,7 @@ use std::ops::Range;
 use smitten_core::Filter;
 use smitten_core::backend::{TextureId, Vertex};
 
-use super::{ArrayImage, Image, Mesh, MeshDrawMode, MeshError, MeshVertex, Quad, Transform};
+use super::{ArrayImage, GraphicsError, Image, Mesh, MeshDrawMode, MeshVertex, Quad, Transform};
 use crate::Color;
 
 /// Many copies of one image, or of parts of it, kept ready to draw in one
@@ -16,15 +16,16 @@ use crate::Color;
 /// sprite is done when it is added instead of on every frame.
 ///
 /// ```no_run
-/// # use smitten::graphics::{self, Quad};
-/// let tiles = graphics::new_image("tiles.png");
+/// # use smitten::graphics::{self, Image, Quad, SpriteBatch};
+/// let tiles = Image::load("tiles.png")?;
 /// let grass = Quad::new(0.0, 0.0, 16.0, 16.0, 64.0, 64.0);
-/// let mut map = graphics::new_sprite_batch(&tiles, 1000);
+/// let mut map = SpriteBatch::new(&tiles, 1000);
 /// for column in 0..40 {
 ///     map.add_quad(&grass, column as f32 * 16.0, 0.0);
 /// }
 /// // Every frame, in `draw`:
 /// graphics::draw_sprite_batch(&map, 0.0, 0.0);
+/// # Ok::<(), smitten::Error>(())
 /// ```
 ///
 /// A batch can also draw the layers of an [`ArrayImage`], made with
@@ -483,7 +484,7 @@ impl SpriteBatch {
     ///
     /// Attaching another attribute of the same name replaces the first.
     /// Fails if the mesh has no attribute `name`.
-    pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), MeshError> {
+    pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), GraphicsError> {
         if !mesh
             .vertex_format()
             .iter()

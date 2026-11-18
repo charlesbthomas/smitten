@@ -895,7 +895,7 @@ impl Lantern {
 }
 
 impl Game for Lantern {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::BLACK);
         audio::set_effect(
             "room",
@@ -905,7 +905,7 @@ impl Game for Lantern {
             },
         );
 
-        let beam = graphics::new_shader(BEAM);
+        let beam = Shader::new(BEAM)?;
 
         let best = filesystem::read_string(BEST_FILE)
             .ok()
@@ -934,16 +934,16 @@ impl Game for Lantern {
             room_time: 0.0,
             until_step: 0.0,
             until_thump: 0.0,
-            light_map: graphics::new_canvas(WIDTH as u32, HEIGHT as u32),
+            light_map: Canvas::new(WIDTH as u32, HEIGHT as u32)?,
             beam,
-            heart: graphics::new_image("heart.png"),
+            heart: Image::load("heart.png")?,
             whisper: make_whisper(),
             sounds: make_sounds(),
-            big_font: graphics::new_default_font(44.0),
-            small_font: graphics::new_default_font(16.0),
+            big_font: Font::default_at(44.0),
+            small_font: Font::default_at(16.0),
         };
         game.restart();
-        game
+        Ok(game)
     }
 
     fn update(&mut self, dt: f32) {

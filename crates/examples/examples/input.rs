@@ -72,7 +72,7 @@ impl Input {
 }
 
 impl Game for Input {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.1, 0.12, 0.16));
         // Holding Backspace keeps deleting.
         keyboard::set_key_repeat(true);
@@ -85,7 +85,7 @@ impl Game for Input {
             target_cursor: target_cursor(),
         };
         game.update_title();
-        game
+        Ok(game)
     }
 
     fn update(&mut self, dt: f32) {

@@ -6,6 +6,7 @@
 
 use std::f32::consts::TAU;
 
+use smitten::graphics::Image;
 use smitten::graphics::{Align, Mesh, MeshDrawMode, MeshVertex};
 use smitten::{Color, Config, Filter, Game, Key, event, graphics, timer};
 
@@ -44,11 +45,11 @@ fn flag_vertices(time: f32) -> Vec<MeshVertex> {
 }
 
 impl Game for Meshes {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.11, 0.12, 0.15));
 
         let (dusk, night) = (Color::rgb(0.95, 0.45, 0.35), Color::rgb(0.15, 0.1, 0.4));
-        let gradient = graphics::new_mesh(
+        let gradient = Mesh::new(
             &[
                 MeshVertex::colored(0.0, 0.0, night),
                 MeshVertex::colored(220.0, 0.0, night),
@@ -65,18 +66,18 @@ impl Game for Meshes {
             let angle = turn * TAU;
             MeshVertex::colored(90.0 * angle.cos(), 90.0 * angle.sin(), rainbow(turn))
         }));
-        let wheel = graphics::new_mesh(&rim, MeshDrawMode::Fan);
+        let wheel = Mesh::new(&rim, MeshDrawMode::Fan);
 
-        let heart = graphics::new_image("heart.png");
+        let heart = Image::load("heart.png")?;
         heart.set_filter(Filter::Nearest);
-        let mut flag = graphics::new_mesh(&flag_vertices(0.0), MeshDrawMode::Strip);
+        let mut flag = Mesh::new(&flag_vertices(0.0), MeshDrawMode::Strip);
         flag.set_texture(Some(&heart));
 
-        Meshes {
+        Ok(Meshes {
             gradient,
             wheel,
             flag,
-        }
+        })
     }
 
     fn update(&mut self, _dt: f32) {

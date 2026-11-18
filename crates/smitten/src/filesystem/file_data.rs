@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 /// `[u8]`, so it can be passed anywhere a byte slice is taken.
 ///
 /// ```no_run
-/// use smitten::filesystem;
+/// use smitten::filesystem::FileData;
 ///
-/// let level = filesystem::new_file_data("levels/1.json").unwrap();
+/// let level = FileData::load("levels/1.json").unwrap();
 /// assert_eq!(level.extension(), Some("json"));
 /// let text = std::str::from_utf8(&level).unwrap();
 /// ```
@@ -25,12 +25,14 @@ pub struct FileData {
     filename: PathBuf,
 }
 
-/// Reads a whole file into a [`FileData`], the equivalent of
-/// `love.filesystem.newFileData(filename)`. The file is looked up as in
-/// [`super::read`].
-pub fn new_file_data(path: impl AsRef<Path>) -> io::Result<FileData> {
-    let path = path.as_ref();
-    Ok(FileData::new(super::read(path)?, path))
+impl FileData {
+    /// Reads a whole file into a [`FileData`], the equivalent of
+    /// `love.filesystem.newFileData(filename)`. The file is looked up as in
+    /// [`super::read`].
+    pub fn load(path: impl AsRef<Path>) -> io::Result<FileData> {
+        let path = path.as_ref();
+        Ok(FileData::new(super::read(path)?, path))
+    }
 }
 
 impl FileData {

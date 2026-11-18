@@ -10,7 +10,7 @@
 //! - The stripes are cut off by a scissor rectangle.
 //! - Escape quits.
 
-use smitten::graphics::{Canvas, DrawMode};
+use smitten::graphics::{Canvas, CanvasSettings, DrawMode};
 use smitten::{BlendMode, Color, Config, Filter, Game, Key, event, graphics, mouse, timer};
 
 const SCENE_WIDTH: u32 = 96;
@@ -55,17 +55,23 @@ impl Canvases {
 }
 
 impl Game for Canvases {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.11, 0.12, 0.15));
         // Exactly one pixel per unit, so it looks just as chunky on a
         // high-DPI display. The paint canvas below is as sharp as the screen.
-        let scene = Canvas::with_dpi_scale(SCENE_WIDTH, SCENE_HEIGHT, 1.0)
-            .expect("the GPU can make a small canvas");
+        let scene = Canvas::with_settings(
+            SCENE_WIDTH,
+            SCENE_HEIGHT,
+            CanvasSettings {
+                dpi_scale: Some(1.0),
+                ..CanvasSettings::default()
+            },
+        )?;
         scene.set_filter(Filter::Nearest);
-        Canvases {
+        Ok(Canvases {
             scene,
-            paint: graphics::new_canvas(PANEL_SIZE, PANEL_SIZE),
-        }
+            paint: Canvas::new(PANEL_SIZE, PANEL_SIZE)?,
+        })
     }
 
     fn update(&mut self, _dt: f32) {

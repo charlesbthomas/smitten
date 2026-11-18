@@ -51,7 +51,7 @@ impl GlyphFormat {
 
 /// The picture and measurements of one character, the equivalent of
 /// LÖVE's `GlyphData`. Made by [`Rasterizer::glyph_data`] or
-/// [`crate::font::new_glyph_data`].
+/// [`crate::font::Rasterizer::glyph_data`].
 ///
 /// Everything here is in the pixels of the picture, which are the
 /// rasterizer's units times its DPI scale.
@@ -230,7 +230,7 @@ impl Rasterizer {
     }
 
     /// Loads a `.fnt` file and its pages through the filesystem.
-    pub(crate) fn load_bmfont(path: &Path) -> Result<Rasterizer, FontError> {
+    pub(crate) fn read_bmfont(path: &Path) -> Result<Rasterizer, FontError> {
         let (file, pages) = read_bmfont(path)?;
         let pages: Vec<&[u8]> = pages.iter().map(Vec::as_slice).collect();
         Rasterizer::from_bmfont_file(&file, &pages).map_err(|error| super::in_file(path, error))

@@ -27,6 +27,7 @@ use std::io::{Read, Write};
 pub use pack::{Value, pack, packed_size, unpack, unpack_at};
 
 /// Why bytes could not be decompressed, decoded or unpacked.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataError {
     /// The bytes are not valid for the format they were said to be in.

@@ -13,8 +13,8 @@
 //! struct Hello;
 //!
 //! impl Game for Hello {
-//!     fn load() -> Self {
-//!         Hello
+//!     fn load() -> smitten::Result<Self> {
+//!         Ok(Hello)
 //!     }
 //!
 //!     fn draw(&mut self) {
@@ -35,6 +35,7 @@ mod gamepad_mapping;
 mod input;
 mod main_loop;
 mod reload;
+mod result;
 
 pub mod audio;
 pub mod data;
@@ -60,6 +61,7 @@ pub mod window;
 pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
 pub use main_loop::{MainLoop, run_loop};
+pub use result::{Error, Result};
 pub use smitten_core::{
     BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor, DisplayOrientation,
     Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput,
@@ -90,7 +92,11 @@ use smitten_core::backend::BackendEvent;
 /// Each method mirrors the LÖVE callback of the same name.
 pub trait Game: Sized + 'static {
     /// Called once after the window exists. Build the game's starting state.
-    fn load() -> Self;
+    ///
+    /// Return an error, usually with `?` on a loader such as
+    /// [`graphics::Image::load`], to stop the game and show the error on the
+    /// error screen.
+    fn load() -> Result<Self>;
 
     /// Called every frame with the seconds elapsed since the last frame.
     fn update(&mut self, _dt: f32) {}
@@ -274,7 +280,11 @@ pub trait Game: Sized + 'static {
 /// use [`run_loop`] instead.
 pub fn run<G: Game>(config: Config) {
     main_loop::run_with(config, |_| {
-        let mut game = G::load();
+        let mut game = match G::load() {
+            Ok(game) => game,
+            // Shown on the error screen like any other failure.
+            Err(error) => std::panic::panic_any(format!("{error:#}")),
+        };
         context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
 
         loop {

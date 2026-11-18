@@ -5,10 +5,11 @@
 //! placed by a `Transform`, and its inverse turns the mouse position into
 //! the square's own coordinates. Press W for wireframe and Escape to quit.
 
+use smitten::graphics::Font;
+use smitten::graphics::Transform;
 use smitten::graphics::{
     self, Align, ArrayImage, CubeImage, DrawMode, Image, ImageData, ImageSettings, Shader, Text,
 };
-use smitten::math::{self, Transform};
 use smitten::{Color, Config, Game, Key, event, mouse};
 
 /// Samples a cube image by direction, sweeping once around it from left
@@ -51,14 +52,14 @@ fn tile(color: Color) -> ImageData {
 }
 
 impl Game for Extras {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.08, 0.09, 0.12));
 
         // Laid out once, then drawn every frame for the cost of an image.
-        let big = graphics::new_default_font(24.0);
-        let title = graphics::new_text(&big, "Graphics extras");
-        let small = graphics::new_default_font(13.0);
-        let mut labels = graphics::new_text(&small, "");
+        let big = Font::default_at(24.0);
+        let title = Text::new(&big, "Graphics extras");
+        let small = Font::default_at(13.0);
+        let mut labels = Text::new(&small, "");
         labels.add("Hover the square", 40.0, 250.0);
         labels.add_f("Plain / mipmapped", 220.0, Align::Center, 260.0, 250.0);
         labels.add("Array image layers", 540.0, 250.0);
@@ -106,11 +107,11 @@ impl Game for Extras {
         ])
         .expect("the GPU took the cube image");
 
-        let shader = graphics::new_shader(SHADER);
+        let shader = Shader::new(SHADER)?;
         shader.send_texture("sky", &sky);
         shader.send_texture("tiles", &tiles);
 
-        Extras {
+        Ok(Extras {
             title,
             labels,
             square: Transform::new(),
@@ -120,13 +121,15 @@ impl Game for Extras {
             tiles,
             shader,
             _sky: sky,
-        }
+        })
     }
 
     fn update(&mut self, dt: f32) {
         self.angle += dt * 0.8;
         // Centered on (130, 160), turning, and leaning over with a shear.
-        self.square = math::new_transform(130.0, 160.0, self.angle, 1.0, 1.0, 40.0, 40.0, 0.3, 0.0);
+        self.square = Transform::from_transformation(
+            130.0, 160.0, self.angle, 1.0, 1.0, 40.0, 40.0, 0.3, 0.0,
+        );
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {

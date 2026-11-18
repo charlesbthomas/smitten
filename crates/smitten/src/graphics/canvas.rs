@@ -5,7 +5,7 @@ use smitten_core::backend::{Backend, RenderTargetDesc, TargetSlice, TextureKind}
 use smitten_core::{Filter, PixelFormat};
 
 use super::stats::Kind;
-use super::{Image, ImageData};
+use super::{GraphicsError, Image, ImageData};
 use crate::context;
 
 /// An off-screen image that can be drawn to, the equivalent of LÖVE's
@@ -127,57 +127,9 @@ impl Canvas {
     ///
     /// It is made as sharp as the screen, so on a high-DPI display it
     /// holds more pixels than units, as in LÖVE. Use
-    /// [`Canvas::with_dpi_scale`] to choose the sharpness instead.
-    pub fn new(width: u32, height: u32) -> Result<Canvas, String> {
+    /// [`Canvas::with_settings`] to choose the sharpness instead.
+    pub fn new(width: u32, height: u32) -> Result<Canvas, GraphicsError> {
         Canvas::with_settings(width, height, CanvasSettings::default())
-    }
-
-    /// Creates a transparent canvas of `width` by `height` units that
-    /// holds `dpi_scale` pixels for each unit in each direction. A scale
-    /// of 1.0 gives exactly `width` by `height` pixels.
-    pub fn with_dpi_scale(width: u32, height: u32, dpi_scale: f32) -> Result<Canvas, String> {
-        Canvas::with_settings(
-            width,
-            height,
-            CanvasSettings {
-                dpi_scale: Some(dpi_scale),
-                ..CanvasSettings::default()
-            },
-        )
-    }
-
-    /// Creates a transparent canvas of `width` by `height` units, as sharp
-    /// as the screen, with mipmaps: smaller copies of what is drawn to it,
-    /// used when the canvas is drawn small so it does not shimmer. See
-    /// [`MipmapMode`] for when they are made, and
-    /// [`Image::set_mipmap_filter`] for how they blend.
-    pub fn with_mipmaps(width: u32, height: u32, mode: MipmapMode) -> Result<Canvas, String> {
-        Canvas::with_settings(
-            width,
-            height,
-            CanvasSettings {
-                mipmaps: mode,
-                ..CanvasSettings::default()
-            },
-        )
-    }
-
-    /// Creates a transparent canvas of `width` by `height` units, as sharp
-    /// as the screen, that holds `samples` samples per pixel, the `msaa`
-    /// setting of LÖVE's `newCanvas`. Shapes and images drawn to it get
-    /// smooth edges; 4 is a common choice.
-    ///
-    /// The GPU may give fewer samples than asked for; [`Canvas::msaa`]
-    /// says how many. A multisampled canvas has no mipmaps.
-    pub fn with_msaa(width: u32, height: u32, samples: u32) -> Result<Canvas, String> {
-        Canvas::with_settings(
-            width,
-            height,
-            CanvasSettings {
-                msaa: samples,
-                ..CanvasSettings::default()
-            },
-        )
     }
 
     /// Creates a transparent canvas of `width` by `height` units as
@@ -191,11 +143,11 @@ impl Canvas {
         width: u32,
         height: u32,
         settings: CanvasSettings,
-    ) -> Result<Canvas, String> {
+    ) -> Result<Canvas, GraphicsError> {
         if let Some(scale) = settings.dpi_scale
             && !(scale.is_finite() && scale > 0.0)
         {
-            return Err(format!("the DPI scale must be positive, got {scale}"));
+            return Err(format!("the DPI scale must be positive, got {scale}").into());
         }
         context::with(|ctx| {
             let settings = CanvasSettings {
@@ -236,22 +188,24 @@ impl Canvas {
         height: u32,
         filter: Filter,
         settings: CanvasSettings,
-    ) -> Result<Canvas, String> {
+    ) -> Result<Canvas, GraphicsError> {
         let scale = settings.dpi_scale.unwrap_or(1.0);
         let samples = settings.msaa.max(1);
         let format = settings
             .format
             .unwrap_or_else(|| super::normal_format(backend));
         if samples > 1 && settings.mipmaps != MipmapMode::None {
-            return Err("a multisampled canvas cannot have mipmaps".to_string());
+            return Err(GraphicsError::new(
+                "a multisampled canvas cannot have mipmaps",
+            ));
         }
         let readable = settings.readable.unwrap_or(format.is_color());
         if format.is_depth() {
             if settings.mipmaps != MipmapMode::None {
-                return Err(format!("a {format} canvas cannot have mipmaps"));
+                return Err(format!("a {format} canvas cannot have mipmaps").into());
             }
             if settings.texture_type != TextureKind::Flat {
-                return Err(format!("a {format} canvas must be flat"));
+                return Err(format!("a {format} canvas must be flat").into());
             }
         }
         let pixels = Canvas::pixels_for(width, height, scale);
@@ -314,16 +268,17 @@ impl Canvas {
     /// far, the equivalent of `Canvas:generateMipmaps`. Only needed with
     /// [`MipmapMode::Manual`].
     ///
-    /// Like [`Canvas::new_image_data`], this draws what is queued for every
+    /// Like [`Canvas::to_image_data`], this draws what is queued for every
     /// canvas straight away.
-    pub fn generate_mipmaps(&self) -> Result<(), String> {
+    pub fn generate_mipmaps(&self) -> Result<(), GraphicsError> {
         if self.mipmaps == MipmapMode::None {
-            return Err("the canvas was made without mipmaps".to_string());
+            return Err(GraphicsError::new("the canvas was made without mipmaps"));
         }
         context::with(|ctx| {
             ctx.gfx.flush_canvases(&mut *ctx.backend);
             ctx.backend.generate_mipmaps(self.texture())
-        })
+        })?;
+        Ok(())
     }
 
     /// How many pixels the canvas holds for each unit in each direction.
@@ -350,26 +305,28 @@ impl Canvas {
     /// also draws what is queued for every canvas straight away: avoid it
     /// between drawing a canvas to the screen and changing that canvas
     /// later in the same frame, or the screen shows the later contents.
-    pub fn new_image_data(&self) -> Result<ImageData, String> {
-        self.new_image_data_slice(0, 0)
+    pub fn to_image_data(&self) -> Result<ImageData, GraphicsError> {
+        self.to_image_data_slice(0, 0)
     }
 
-    /// As [`Canvas::new_image_data`], copying one layer, cube face or
+    /// As [`Canvas::to_image_data`], copying one layer, cube face or
     /// depth slice at one mipmap level, the equivalent of
     /// `Canvas:newImageData(slice, mipmap)`. The result is that level's
     /// size.
-    pub fn new_image_data_slice(&self, layer: u32, mipmap: u32) -> Result<ImageData, String> {
+    pub fn to_image_data_slice(&self, layer: u32, mipmap: u32) -> Result<ImageData, GraphicsError> {
         if layer >= self.layers {
             return Err(format!(
                 "layer {layer} does not exist: the canvas has {}",
                 self.layers
-            ));
+            )
+            .into());
         }
         if mipmap >= self.mipmap_count() {
             return Err(format!(
                 "mipmap level {mipmap} does not exist: the canvas has {}",
                 self.mipmap_count()
-            ));
+            )
+            .into());
         }
         let slice = TargetSlice { layer, mipmap };
         context::with(|ctx| ctx.gfx.read_canvas(&mut *ctx.backend, self, slice))

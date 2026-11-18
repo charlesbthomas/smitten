@@ -38,9 +38,9 @@ fn draw_row(mode: DrawMode, y: f32, sweep: f32) {
 }
 
 impl Game for Shapes {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.11, 0.12, 0.15));
-        Shapes
+        Ok(Shapes)
     }
 
     fn draw(&mut self) {

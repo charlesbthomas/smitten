@@ -15,7 +15,7 @@ use crate::video::{VideoError, VideoStream};
 
 /// A video that plays and can be drawn like an image.
 ///
-/// Load one with [`new_video`](crate::graphics::new_video), call
+/// Load one with [`Video::load`](crate::graphics::Video::load), call
 /// [`Video::play`], and draw it each frame with
 /// [`draw_video`](crate::graphics::draw_video). The picture moves on as
 /// it is drawn. A video with a sound track plays it through
@@ -262,24 +262,13 @@ impl fmt::Debug for Video {
     }
 }
 
-/// Loads a video and its sound track, the equivalent of
-/// `love.graphics.newVideo`. Videos are Ogg Theora files; see
-/// [`crate::video`] for how to make one.
-///
-/// A relative path is looked up as [`crate::filesystem`] describes. Panics
-/// with the file name if it cannot be loaded; use [`try_new_video`] to
-/// handle the failure instead.
-pub fn new_video(path: impl AsRef<Path>) -> Video {
-    let path = path.as_ref();
-    try_new_video(path).unwrap_or_else(|error| match error {
-        VideoError::Decode(message) => {
-            panic!("could not load video {}: {message}", path.display())
-        }
-        error => panic!("{error}"),
-    })
-}
-
-/// Loads a video and its sound track, returning an error if it fails.
-pub fn try_new_video(path: impl AsRef<Path>) -> Result<Video, VideoError> {
-    Video::from_bytes(crate::video::read(path.as_ref())?, true)
+impl Video {
+    /// Loads a video and its sound track, the equivalent of
+    /// `love.graphics.newVideo`. Videos are Ogg Theora files; see
+    /// [`crate::video`] for how to make one.
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes.
+    pub fn load(path: impl AsRef<Path>) -> Result<Video, VideoError> {
+        Video::from_bytes(crate::video::read(path.as_ref())?, true)
+    }
 }

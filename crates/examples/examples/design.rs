@@ -24,12 +24,12 @@ struct Design {
 }
 
 impl Game for Design {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.13, 0.15, 0.25));
         graphics::set_default_filter(Filter::Nearest);
-        Design {
-            heart: graphics::new_image("heart.png"),
-        }
+        Ok(Design {
+            heart: Image::load("heart.png")?,
+        })
     }
 
     fn update(&mut self, _dt: f32) {

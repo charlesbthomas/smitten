@@ -9,8 +9,8 @@ struct Hello {
 }
 
 impl Game for Hello {
-    fn load() -> Self {
-        Hello { hue_shift: 0.0 }
+    fn load() -> smitten::Result<Self> {
+        Ok(Hello { hue_shift: 0.0 })
     }
 
     fn update(&mut self, dt: f32) {

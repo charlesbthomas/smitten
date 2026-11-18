@@ -12,8 +12,8 @@ use smitten::{graphics, Color, Config, Game};
 struct Hello;
 
 impl Game for Hello {
-    fn load() -> Self {
-        Hello
+    fn load() -> smitten::Result<Self> {
+        Ok(Hello)
     }
 
     fn draw(&mut self) {

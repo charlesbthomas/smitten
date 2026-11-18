@@ -35,7 +35,7 @@ use crate::Config;
 use crate::context::{self, Context};
 
 pub use file::{BufferMode, File, FileMode, open_file};
-pub use file_data::{FileData, new_file_data};
+pub use file_data::FileData;
 use search::SearchPath;
 
 pub(crate) struct FilesystemState {

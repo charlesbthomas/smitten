@@ -11,7 +11,7 @@ use crate::Color;
 
 /// Text laid out ahead of time, so drawing it costs no more than drawing
 /// an image: the equivalent of LÖVE's `Text`, made with
-/// [`graphics::new_text`](crate::graphics::new_text) and drawn with
+/// [`Text::new`](crate::graphics::Text::new) and drawn with
 /// [`graphics::draw_text`](crate::graphics::draw_text).
 ///
 /// [`graphics::print`](crate::graphics::print) works out where every glyph

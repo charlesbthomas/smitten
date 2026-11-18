@@ -20,7 +20,7 @@ struct Text {
 }
 
 impl Game for Text {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.11, 0.12, 0.15));
         // A missing or unreadable save file just means starting from zero.
         let presses = filesystem::read_string(SAVE_FILE)
@@ -28,17 +28,17 @@ impl Game for Text {
             .and_then(|text| text.trim().parse().ok())
             .unwrap_or(0);
         // A bitmap font: an image with its characters in a row.
-        let pixel = graphics::new_image_font(
+        let pixel = Font::load_image_font(
             "pixel-font.png",
             " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?:-",
-        );
+        )?;
         pixel.set_filter(Filter::Nearest);
-        Text {
+        Ok(Text {
             pixel,
-            title: graphics::new_default_font(48.0),
-            body: graphics::new_default_font(18.0),
+            title: Font::default_at(48.0),
+            body: Font::default_at(18.0),
             presses,
-        }
+        })
     }
 
     fn draw(&mut self) {

@@ -1,3 +1,4 @@
+use super::GraphicsError;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -35,20 +36,8 @@ impl VertexAttribute {
     }
 }
 
-/// Why a mesh could not be made or changed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MeshError(String);
-
-impl fmt::Display for MeshError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for MeshError {}
-
-pub(super) fn error(message: impl Into<String>) -> MeshError {
-    MeshError(message.into())
+pub(super) fn error(message: impl Into<String>) -> GraphicsError {
+    GraphicsError::new(message)
 }
 
 /// A vertex format with where each attribute sits in a vertex.
@@ -65,7 +54,7 @@ struct Format {
 }
 
 impl Format {
-    fn new(attributes: &[VertexAttribute]) -> Result<Format, MeshError> {
+    fn new(attributes: &[VertexAttribute]) -> Result<Format, GraphicsError> {
         if attributes.is_empty() {
             return Err(error("a vertex format needs at least one attribute"));
         }
@@ -459,12 +448,12 @@ pub enum MeshDrawMode {
 /// attributes for custom vertex shaders.
 ///
 /// ```no_run
-/// # use smitten::graphics::{self, MeshDrawMode, MeshVertex};
+/// # use smitten::graphics::{self, Mesh, MeshDrawMode, MeshVertex};
 /// # use smitten::Color;
 /// // A square that fades from red on the left to blue on the right.
 /// let red = Color::rgb(1.0, 0.0, 0.0);
 /// let blue = Color::rgb(0.0, 0.0, 1.0);
-/// let gradient = graphics::new_mesh(
+/// let gradient = Mesh::new(
 ///     &[
 ///         MeshVertex::colored(0.0, 0.0, red),
 ///         MeshVertex::colored(100.0, 0.0, blue),
@@ -569,7 +558,7 @@ impl Mesh {
         format: &[VertexAttribute],
         vertices: &[&[f32]],
         mode: MeshDrawMode,
-    ) -> Result<Mesh, MeshError> {
+    ) -> Result<Mesh, GraphicsError> {
         let mut mesh = Mesh::with_format_and_count(format, vertices.len(), mode)?;
         for (index, values) in vertices.iter().enumerate() {
             mesh.set_vertex_values(index, values)?;
@@ -583,7 +572,7 @@ impl Mesh {
         format: &[VertexAttribute],
         count: usize,
         mode: MeshDrawMode,
-    ) -> Result<Mesh, MeshError> {
+    ) -> Result<Mesh, GraphicsError> {
         let format = Format::new(format)?;
         let data = vec![0; count * format.stride as usize];
         Ok(Mesh::from_store(VertexStore::new(format, data), mode))
@@ -690,7 +679,7 @@ impl Mesh {
     /// Replaces all the values of the vertex at `index`, given in the
     /// format's order, as LÖVE's `setVertex`. There must be as many as
     /// the format has components.
-    pub fn set_vertex_values(&mut self, index: usize, values: &[f32]) -> Result<(), MeshError> {
+    pub fn set_vertex_values(&mut self, index: usize, values: &[f32]) -> Result<(), GraphicsError> {
         let mut store = self.store.borrow_mut();
         if index >= store.count() {
             return Err(error(format!(
@@ -731,7 +720,7 @@ impl Mesh {
         vertex: usize,
         attribute: usize,
         values: &[f32],
-    ) -> Result<(), MeshError> {
+    ) -> Result<(), GraphicsError> {
         let mut store = self.store.borrow_mut();
         if vertex >= store.count() {
             return Err(error(format!(
@@ -762,7 +751,7 @@ impl Mesh {
     /// replaces an attribute of the same name this mesh has, and follows
     /// later changes to `mesh`. `mesh` must have at least as many vertices
     /// as this one when it is drawn.
-    pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), MeshError> {
+    pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), GraphicsError> {
         self.attach_attribute_ex(name, mesh, VertexStep::PerVertex, name)
     }
 
@@ -777,7 +766,7 @@ impl Mesh {
         mesh: &Mesh,
         step: VertexStep,
         attach_name: &str,
-    ) -> Result<(), MeshError> {
+    ) -> Result<(), GraphicsError> {
         let has_it = mesh
             .store
             .borrow()

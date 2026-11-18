@@ -28,8 +28,10 @@ pub(crate) fn run_with(config: Config, body: impl FnOnce(&mut MainLoop)) {
             ctx.backend.set_screen_msaa(config.msaa);
         }
     });
-    if let Some(icon) = &config.icon {
-        window::set_icon(icon);
+    if let Some(icon) = &config.icon
+        && let Err(error) = window::set_icon(icon)
+    {
+        panic!("smitten: could not load the window icon: {error}");
     }
 
     let outcome = error::catch(|| body(&mut MainLoop::new()));

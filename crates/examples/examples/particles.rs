@@ -33,11 +33,11 @@ fn soft_dot(size: u32) -> Image {
 }
 
 impl Game for Particles {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.05, 0.05, 0.08));
         let dot = soft_dot(32);
 
-        let mut fire = graphics::new_particle_system(&dot, 600);
+        let mut fire = ParticleSystem::new(&dot, 600);
         fire.set_emission_rate(220.0);
         fire.set_particle_lifetime(0.4, 0.9);
         fire.set_emission_area(10.0, 4.0);
@@ -52,7 +52,7 @@ impl Game for Particles {
             Color::rgba(0.6, 0.1, 0.05, 0.0),
         ]);
 
-        let mut smoke = graphics::new_particle_system(&dot, 200);
+        let mut smoke = ParticleSystem::new(&dot, 200);
         smoke.set_emission_rate(25.0);
         smoke.set_particle_lifetime(2.0, 3.5);
         smoke.set_position(0.0, -40.0);
@@ -71,7 +71,7 @@ impl Game for Particles {
         ]);
 
         // Sparks have no emission rate: they only appear in bursts.
-        let mut sparks = graphics::new_particle_system(&dot, 1000);
+        let mut sparks = ParticleSystem::new(&dot, 1000);
         sparks.set_particle_lifetime(0.5, 1.4);
         sparks.set_spread(TAU);
         sparks.set_speed(120.0, 420.0);
@@ -84,7 +84,7 @@ impl Game for Particles {
 
         // Born on a ring and pushed around it, while a pull towards the
         // middle draws them inwards and their spin changes as they age.
-        let mut swirl = graphics::new_particle_system(&dot, 800);
+        let mut swirl = ParticleSystem::new(&dot, 800);
         swirl.set_position(600.0, 360.0);
         swirl.set_emission_rate(160.0);
         swirl.set_particle_lifetime(1.5, 2.5);
@@ -101,12 +101,12 @@ impl Game for Particles {
             Color::rgba(0.2, 0.3, 1.0, 0.0),
         ]);
 
-        Particles {
+        Ok(Particles {
             fire,
             smoke,
             sparks,
             swirl,
-        }
+        })
     }
 
     fn update(&mut self, dt: f32) {

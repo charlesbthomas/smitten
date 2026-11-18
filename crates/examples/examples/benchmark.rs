@@ -83,10 +83,10 @@ impl Benchmark {
 }
 
 impl Game for Benchmark {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.12, 0.1, 0.18));
         graphics::set_default_filter(Filter::Nearest);
-        let image = graphics::new_image("heart.png");
+        let image = Image::load("heart.png")?;
 
         let mut count = 5000;
         let mut report = false;
@@ -100,7 +100,7 @@ impl Game for Benchmark {
         }
 
         let mut game = Benchmark {
-            batch: graphics::new_sprite_batch(&image, count),
+            batch: SpriteBatch::new(&image, count),
             image,
             use_batch,
             hearts: Vec::new(),
@@ -109,7 +109,7 @@ impl Game for Benchmark {
             measured: None,
         };
         game.add_hearts(count);
-        game
+        Ok(game)
     }
 
     fn update(&mut self, dt: f32) {

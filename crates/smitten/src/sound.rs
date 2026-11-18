@@ -214,33 +214,22 @@ impl SoundData {
     }
 }
 
-/// Loads and decodes a sound file, the equivalent of
-/// `love.sound.newSoundData(path)`.
-///
-/// A relative path is looked up as [`crate::filesystem`] describes. Panics
-/// with the file name if it cannot be loaded; use [`try_new_sound_data`]
-/// to handle the failure instead.
-pub fn new_sound_data(path: impl AsRef<Path>) -> SoundData {
-    let path = path.as_ref();
-    try_new_sound_data(path).unwrap_or_else(|error| match error {
-        AudioError::Decode(message) => {
-            panic!("could not load sound {}: {message}", path.display())
-        }
-        error => panic!("{error}"),
-    })
+impl SoundData {
+    /// Loads and decodes a sound file, the equivalent of
+    /// `love.sound.newSoundData(path)`.
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes.
+    pub fn load(path: impl AsRef<Path>) -> Result<SoundData, AudioError> {
+        let path = path.as_ref();
+        let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        SoundData::from_bytes(bytes)
+    }
 }
 
-/// Loads and decodes a sound file, returning an error if it fails.
-pub fn try_new_sound_data(path: impl AsRef<Path>) -> Result<SoundData, AudioError> {
-    let path = path.as_ref();
-    let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    SoundData::from_bytes(bytes)
-}
-
-/// How many samples per channel a [`Decoder`] made by [`new_decoder`]
+/// How many samples per channel a [`Decoder`] made by [`Decoder::load`]
 /// hands back at a time. At 44.1 kHz this is about a tenth of a second.
 pub const DEFAULT_DECODER_BUFFER_SIZE: usize = 4_096;
 
@@ -249,7 +238,7 @@ pub const DEFAULT_DECODER_BUFFER_SIZE: usize = 4_096;
 ///
 /// Each call to [`Decoder::decode`] returns the next piece as a
 /// [`SoundData`], which suits analysing a long sound or feeding a
-/// [queueable source](crate::audio::new_queueable_source) with sound that
+/// [queueable source](crate::audio::Source::queueable) with sound that
 /// has been changed on the way.
 pub struct Decoder {
     bytes: Arc<[u8]>,
@@ -385,32 +374,20 @@ impl std::fmt::Debug for Decoder {
     }
 }
 
-/// Opens a sound file for reading a piece at a time, the equivalent of
-/// `love.sound.newDecoder(path, bufferSize)`. Each piece is `buffer_size`
-/// samples per channel, such as [`DEFAULT_DECODER_BUFFER_SIZE`].
-///
-/// A relative path is looked up as [`crate::filesystem`] describes. Panics
-/// with the file name if it cannot be opened; use [`try_new_decoder`] to
-/// handle the failure instead.
-pub fn new_decoder(path: impl AsRef<Path>, buffer_size: usize) -> Decoder {
-    let path = path.as_ref();
-    try_new_decoder(path, buffer_size).unwrap_or_else(|error| match error {
-        AudioError::Decode(message) => {
-            panic!("could not load sound {}: {message}", path.display())
-        }
-        error => panic!("{error}"),
-    })
-}
-
-/// Opens a sound file for reading a piece at a time, returning an error
-/// if it fails.
-pub fn try_new_decoder(path: impl AsRef<Path>, buffer_size: usize) -> Result<Decoder, AudioError> {
-    let path = path.as_ref();
-    let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Decoder::from_bytes(bytes, buffer_size)
+impl Decoder {
+    /// Opens a sound file for reading a piece at a time, the equivalent of
+    /// `love.sound.newDecoder(path, bufferSize)`. Each piece is `buffer_size`
+    /// samples per channel, such as [`DEFAULT_DECODER_BUFFER_SIZE`].
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes.
+    pub fn load(path: impl AsRef<Path>, buffer_size: usize) -> Result<Decoder, AudioError> {
+        let path = path.as_ref();
+        let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Decoder::from_bytes(bytes, buffer_size)
+    }
 }
 
 #[cfg(test)]

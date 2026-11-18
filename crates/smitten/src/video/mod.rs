@@ -1,6 +1,6 @@
 //! Decoding video, the equivalent of `love.video`.
 //!
-//! Most games want [`graphics::new_video`](crate::graphics::new_video),
+//! Most games want [`Video::load`](crate::graphics::Video::load),
 //! which plays a video and draws it. A [`VideoStream`] is the decoder
 //! underneath, for reading a video's frames as pixels without drawing
 //! them.
@@ -26,6 +26,7 @@ use std::sync::Arc;
 use theora_rs::{DecoderContext, HeaderParser, Info, OggPacket, SetupInfo};
 
 /// Why a video could not be loaded.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum VideoError {
     /// The file could not be read.
@@ -190,7 +191,7 @@ impl VideoStream {
     }
 
     /// The path the video was loaded from, as given to
-    /// [`new_video_stream`], the equivalent of `VideoStream:getFilename`.
+    /// [`VideoStream::load`], the equivalent of `VideoStream:getFilename`.
     /// `None` for one made with [`VideoStream::from_bytes`].
     pub fn filename(&self) -> Option<&Path> {
         self.path.as_deref()
@@ -354,28 +355,17 @@ impl fmt::Debug for VideoStream {
     }
 }
 
-/// Opens a video file for decoding, the equivalent of
-/// `love.video.newVideoStream`.
-///
-/// A relative path is looked up as [`crate::filesystem`] describes. Panics
-/// with the file name if it cannot be loaded; use [`try_new_video_stream`]
-/// to handle the failure instead.
-pub fn new_video_stream(path: impl AsRef<Path>) -> VideoStream {
-    let path = path.as_ref();
-    try_new_video_stream(path).unwrap_or_else(|error| match error {
-        VideoError::Decode(message) => {
-            panic!("could not load video {}: {message}", path.display())
-        }
-        error => panic!("{error}"),
-    })
-}
-
-/// Opens a video file for decoding, returning an error if it fails.
-pub fn try_new_video_stream(path: impl AsRef<Path>) -> Result<VideoStream, VideoError> {
-    let path = path.as_ref();
-    let mut stream = VideoStream::from_bytes(read(path)?)?;
-    stream.path = Some(path.to_path_buf());
-    Ok(stream)
+impl VideoStream {
+    /// Opens a video file for decoding, the equivalent of
+    /// `love.video.newVideoStream`.
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes.
+    pub fn load(path: impl AsRef<Path>) -> Result<VideoStream, VideoError> {
+        let path = path.as_ref();
+        let mut stream = VideoStream::from_bytes(read(path)?)?;
+        stream.path = Some(path.to_path_buf());
+        Ok(stream)
+    }
 }
 
 pub(crate) fn read(path: &Path) -> Result<Vec<u8>, VideoError> {

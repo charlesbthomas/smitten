@@ -3,7 +3,7 @@
 ///
 /// Maps a point `(x, y)` to `(a*x + c*y + tx, b*x + d*y + ty)`.
 ///
-/// Make one with [`math::new_transform`](crate::math::new_transform) or
+/// Make one with [`Transform::from_transformation`] or
 /// [`Transform::new`], change it with the same methods as the graphics
 /// transform stack, and use it with
 /// [`graphics::apply_transform`](crate::graphics::apply_transform) or
@@ -11,9 +11,9 @@
 /// transforms, `outer * inner`, applies `inner` first.
 ///
 /// ```
-/// use smitten::math;
+/// use smitten::graphics::Transform;
 ///
-/// let mut transform = math::new_transform(100.0, 50.0, 0.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0);
+/// let mut transform = Transform::from_transformation(100.0, 50.0, 0.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0);
 /// assert_eq!(transform.transform_point(1.0, 1.0), (102.0, 52.0));
 /// assert_eq!(transform.inverse_transform_point(102.0, 52.0), (1.0, 1.0));
 /// transform.translate(10.0, 0.0);

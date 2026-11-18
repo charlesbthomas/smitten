@@ -18,19 +18,19 @@ struct Audio {
 }
 
 impl Game for Audio {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.11, 0.12, 0.15));
         // Holding Up or Down keeps changing the volume.
         keyboard::set_key_repeat(true);
-        let music = audio::new_source("loop.ogg", SourceType::Stream);
+        let music = Source::load("loop.ogg", SourceType::Stream)?;
         music.set_looping(true);
         music.set_volume(0.6);
         music.play();
-        Audio {
-            blip: audio::new_source("blip.wav", SourceType::Static),
+        Ok(Audio {
+            blip: Source::load("blip.wav", SourceType::Static)?,
             blips: Vec::new(),
             music,
-        }
+        })
     }
 
     fn update(&mut self, _dt: f32) {

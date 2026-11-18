@@ -73,7 +73,7 @@ impl Physics {
 }
 
 impl Game for Physics {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.1, 0.11, 0.15));
         let world = World::new(0.0, 900.0);
 
@@ -132,7 +132,7 @@ impl Game for Physics {
             );
             game.drop_something(x, y);
         }
-        game
+        Ok(game)
     }
 
     fn update(&mut self, dt: f32) {

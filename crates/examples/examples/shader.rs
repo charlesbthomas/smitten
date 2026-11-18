@@ -76,17 +76,17 @@ impl Shaders {
 }
 
 impl Game for Shaders {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_default_filter(Filter::Nearest);
         let wobble = Shader::from_file("wobble.wgsl").unwrap_or_else(|error| panic!("{error}"));
         wobble.send("size", (WIDTH as f32, HEIGHT as f32));
-        Shaders {
-            scene: graphics::new_canvas(WIDTH, HEIGHT),
+        Ok(Shaders {
+            scene: Canvas::new(WIDTH, HEIGHT)?,
             wobble,
-            gray: graphics::new_shader(GRAY),
-            heart: graphics::new_image("heart.png"),
+            gray: Shader::new(GRAY)?,
+            heart: Image::load("heart.png")?,
             effect_on: true,
-        }
+        })
     }
 
     fn draw(&mut self) {

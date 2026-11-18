@@ -263,21 +263,21 @@ impl Lighting {
 }
 
 impl Game for Lighting {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::BLACK);
         // Holding Up or Down keeps changing the ambient light.
         keyboard::set_key_repeat(true);
-        let glow = graphics::new_shader(GLOW);
+        let glow = Shader::new(GLOW)?;
         glow.send("falloff", 1.6_f32);
-        Lighting {
-            light_map: graphics::new_canvas(WIDTH, HEIGHT),
+        Ok(Lighting {
+            light_map: Canvas::new(WIDTH, HEIGHT)?,
             glow,
-            heart: graphics::new_image("heart.png"),
+            heart: Image::load("heart.png")?,
             placed: Vec::new(),
             shadows_on: true,
             view: View::Lit,
             ambient: 0.12,
-        }
+        })
     }
 
     fn draw(&mut self) {

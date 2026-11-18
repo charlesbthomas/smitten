@@ -111,7 +111,7 @@ pub fn cursor() -> Cursor {
 /// A cursor drawn from an image, the equivalent of the `Cursor` that
 /// `love.mouse.newCursor` returns.
 ///
-/// Make one with [`new_cursor`] and show it with [`set_image_cursor`].
+/// Make one with [`ImageCursor::load`] and show it with [`set_image_cursor`].
 /// Clones share the same cursor, which is freed when the last clone is
 /// dropped and it is no longer shown.
 #[derive(Clone)]
@@ -185,22 +185,14 @@ impl std::fmt::Debug for ImageCursor {
     }
 }
 
-/// Loads a cursor from an image file, the equivalent of
-/// `love.mouse.newCursor(path, hot_x, hot_y)`. `(hot_x, hot_y)` is the
-/// pixel that points. Panics if the file cannot be loaded; see
-/// [`try_new_cursor`].
-pub fn new_cursor(path: impl AsRef<Path>, hot_x: u32, hot_y: u32) -> ImageCursor {
-    try_new_cursor(path, hot_x, hot_y).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads a cursor from an image file, returning an error if it fails.
-pub fn try_new_cursor(
-    path: impl AsRef<Path>,
-    hot_x: u32,
-    hot_y: u32,
-) -> Result<ImageCursor, ImageError> {
-    let data = crate::graphics::try_new_image_data(path)?;
-    ImageCursor::from_image_data(&data, hot_x, hot_y)
+impl ImageCursor {
+    /// Loads a cursor from an image file, the equivalent of
+    /// `love.mouse.newCursor(path, hot_x, hot_y)`. `(hot_x, hot_y)` is the pixel
+    /// that points.
+    pub fn load(path: impl AsRef<Path>, hot_x: u32, hot_y: u32) -> Result<ImageCursor, ImageError> {
+        let data = ImageData::load(path)?;
+        ImageCursor::from_image_data(&data, hot_x, hot_y)
+    }
 }
 
 /// Shows `cursor` while the pointer is over the window, the equivalent of

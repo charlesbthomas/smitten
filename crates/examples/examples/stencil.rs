@@ -71,9 +71,9 @@ fn draw_star(x: f32, y: f32, radius: f32, turn: f32) {
 }
 
 impl Game for Stencil {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.09, 0.1, 0.14));
-        Stencil
+        Ok(Stencil)
     }
 
     fn draw(&mut self) {

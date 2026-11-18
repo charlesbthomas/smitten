@@ -441,9 +441,9 @@ fn control(up: &[Key], down: &[Key], pad: Option<&Joystick>) -> f32 {
 }
 
 impl Game for Pong {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(BACKGROUND);
-        Pong {
+        Ok(Pong {
             state: State::Title,
             two_players: false,
             left: Paddle::new(PADDLE_MARGIN),
@@ -451,10 +451,10 @@ impl Game for Pong {
             ball: Ball::centered(),
             ai_aim: 0.0,
             seed: 2024,
-            score_font: graphics::new_default_font(64.0),
-            title_font: graphics::new_default_font(96.0),
-            text_font: graphics::new_default_font(22.0),
-        }
+            score_font: Font::default_at(64.0),
+            title_font: Font::default_at(96.0),
+            text_font: Font::default_at(22.0),
+        })
     }
 
     fn update(&mut self, dt: f32) {

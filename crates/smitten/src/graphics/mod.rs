@@ -14,6 +14,7 @@
 mod batch;
 mod canvas;
 mod compressed;
+mod error;
 pub(crate) mod image;
 mod image_data;
 mod layered;
@@ -26,7 +27,7 @@ mod shapes;
 mod sprite_batch;
 mod state;
 mod stats;
-mod text;
+pub(crate) mod text;
 mod text_object;
 mod transform;
 #[cfg(feature = "video")]
@@ -57,10 +58,11 @@ pub(crate) mod reloading {
 
 pub use canvas::{Canvas, CanvasSettings, MipmapMode};
 pub use compressed::CompressedImageData;
+pub use error::GraphicsError;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::{ImageData, ImageFormat, is_compressed};
 pub use layered::{ArrayImage, CubeImage, VolumeImage};
-pub use mesh::{Mesh, MeshDrawMode, MeshError, MeshVertex, VertexAttribute};
+pub use mesh::{Mesh, MeshDrawMode, MeshVertex, VertexAttribute};
 pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
 pub use shader::{MatrixLayout, Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
@@ -71,11 +73,11 @@ pub use smitten_core::backend::{
 pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
 pub use state::StackType;
 pub use stats::Stats;
-pub use text::{Align, Font, FontError, GlyphData, GlyphFormat, Hinting, Rasterizer};
+pub use text::{Align, Font, FontError, Hinting};
 pub use text_object::Text;
 pub use transform::Transform;
 #[cfg(feature = "video")]
-pub use video::{Video, new_video, try_new_video};
+pub use video::Video;
 
 /// Whether a shape is filled in or drawn as an outline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -345,11 +347,11 @@ impl GraphicsState {
         backend: &mut dyn Backend,
         canvas: &Canvas,
         slice: TargetSlice,
-    ) -> Result<ImageData, String> {
+    ) -> Result<ImageData, GraphicsError> {
         self.flush_canvases(backend);
         let (width, height, pixels) = backend.read_texture_slice(canvas.texture(), slice)?;
         ImageData::from_raw(width, height, canvas.format(), pixels)
-            .map_err(|error| error.to_string())
+            .map_err(|error| GraphicsError::new(error.to_string()))
     }
 
     /// Called after `finish_frame`: hands a copy of the frame to everyone
@@ -378,7 +380,7 @@ impl GraphicsState {
     /// Draws the queued frame into a texture instead of the window and
     /// copies it back. The window's own pixels cannot be read, and this
     /// way the picture is the same whatever is covering the window.
-    fn read_screen(&mut self, backend: &mut dyn Backend) -> Result<ImageData, String> {
+    fn read_screen(&mut self, backend: &mut dyn Backend) -> Result<ImageData, GraphicsError> {
         let (width, height) = backend.size_in_pixels();
         // Multisampled and encoded as the screen is, so the picture
         // matches it.
@@ -1048,16 +1050,6 @@ pub fn pixel_dimensions() -> (u32, u32) {
 // ---------------------------------------------------------------------------
 // Canvases
 
-/// Creates a transparent canvas of `width` by `height` units, as sharp as
-/// the screen. See [`Canvas::with_dpi_scale`] to choose its sharpness.
-///
-/// Panics if the GPU cannot provide it, for instance because it is larger
-/// than the GPU supports. Use [`Canvas::new`] to handle the failure instead.
-pub fn new_canvas(width: u32, height: u32) -> Canvas {
-    Canvas::new(width, height)
-        .unwrap_or_else(|message| panic!("could not create a {width}x{height} canvas: {message}"))
-}
-
 /// Sends everything drawn from now on to `canvas`, or back to the screen
 /// for `None`.
 ///
@@ -1103,7 +1095,7 @@ pub fn set_canvases(canvases: &[&Canvas]) {
 pub const MAX_CANVASES: usize = smitten_core::backend::MAX_TARGETS;
 
 /// As [`set_canvases`], returning an error rather than panicking.
-pub fn try_set_canvases(canvases: &[&Canvas]) -> Result<(), String> {
+pub fn try_set_canvases(canvases: &[&Canvas]) -> Result<(), GraphicsError> {
     let targets: Vec<CanvasTarget> = canvases
         .iter()
         .map(|&canvas| CanvasTarget::new(canvas))
@@ -1173,7 +1165,7 @@ pub fn set_canvas_targets(targets: &[CanvasTarget]) {
 }
 
 /// As [`set_canvas_targets`], returning an error rather than panicking.
-pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), String> {
+pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), GraphicsError> {
     set_targets_and_depth(targets, None)
 }
 
@@ -1202,7 +1194,7 @@ pub fn set_canvas_with_depth(targets: &[CanvasTarget], depth_stencil: &Canvas) {
 pub fn try_set_canvas_with_depth(
     targets: &[CanvasTarget],
     depth_stencil: &Canvas,
-) -> Result<(), String> {
+) -> Result<(), GraphicsError> {
     set_targets_and_depth(targets, Some(depth_stencil))
 }
 
@@ -1212,12 +1204,15 @@ pub fn depth_stencil_canvas() -> Option<Canvas> {
     context::with(|ctx| ctx.gfx.depth_canvas.clone())
 }
 
-fn set_targets_and_depth(targets: &[CanvasTarget], depth: Option<&Canvas>) -> Result<(), String> {
+fn set_targets_and_depth(
+    targets: &[CanvasTarget],
+    depth: Option<&Canvas>,
+) -> Result<(), GraphicsError> {
     let Some(first) = targets.first() else {
         if depth.is_some() {
-            return Err(
-                "a depth canvas can only be drawn with color canvases, not the screen".to_string(),
-            );
+            return Err(GraphicsError::new(
+                "a depth canvas can only be drawn with color canvases, not the screen",
+            ));
         }
         set_canvas(None);
         return Ok(());
@@ -1227,7 +1222,8 @@ fn set_targets_and_depth(targets: &[CanvasTarget], depth: Option<&Canvas>) -> Re
             return Err(format!(
                 "a {} canvas cannot hold depth; make it with a depth format",
                 depth.format()
-            ));
+            )
+            .into());
         }
         if depth.pixel_dimensions() != first.canvas_pixels() {
             let (width, height) = first.canvas_pixels();
@@ -1235,19 +1231,21 @@ fn set_targets_and_depth(targets: &[CanvasTarget], depth: Option<&Canvas>) -> Re
             return Err(format!(
                 "the depth canvas must be the size of what is drawn to: {width} by {height} \
                  pixels, not {depth_width} by {depth_height}"
-            ));
+            )
+            .into());
         }
         if depth.msaa() != first.canvas.msaa() {
-            return Err(
-                "the depth canvas must be multisampled like the canvases drawn to".to_string(),
-            );
+            return Err(GraphicsError::new(
+                "the depth canvas must be multisampled like the canvases drawn to",
+            ));
         }
     }
     if targets.len() > MAX_CANVASES {
         return Err(format!(
             "at most {MAX_CANVASES} canvases can be drawn to at once, not {}",
             targets.len()
-        ));
+        )
+        .into());
     }
     for (index, target) in targets.iter().enumerate() {
         let canvas = target.canvas;
@@ -1255,28 +1253,30 @@ fn set_targets_and_depth(targets: &[CanvasTarget], depth: Option<&Canvas>) -> Re
             return Err(format!(
                 "a {} canvas holds depth, not colors; draw with it through set_canvas_with_depth",
                 canvas.format()
-            ));
+            )
+            .into());
         }
         if target.layer >= canvas.layer_count() {
             return Err(format!(
                 "layer {} does not exist: the canvas has {}",
                 target.layer,
                 canvas.layer_count()
-            ));
+            )
+            .into());
         }
         if target.mipmap >= canvas.mipmap_count() {
             return Err(format!(
                 "mipmap level {} does not exist: the canvas has {}",
                 target.mipmap,
                 canvas.mipmap_count()
-            ));
+            )
+            .into());
         }
         if target.mipmap > 0 && canvas.mipmap_mode() == MipmapMode::Auto {
-            return Err(
+            return Err(GraphicsError::new(
                 "a canvas whose mipmaps are made automatically can only be drawn to at level 0; \
-                 make it with MipmapMode::Manual"
-                    .to_string(),
-            );
+                 make it with MipmapMode::Manual",
+            ));
         }
         if target.canvas_pixels() != first.canvas_pixels() {
             let (width, height) = first.canvas_pixels();
@@ -1284,15 +1284,20 @@ fn set_targets_and_depth(targets: &[CanvasTarget], depth: Option<&Canvas>) -> Re
             return Err(format!(
                 "canvases drawn to at once must be the same size: the first is \
                  {width} by {height} pixels, but canvas {index} is {other_width} by {other_height}"
-            ));
+            )
+            .into());
         }
         if canvas.msaa() != first.canvas.msaa() {
-            return Err("canvases drawn to at once must be multisampled alike".to_string());
+            return Err(GraphicsError::new(
+                "canvases drawn to at once must be multisampled alike",
+            ));
         }
         if targets[..index].iter().any(|other| {
             other.canvas.texture() == canvas.texture() && other.slice() == target.slice()
         }) {
-            return Err("the same canvas cannot be drawn to twice at once".to_string());
+            return Err(GraphicsError::new(
+                "the same canvas cannot be drawn to twice at once",
+            ));
         }
     }
     let mut slices = [TargetSlice::default(); MAX_CANVASES];
@@ -1454,15 +1459,6 @@ pub fn stencil_test() -> Option<(CompareMode, u8)> {
 // ---------------------------------------------------------------------------
 // Shaders
 
-/// Compiles a shader from WGSL source. See [`Shader`] for what to write.
-///
-/// Panics with the compiler's message if the source is not valid. Use
-/// [`Shader::new`] to handle the failure instead, or [`Shader::from_file`]
-/// to load the source from a file.
-pub fn new_shader(source: &str) -> Shader {
-    Shader::new(source).unwrap_or_else(|error| panic!("{error}"))
-}
-
 /// Draws everything from now on with `shader`, or with the built-in
 /// shader for `None`.
 ///
@@ -1531,7 +1527,7 @@ pub fn set_blend_mode(mode: BlendMode) {
 /// ```no_run
 /// use smitten::{graphics, BlendAlphaMode, BlendMode};
 ///
-/// # let canvas = graphics::new_canvas(64, 64);
+/// # let canvas = smitten::graphics::Canvas::new(64, 64).unwrap();
 /// // Add a canvas full of soft glows onto the screen.
 /// graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied);
 /// graphics::draw(&canvas, 0.0, 0.0);
@@ -2159,55 +2155,32 @@ pub fn line(x1: f32, y1: f32, x2: f32, y2: f32) {
 // ---------------------------------------------------------------------------
 // Images
 
-/// Loads an image file: PNG, JPEG or TGA, or DDS or KTX for compressed
-/// pixels.
-///
-/// A relative path is looked up as [`crate::filesystem`] describes, which
-/// normally means inside the game's `assets` folder.
-///
-/// Panics with the file name if it cannot be loaded, since a missing asset
-/// is usually a bug. Use [`try_new_image`] to handle the failure instead.
-pub fn new_image(path: impl AsRef<Path>) -> Image {
-    try_new_image(path).unwrap_or_else(|error| panic!("{error}"))
+impl Image {
+    /// Loads an image file: PNG, JPEG or TGA, or DDS or KTX for compressed
+    /// pixels.
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes, which
+    /// normally means inside the game's `assets` folder.
+    pub fn load(path: impl AsRef<Path>) -> Result<Image, ImageError> {
+        image::load(path.as_ref(), ImageSettings::default())
+    }
 }
 
-/// Loads an image file (PNG, JPEG or TGA, or DDS or KTX for compressed
-/// pixels),
-/// returning an error if it fails.
-pub fn try_new_image(path: impl AsRef<Path>) -> Result<Image, ImageError> {
-    image::load(path.as_ref(), ImageSettings::default())
+impl Image {
+    /// Loads an image file with options such as mipmaps, the equivalent of
+    /// `love.graphics.newImage(path, settings)`.
+    pub fn load_with(path: impl AsRef<Path>, settings: ImageSettings) -> Result<Image, ImageError> {
+        image::load(path.as_ref(), settings)
+    }
 }
 
-/// Loads an image file with options such as mipmaps, the equivalent of
-/// `love.graphics.newImage(path, settings)`.
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_image_with`] to handle the failure instead.
-pub fn new_image_with(path: impl AsRef<Path>, settings: ImageSettings) -> Image {
-    try_new_image_with(path, settings).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads an image file with options, returning an error if it fails.
-pub fn try_new_image_with(
-    path: impl AsRef<Path>,
-    settings: ImageSettings,
-) -> Result<Image, ImageError> {
-    image::load(path.as_ref(), settings)
-}
-
-/// Loads an image file into memory, where its pixels can be read and
-/// changed. See [`ImageData`].
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_image_data`] to handle the failure instead.
-pub fn new_image_data(path: impl AsRef<Path>) -> ImageData {
-    try_new_image_data(path).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads an image file into memory, returning an error if it fails.
-pub fn try_new_image_data(path: impl AsRef<Path>) -> Result<ImageData, ImageError> {
-    let (width, height, rgba) = image::load_rgba(path.as_ref())?;
-    Ok(ImageData::from_rgba(width, height, rgba))
+impl ImageData {
+    /// Loads an image file into memory, where its pixels can be read and
+    /// changed. See [`ImageData`].
+    pub fn load(path: impl AsRef<Path>) -> Result<ImageData, ImageError> {
+        let (width, height, rgba) = image::load_rgba(path.as_ref())?;
+        Ok(ImageData::from_rgba(width, height, rgba))
+    }
 }
 
 /// Draws an image with its top-left corner at `(x, y)`.
@@ -2281,19 +2254,6 @@ pub fn draw_quad_ex(
 // ---------------------------------------------------------------------------
 // Sprite batches
 
-/// Creates an empty sprite batch that draws `image`, with room reserved
-/// for `capacity` sprites. See [`SpriteBatch`].
-pub fn new_sprite_batch(image: &Image, capacity: usize) -> SpriteBatch {
-    SpriteBatch::new(image, capacity)
-}
-
-/// Creates an empty sprite batch that draws layers of `image`, with room
-/// reserved for `capacity` sprites, the equivalent of `newSpriteBatch`
-/// with an `ArrayImage`. See [`SpriteBatch::add_layer`].
-pub fn new_array_sprite_batch(image: &ArrayImage, capacity: usize) -> SpriteBatch {
-    SpriteBatch::from_array_image(image, capacity, SpriteBatchUsage::default())
-}
-
 /// Draws every sprite in a batch, with the batch's origin at `(x, y)`.
 pub fn draw_sprite_batch(sprites: &SpriteBatch, x: f32, y: f32) {
     draw_sprite_batch_ex(sprites, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
@@ -2321,11 +2281,6 @@ pub fn draw_sprite_batch_ex(
 
 // ---------------------------------------------------------------------------
 // Meshes
-
-/// Creates a mesh from its vertices. See [`Mesh`].
-pub fn new_mesh(vertices: &[MeshVertex], mode: MeshDrawMode) -> Mesh {
-    Mesh::new(vertices, mode)
-}
 
 /// Draws a mesh with its origin at `(x, y)`, tinted by the current color.
 pub fn draw_mesh(mesh: &Mesh, x: f32, y: f32) {
@@ -2378,12 +2333,6 @@ pub fn draw_instanced_ex(
 // ---------------------------------------------------------------------------
 // Particles
 
-/// Creates a particle system that draws each particle as `image` and
-/// holds at most `max_particles` at once.
-pub fn new_particle_system(image: &Image, max_particles: usize) -> ParticleSystem {
-    ParticleSystem::new(image, max_particles)
-}
-
 /// Draws a particle system with its origin at `(x, y)`.
 pub fn draw_particles(system: &ParticleSystem, x: f32, y: f32) {
     draw_particles_ex(system, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
@@ -2409,144 +2358,90 @@ pub fn draw_particles_ex(
 // ---------------------------------------------------------------------------
 // Text
 
-/// Loads a TrueType or OpenType font file at `size` pixels, or an
-/// AngelCode BMFont if the file name ends in `.fnt` (whose own size is
-/// used then, and whose page images are found next to it).
-///
-/// A relative path is looked up as [`crate::filesystem`] describes, which
-/// normally means inside the game's `assets` folder.
-///
-/// Panics with the file name if it cannot be loaded. Use [`try_new_font`]
-/// to handle the failure instead.
-pub fn new_font(path: impl AsRef<Path>, size: f32) -> Font {
-    try_new_font(path, size).unwrap_or_else(|error| panic!("{error}"))
+impl Font {
+    /// Loads a TrueType or OpenType font file at `size` pixels, or an
+    /// AngelCode BMFont if the file name ends in `.fnt` (whose own size is
+    /// used then, and whose page images are found next to it).
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes, which
+    /// normally means inside the game's `assets` folder.
+    pub fn load(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
+        Font::load_with(path, size, Hinting::Normal, None)
+    }
 }
 
-/// Loads a font file at `size` pixels, returning an error if it fails.
-pub fn try_new_font(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
-    try_new_font_ex(path, size, Hinting::Normal, None)
+impl Font {
+    /// Loads a font file with the full set of LÖVE's `newFont` arguments:
+    /// its size, how its outlines are fitted to pixels, and how many pixels
+    /// its glyphs hold for each unit, or `None` to match the screen.
+    pub fn load_with(
+        path: impl AsRef<Path>,
+        size: f32,
+        hinting: Hinting,
+        dpi_scale: Option<f32>,
+    ) -> Result<Font, FontError> {
+        let path = path.as_ref();
+        let is_bmfont = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("fnt"));
+        let font = if is_bmfont {
+            Font::read_bmfont(path)?
+        } else {
+            let bytes =
+                crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+            Font::from_bytes_ex(&bytes, size, hinting, dpi_scale)?
+        };
+        font.watch(path);
+        Ok(font)
+    }
 }
 
-/// Loads a font file with the full set of LÖVE's `newFont` arguments:
-/// its size, how its outlines are fitted to pixels, and how many pixels
-/// its glyphs hold for each unit, or `None` to match the screen.
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_font_ex`] to handle the failure instead.
-pub fn new_font_ex(
-    path: impl AsRef<Path>,
-    size: f32,
-    hinting: Hinting,
-    dpi_scale: Option<f32>,
-) -> Font {
-    try_new_font_ex(path, size, hinting, dpi_scale).unwrap_or_else(|error| panic!("{error}"))
+impl Font {
+    /// Loads an AngelCode BMFont from its `.fnt` file, whose page images are
+    /// found next to it. Only the text form of `.fnt` files is read, as in
+    /// LÖVE. [`Font::load`] does the same for a file ending in `.fnt`.
+    pub fn load_bmfont(path: impl AsRef<Path>) -> Result<Font, FontError> {
+        let path = path.as_ref();
+        let font = Font::read_bmfont(path)?;
+        font.watch(path);
+        Ok(font)
+    }
 }
 
-/// As [`new_font_ex`], returning an error if it fails.
-pub fn try_new_font_ex(
-    path: impl AsRef<Path>,
-    size: f32,
-    hinting: Hinting,
-    dpi_scale: Option<f32>,
-) -> Result<Font, FontError> {
-    let path = path.as_ref();
-    let is_bmfont = path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("fnt"));
-    let font = if is_bmfont {
-        Font::load_bmfont(path)?
-    } else {
+impl Font {
+    /// Loads a bitmap font: an image holding the characters of `glyphs` in a
+    /// row, separated by columns in the color of its top-left pixel. The
+    /// equivalent of `love.graphics.newImageFont`. See [`Font::from_image`].
+    ///
+    /// Pixel fonts usually want `font.set_filter(Filter::Nearest)` so they
+    /// stay crisp when enlarged.
+    pub fn load_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
+        Font::load_image_font_with(path, glyphs, 0.0)
+    }
+}
+
+impl Font {
+    /// Loads a bitmap font with `extra_spacing` units added after each
+    /// character, which may be negative: LÖVE's `newImageFont` with its
+    /// `extraspacing` argument.
+    pub fn load_image_font_with(
+        path: impl AsRef<Path>,
+        glyphs: &str,
+        extra_spacing: f32,
+    ) -> Result<Font, FontError> {
+        let path = path.as_ref();
         let bytes =
             crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-        Font::from_bytes_ex(&bytes, size, hinting, dpi_scale)?
-    };
-    font.watch(path);
-    Ok(font)
-}
-
-/// Loads an AngelCode BMFont from its `.fnt` file, whose page images are
-/// found next to it. Only the text form of `.fnt` files is read, as in
-/// LÖVE. [`new_font`] does the same for a file ending in `.fnt`.
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_bmfont`] to handle the failure instead.
-pub fn new_bmfont(path: impl AsRef<Path>) -> Font {
-    try_new_bmfont(path).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads a BMFont, returning an error if it fails.
-pub fn try_new_bmfont(path: impl AsRef<Path>) -> Result<Font, FontError> {
-    let path = path.as_ref();
-    let font = Font::load_bmfont(path)?;
-    font.watch(path);
-    Ok(font)
-}
-
-/// Loads a bitmap font: an image holding the characters of `glyphs` in a
-/// row, separated by columns in the color of its top-left pixel. The
-/// equivalent of `love.graphics.newImageFont`. See [`Font::from_image`].
-///
-/// Pixel fonts usually want `font.set_filter(Filter::Nearest)` so they
-/// stay crisp when enlarged.
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_image_font`] to handle the failure instead.
-pub fn new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Font {
-    try_new_image_font(path, glyphs).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads a bitmap font, returning an error if it fails.
-pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
-    try_new_image_font_ex(path, glyphs, 0.0)
-}
-
-/// Loads a bitmap font with `extra_spacing` units added after each
-/// character, which may be negative: LÖVE's `newImageFont` with its
-/// `extraspacing` argument.
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_image_font_ex`] to handle the failure instead.
-pub fn new_image_font_ex(path: impl AsRef<Path>, glyphs: &str, extra_spacing: f32) -> Font {
-    try_new_image_font_ex(path, glyphs, extra_spacing).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// As [`new_image_font_ex`], returning an error if it fails.
-pub fn try_new_image_font_ex(
-    path: impl AsRef<Path>,
-    glyphs: &str,
-    extra_spacing: f32,
-) -> Result<Font, FontError> {
-    let path = path.as_ref();
-    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    let font = Font::from_image(&bytes, glyphs, extra_spacing).map_err(|error| match error {
-        FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
-        other => other,
-    })?;
-    font.watch(path);
-    Ok(font)
-}
-
-/// Loads a font file at `size` pixels, makes it the current font and
-/// returns it, the equivalent of `love.graphics.setNewFont`.
-///
-/// Panics with the file name if it cannot be loaded.
-pub fn set_new_font(path: impl AsRef<Path>, size: f32) -> Font {
-    let font = new_font(path, size);
-    set_font(&font);
-    font
-}
-
-/// Makes the built-in font at `size` pixels the current font and returns
-/// it, the equivalent of `love.graphics.setNewFont(size)`.
-pub fn set_new_default_font(size: f32) -> Font {
-    let font = new_default_font(size);
-    set_font(&font);
-    font
-}
-
-/// Creates the built-in font at `size` pixels.
-pub fn new_default_font(size: f32) -> Font {
-    Font::default_at(size)
+        let font =
+            Font::from_image(&bytes, glyphs, extra_spacing).map_err(|error| match error {
+                FontError::Parse(message) => {
+                    FontError::Parse(format!("{}: {message}", path.display()))
+                }
+                other => other,
+            })?;
+        font.watch(path);
+        Ok(font)
+    }
 }
 
 /// Sets the font used by [`print()`] and [`printf`].
@@ -2622,12 +2517,6 @@ pub fn printf_with(text: &str, limit: f32, align: Align, transform: &Transform) 
         ctx.gfx
             .push_text(ctx.backend.as_mut(), text, Some((limit, align)), transform);
     });
-}
-
-/// Makes a [`Text`] in `font` holding `text`, the equivalent of
-/// `love.graphics.newText`. Pass an empty string to start with nothing.
-pub fn new_text(font: &Font, text: &str) -> Text {
-    Text::new(font, text)
 }
 
 /// Draws a [`Text`] with its top-left corner at `(x, y)` in the current
@@ -2763,47 +2652,6 @@ impl Layered for Canvas {
     fn layers(&self) -> u32 {
         self.layer_count()
     }
-}
-
-/// Loads an image file for each layer of an [`ArrayImage`], the
-/// equivalent of `love.graphics.newArrayImage`. They must all be the same
-/// size.
-///
-/// Panics with the reason if it cannot be made. Use
-/// [`ArrayImage::from_files`] to handle the failure instead.
-pub fn new_array_image(paths: &[impl AsRef<Path>]) -> ArrayImage {
-    ArrayImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads the six faces of a [`CubeImage`] from image files, in the order
-/// +x, -x, +y, -y, +z, -z. The equivalent of `love.graphics.newCubeImage`
-/// with six files.
-///
-/// Panics with the reason if it cannot be made. Use
-/// [`CubeImage::from_files`] to handle the failure instead.
-pub fn new_cube_image(paths: &[impl AsRef<Path>; 6]) -> CubeImage {
-    CubeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads an image file for each slice of a [`VolumeImage`], front to
-/// back, the equivalent of `love.graphics.newVolumeImage`. They must all
-/// be the same size.
-///
-/// Panics with the reason if it cannot be made. Use
-/// [`VolumeImage::from_files`] to handle the failure instead.
-pub fn new_volume_image(paths: &[impl AsRef<Path>]) -> VolumeImage {
-    VolumeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
-}
-
-/// Loads a DDS or KTX file of compressed pixels, the equivalent of
-/// `love.image.newCompressedData`. Draw it with
-/// [`Image::from_compressed_data`], or load it straight into an image
-/// with [`new_image`].
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`CompressedImageData::from_file`] to handle the failure instead.
-pub fn new_compressed_data(path: impl AsRef<Path>) -> CompressedImageData {
-    CompressedImageData::from_file(path).unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Whether the GPU can draw images compressed in `format`, the
@@ -2954,16 +2802,6 @@ pub fn system_limits() -> SystemLimits {
         canvas_msaa: context::with(|ctx| ctx.backend.max_msaa()),
         anisotropy: 1.0,
     }
-}
-
-/// Loads a [`CubeImage`] from one image file holding all six faces, the
-/// equivalent of `love.graphics.newCubeImage(path)`. The layouts it takes
-/// are listed at [`CubeImage::from_layout`].
-///
-/// Panics with the reason if it cannot be made. Use
-/// [`CubeImage::from_layout_file`] to handle the failure instead.
-pub fn new_cube_image_from_layout(path: impl AsRef<Path>) -> CubeImage {
-    CubeImage::from_layout_file(path).unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Draws text made of colored parts, the equivalent of

@@ -1,6 +1,6 @@
 //! Sound, the equivalent of `love.audio`.
 //!
-//! Load a sound with [`new_source`] and call [`Source::play`]. Short sound
+//! Load a sound with [`Source::load`] and call [`Source::play`]. Short sound
 //! effects should be [`SourceType::Static`]; music and other long sounds
 //! should be [`SourceType::Stream`].
 //!
@@ -32,7 +32,7 @@
 //!
 //! # Making and recording sound
 //!
-//! [`new_queueable_source`] plays sound the game makes as it goes, such as
+//! [`Source::queueable`] plays sound the game makes as it goes, such as
 //! a synthesizer, a voice chat or a [`Decoder`](crate::sound::Decoder)'s
 //! pieces changed on the way. [`recording_devices`] lists the microphones,
 //! whose [`RecordingDevice`] hands back what it hears as
@@ -69,7 +69,7 @@ pub enum SourceType {
     Stream,
     /// Plays buffers of samples the game hands it with [`Source::queue`],
     /// for sound made as the game runs. Made with
-    /// [`new_queueable_source`].
+    /// [`Source::queueable`].
     Queue,
 }
 
@@ -538,6 +538,7 @@ impl fmt::Debug for Source {
 }
 
 /// Why a sound could not be loaded.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum AudioError {
     /// The file could not be read.
@@ -572,81 +573,71 @@ impl std::error::Error for AudioError {
     }
 }
 
-/// Loads a sound file.
-///
-/// A relative path is looked up as [`crate::filesystem`] describes, which
-/// normally means inside the game's `assets` folder.
-///
-/// Panics with the file name if it cannot be loaded. Use
-/// [`try_new_source`] to handle the failure instead.
-pub fn new_source(path: impl AsRef<Path>, kind: SourceType) -> Source {
-    let path = path.as_ref();
-    try_new_source(path, kind).unwrap_or_else(|error| match error {
-        AudioError::Decode(message) => {
-            panic!("could not load sound {}: {message}", path.display())
-        }
-        error => panic!("{error}"),
-    })
+impl Source {
+    /// Loads a sound file.
+    ///
+    /// A relative path is looked up as [`crate::filesystem`] describes, which
+    /// normally means inside the game's `assets` folder.
+    pub fn load(path: impl AsRef<Path>, kind: SourceType) -> Result<Source, AudioError> {
+        let path = path.as_ref();
+        let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let source = Source::from_bytes(bytes, kind)?;
+        let file = crate::filesystem::resolve(path);
+        context::with(|ctx| {
+            ctx.reload.watch(
+                file,
+                crate::reload::Asset::Sound(Sound {
+                    mixer: source.mixer.clone(),
+                    group: source.id,
+                }),
+            );
+        });
+        Ok(source)
+    }
 }
 
-/// Loads a sound file, returning an error if it fails.
-pub fn try_new_source(path: impl AsRef<Path>, kind: SourceType) -> Result<Source, AudioError> {
-    let path = path.as_ref();
-    let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let source = Source::from_bytes(bytes, kind)?;
-    let file = crate::filesystem::resolve(path);
-    context::with(|ctx| {
-        ctx.reload.watch(
-            file,
-            crate::reload::Asset::Sound(Sound {
-                mixer: source.mixer.clone(),
-                group: source.id,
-            }),
+impl Source {
+    /// Creates a source that plays sound the game makes as it runs, the
+    /// equivalent of `love.audio.newQueueableSource`. Hand it buffers with
+    /// [`Source::queue`] and call [`Source::play`].
+    ///
+    /// Every buffer must have `rate` samples per second and `channels`
+    /// channels. At most `buffer_count` buffers wait at once; more than one
+    /// lets the game queue the next before the current one runs out.
+    ///
+    /// ```no_run
+    /// use smitten::audio::Source;
+    /// use smitten::sound::SoundData;
+    ///
+    /// let source = Source::queueable(44_100, 1, 4);
+    /// while source.free_buffer_count() > 0 {
+    ///     let mut tone = SoundData::new(1_024, 44_100, 1);
+    ///     for (i, sample) in tone.samples_mut().iter_mut().enumerate() {
+    ///         *sample = (i as f32 * 0.06).sin() * 0.2;
+    ///     }
+    ///     source.queue(&tone);
+    /// }
+    /// source.play();
+    /// ```
+    ///
+    /// Panics if `rate` is zero or `channels` is not 1 or 2.
+    pub fn queueable(rate: u32, channels: u16, buffer_count: usize) -> Source {
+        assert!(rate > 0, "a sound's sample rate must be above zero");
+        assert!(
+            channels == 1 || channels == 2,
+            "a sound must have 1 or 2 channels, not {channels}"
         );
-    });
-    Ok(source)
-}
-
-/// Creates a source that plays sound the game makes as it runs, the
-/// equivalent of `love.audio.newQueueableSource`. Hand it buffers with
-/// [`Source::queue`] and call [`Source::play`].
-///
-/// Every buffer must have `rate` samples per second and `channels`
-/// channels. At most `buffer_count` buffers wait at once; more than one
-/// lets the game queue the next before the current one runs out.
-///
-/// ```no_run
-/// use smitten::audio;
-/// use smitten::sound::SoundData;
-///
-/// let source = audio::new_queueable_source(44_100, 1, 4);
-/// while source.free_buffer_count() > 0 {
-///     let mut tone = SoundData::new(1_024, 44_100, 1);
-///     for (i, sample) in tone.samples_mut().iter_mut().enumerate() {
-///         *sample = (i as f32 * 0.06).sin() * 0.2;
-///     }
-///     source.queue(&tone);
-/// }
-/// source.play();
-/// ```
-///
-/// Panics if `rate` is zero or `channels` is not 1 or 2.
-pub fn new_queueable_source(rate: u32, channels: u16, buffer_count: usize) -> Source {
-    assert!(rate > 0, "a sound's sample rate must be above zero");
-    assert!(
-        channels == 1 || channels == 2,
-        "a sound must have 1 or 2 channels, not {channels}"
-    );
-    let data = Data::Queue(Queue::new(rate, channels, buffer_count));
-    let mixer = shared_mixer();
-    let id = lock(&mixer).add(Voice::new(data));
-    Source {
-        mixer,
-        id,
-        kind: SourceType::Queue,
+        let data = Data::Queue(Queue::new(rate, channels, buffer_count));
+        let mixer = shared_mixer();
+        let id = lock(&mixer).add(Voice::new(data));
+        Source {
+            mixer,
+            id,
+            kind: SourceType::Queue,
+        }
     }
 }
 

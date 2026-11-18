@@ -460,8 +460,8 @@ pub fn wait(timeout: Option<f32>) -> Option<Event> {
 /// }
 ///
 /// impl Game for MyGame {
-///     fn load() -> Self {
-///         MyGame { level: 1 }
+///     fn load() -> smitten::Result<Self> {
+///         Ok(MyGame { level: 1 })
 ///     }
 ///
 ///     fn update(&mut self, _dt: f32) {

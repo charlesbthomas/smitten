@@ -8,7 +8,7 @@
 //! The video is an Ogg Theora file made with FFmpeg's `mandelbrot` and
 //! `sine` sources.
 
-use smitten::audio::{self, Source};
+use smitten::audio::Source;
 use smitten::graphics::{DrawMode, Video};
 use smitten::sound::SoundData;
 use smitten::{Color, Config, Game, Key, event, graphics};
@@ -44,16 +44,16 @@ impl Player {
 }
 
 impl Game for Player {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.08, 0.08, 0.1));
-        let video = graphics::new_video("mandelbrot.ogv");
+        let video = Video::load("mandelbrot.ogv")?;
         video.play();
-        Player {
+        Ok(Player {
             video,
-            tone: audio::new_queueable_source(TONE_RATE, 1, 4),
+            tone: Source::queueable(TONE_RATE, 1, 4),
             tone_on: false,
             phase: 0.0,
-        }
+        })
     }
 
     fn update(&mut self, _dt: f32) {

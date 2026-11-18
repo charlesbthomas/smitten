@@ -9,9 +9,9 @@ use smitten_core::{CompareMode, Filter, PixelFormat, Wrap};
 use crate::context;
 use crate::reload::Asset;
 
-use super::CompressedImageData;
 use super::compressed::is_compressed_file;
 use super::stats::{Counted, Kind};
+use super::{CompressedImageData, GraphicsError};
 
 /// A picture that can be drawn, the equivalent of LÖVE's `Image`.
 ///
@@ -407,12 +407,16 @@ impl Image {
     /// whose red channel holds the depth.
     ///
     /// Fails for anything other than a readable depth canvas.
-    pub fn set_depth_sample_mode(&self, mode: Option<CompareMode>) -> Result<(), String> {
+    pub fn set_depth_sample_mode(&self, mode: Option<CompareMode>) -> Result<(), GraphicsError> {
         if !self.format().is_depth() {
-            return Err("only a depth canvas has a depth sample mode".to_string());
+            return Err(GraphicsError::new(
+                "only a depth canvas has a depth sample mode",
+            ));
         }
         if !self.is_readable() {
-            return Err("only a readable depth canvas can be sampled".to_string());
+            return Err(GraphicsError::new(
+                "only a readable depth canvas can be sampled",
+            ));
         }
         context::with(|ctx| ctx.backend.set_texture_depth_compare(self.texture(), mode))?;
         self.inner.depth_sample_mode.set(mode);
@@ -442,6 +446,7 @@ impl fmt::Debug for Image {
 }
 
 /// Why an image could not be created.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum ImageError {
     /// The file could not be read.

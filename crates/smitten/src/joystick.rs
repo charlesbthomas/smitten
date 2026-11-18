@@ -296,9 +296,12 @@ pub fn set_gamepad_mapping(guid: &str, input: GamepadInput, from: JoystickInput)
 /// mapping for the same GUID. Blank lines, `#` comments and lines for
 /// other platforms are skipped.
 ///
-/// Returns how many mappings were added.
-pub fn load_gamepad_mappings_from_str(mappings: &str) -> Result<usize, String> {
-    let added = context::with(|ctx| ctx.backend.add_gamepad_mappings(mappings))?;
+/// Returns how many mappings were added, or an
+/// [`InvalidData`](io::ErrorKind::InvalidData) error if SDL cannot read
+/// them.
+pub fn load_gamepad_mappings_from_str(mappings: &str) -> io::Result<usize> {
+    let added = context::with(|ctx| ctx.backend.add_gamepad_mappings(mappings))
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))?;
     context::with(|ctx| {
         for guid in mappings.lines().filter_map(gamepad_mapping::guid_of) {
             if !ctx.input.added_mappings.iter().any(|known| known == guid) {
@@ -316,7 +319,6 @@ pub fn load_gamepad_mappings_from_str(mappings: &str) -> Result<usize, String> {
 pub fn load_gamepad_mappings(path: impl AsRef<Path>) -> io::Result<usize> {
     let text = crate::filesystem::read_string(path)?;
     load_gamepad_mappings_from_str(&text)
-        .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))
 }
 
 /// The mapping used for joysticks with this GUID, in SDL's format, the

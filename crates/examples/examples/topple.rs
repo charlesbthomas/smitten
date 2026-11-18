@@ -362,7 +362,7 @@ impl Topple {
 }
 
 impl Game for Topple {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.09, 0.1, 0.16));
         graphics::set_line_style(LineStyle::Smooth);
 
@@ -388,7 +388,7 @@ impl Game for Topple {
             false,
         );
 
-        let mut dust = graphics::new_particle_system(&soft_dot(24), 400);
+        let mut dust = ParticleSystem::new(&soft_dot(24), 400);
         dust.set_particle_lifetime(0.3, 0.8);
         dust.set_spread(TAU);
         dust.set_speed(30.0, 160.0);
@@ -421,14 +421,14 @@ impl Game for Topple {
             shake: 0.0,
             dust,
             sounds: make_sounds(),
-            heart: graphics::new_image("heart.png"),
-            big_font: graphics::new_default_font(44.0),
-            small_font: graphics::new_default_font(16.0),
+            heart: Image::load("heart.png")?,
+            big_font: Font::default_at(44.0),
+            small_font: Font::default_at(16.0),
             time: 0.0,
             message: None,
         };
         game.restart();
-        game
+        Ok(game)
     }
 
     fn update(&mut self, dt: f32) {

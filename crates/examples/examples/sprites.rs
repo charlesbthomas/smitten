@@ -53,19 +53,19 @@ impl Sprites {
 }
 
 impl Game for Sprites {
-    fn load() -> Self {
+    fn load() -> smitten::Result<Self> {
         graphics::set_background_color(Color::rgb(0.12, 0.1, 0.18));
         // Keep the pixel art crisp when it is scaled up.
         graphics::set_default_filter(Filter::Nearest);
 
-        let image = graphics::new_image("heart.png");
+        let image = Image::load("heart.png")?;
         let mut game = Sprites {
             image,
             hearts: Vec::new(),
             seed: 7,
         };
         game.add_hearts(50);
-        game
+        Ok(game)
     }
 
     fn update(&mut self, dt: f32) {
