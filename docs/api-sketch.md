@@ -96,6 +96,8 @@ fn main() {
 | `love.graphics.newCanvas(w, h, {msaa = 4})` / `canvas:getMSAA()` | `Canvas::with_msaa(w, h, 4)` / `canvas.msaa()` | The GPU may give fewer samples. |
 | `t.window.msaa` / `setMode(w, h, {msaa = 4})` | `Config::msaa` / `window::set_msaa(4)` | `window::msaa()` reads it back. |
 | `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
+| `love.graphics.setCanvas{canvas, depthstencil = depth}` | `graphics::set_canvas_with_depth(&[CanvasTarget::new(&canvas)], &depth)` | `depth` is a canvas made with a depth format such as `PixelFormat::Depth24Stencil8`. `graphics::depth_stencil_canvas()` returns it. |
+| `texture:setDepthSampleMode("lequal")` / `getDepthSampleMode()` | `depth.set_depth_sample_mode(Some(CompareMode::LessEqual))` / `depth.depth_sample_mode()` | For a readable depth canvas, read in a shader as a `texture_depth_2d` with `textureSampleCompare`. |
 | `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`, `Screen`, `Lighten`, `Darken`. |
 | `love.graphics.setBlendMode("add", "premultiplied")` | `graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied)` | `blend_mode_ex()` returns both, as `getBlendMode`. |
 | `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |

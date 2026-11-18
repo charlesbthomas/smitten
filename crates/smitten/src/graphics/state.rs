@@ -1,10 +1,10 @@
 //! Saving and restoring the drawing state, for `push_all`, `pop` and
 //! `reset`.
 
-use smitten_core::backend::{ColorMask, TargetSlice};
+use smitten_core::backend::ColorMask;
 use smitten_core::{DepthMode, StencilMode};
 
-use super::{Canvas, Font, GraphicsState, LineJoin, LineStyle, MAX_CANVASES, Shader, Transform};
+use super::{CanvasList, Font, GraphicsState, LineJoin, LineStyle, Shader, Transform};
 use crate::{BlendAlphaMode, BlendMode, Color, CullMode, Filter, VertexWinding};
 
 /// What [`push_ex`](super::push_ex) saves, the equivalent of LÖVE's
@@ -35,9 +35,7 @@ pub(super) struct DrawState {
     blend: BlendMode,
     blend_alpha: BlendAlphaMode,
     shader: Option<Shader>,
-    canvas: Option<Canvas>,
-    extra_canvases: Vec<Canvas>,
-    canvas_slices: [TargetSlice; MAX_CANVASES],
+    canvases: CanvasList,
     scissor: Option<(i32, i32, u32, u32)>,
     stencil: StencilMode,
     stencil_value: u8,
@@ -64,9 +62,7 @@ impl DrawState {
             blend: BlendMode::default(),
             blend_alpha: BlendAlphaMode::default(),
             shader: None,
-            canvas: None,
-            extra_canvases: Vec::new(),
-            canvas_slices: Default::default(),
+            canvases: CanvasList::default(),
             scissor: None,
             stencil: StencilMode::Off,
             stencil_value: 0,
@@ -94,9 +90,7 @@ impl GraphicsState {
             blend: self.batch.blend,
             blend_alpha: self.batch.blend_alpha,
             shader: self.shader.clone(),
-            canvas: self.canvas.clone(),
-            extra_canvases: self.extra_canvases.clone(),
-            canvas_slices: self.canvas_slices,
+            canvases: self.canvas_list(),
             scissor: self.scissor,
             stencil: self.batch.stencil,
             stencil_value: self.batch.stencil_value,
@@ -134,7 +128,7 @@ impl GraphicsState {
         }
         self.scissor = state.scissor;
         // Also puts the scissor back, in pixels of the restored target.
-        self.set_canvas_list(state.canvas, state.extra_canvases, state.canvas_slices);
+        self.set_canvas_list(state.canvases);
         self.batch.stencil = state.stencil;
         self.batch.stencil_value = state.stencil_value;
         self.line_width = state.line_width;

@@ -6,7 +6,8 @@
 //!
 //! A game may also declare textures of its own, such as
 //! `var sky: texture_cube<f32>;` or `var fog: texture_3d<f32>;`, with no binding. Each gets a sampler
-//! named after it, `sky_sampler`, and the next free texture slot.
+//! named after it, `sky_sampler`, and the next free texture slot. A
+//! `texture_depth_2d` gets a `sampler_comparison`.
 
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
@@ -402,7 +403,8 @@ struct Declared {
     varyings: bool,
     /// Whether it reads `instance_index`.
     instance_index: bool,
-    textures: Vec<String>,
+    /// The game's own textures, and whether each is a depth texture.
+    textures: Vec<(String, bool)>,
 }
 
 impl Declared {
@@ -427,8 +429,14 @@ impl Declared {
         let mut text = WRAPPER
             .replace("GROUP", &group.to_string())
             .replace("IMAGE", image);
-        for name in &self.textures {
-            text.push_str(&format!("var {name}_sampler: sampler;\n"));
+        for (name, depth) in &self.textures {
+            // A depth texture is sampled by comparing.
+            let sampler = if *depth {
+                "sampler_comparison"
+            } else {
+                "sampler"
+            };
+            text.push_str(&format!("var {name}_sampler: {sampler};\n"));
         }
         if self.params {
             text.push_str(params);
@@ -826,21 +834,25 @@ fn struct_members<'a>(
 }
 
 /// The names of the textures `source` declares at the top level with no
-/// binding, in order, found well enough for the purpose: `var`, a name,
-/// then a texture type. A declaration with a binding is left alone, and
-/// one the scan misses fails to compile with a message about bindings.
-fn declared_textures(source: &str) -> Vec<String> {
+/// binding, in order, and whether each is a depth texture, found well
+/// enough for the purpose: `var`, a name, then a texture type. A
+/// declaration with a binding is left alone, and one the scan misses
+/// fails to compile with a message about bindings.
+fn declared_textures(source: &str) -> Vec<(String, bool)> {
     let words: Vec<&str> = source
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty())
         .collect();
-    let mut names: Vec<String> = Vec::new();
+    let mut names: Vec<(String, bool)> = Vec::new();
     for window in words.windows(3) {
         if window[0] == "var"
             && window[2].starts_with("texture_")
-            && !names.iter().any(|name| name == window[1])
+            && !names.iter().any(|(name, _)| name == window[1])
         {
-            names.push(window[1].to_string());
+            names.push((
+                window[1].to_string(),
+                window[2].starts_with("texture_depth_"),
+            ));
         }
     }
     names
@@ -850,11 +862,11 @@ fn declared_textures(source: &str) -> Vec<String> {
 /// the slot after the ones before it. Returns what kind each one is.
 fn bind_textures(
     module: &mut naga::Module,
-    names: &[String],
+    names: &[(String, bool)],
     group: u32,
 ) -> Result<Vec<ShaderTexture>, String> {
     let mut textures = Vec::new();
-    for name in names {
+    for (name, _) in names {
         let found = module
             .global_variables
             .iter()
@@ -863,7 +875,12 @@ fn bind_textures(
         let Some((handle, ty)) = found else {
             continue;
         };
-        let kind = match module.types[ty].inner {
+        let (kind, comparison) = match module.types[ty].inner {
+            naga::TypeInner::Image {
+                dim: naga::ImageDimension::D2,
+                arrayed: false,
+                class: naga::ImageClass::Depth { multi: false },
+            } => (TextureKind::Flat, true),
             naga::TypeInner::Image {
                 dim,
                 arrayed,
@@ -873,10 +890,10 @@ fn bind_textures(
                         multi: false,
                     },
             } => match (dim, arrayed) {
-                (naga::ImageDimension::D2, false) => TextureKind::Flat,
-                (naga::ImageDimension::D2, true) => TextureKind::Array,
-                (naga::ImageDimension::Cube, false) => TextureKind::Cube,
-                (naga::ImageDimension::D3, false) => TextureKind::Volume,
+                (naga::ImageDimension::D2, false) => (TextureKind::Flat, false),
+                (naga::ImageDimension::D2, true) => (TextureKind::Array, false),
+                (naga::ImageDimension::Cube, false) => (TextureKind::Cube, false),
+                (naga::ImageDimension::D3, false) => (TextureKind::Volume, false),
                 _ => return Err(unsupported_texture(name)),
             },
             _ => return Err(unsupported_texture(name)),
@@ -901,6 +918,7 @@ fn bind_textures(
         textures.push(ShaderTexture {
             name: name.clone(),
             kind,
+            comparison,
         });
     }
     Ok(textures)
@@ -909,7 +927,7 @@ fn bind_textures(
 fn unsupported_texture(name: &str) -> String {
     format!(
         "texture `{name}` must be a `texture_2d<f32>`, `texture_2d_array<f32>`, \
-         `texture_cube<f32>` or `texture_3d<f32>`"
+         `texture_cube<f32>`, `texture_3d<f32>` or `texture_depth_2d`"
     )
 }
 
@@ -1305,6 +1323,34 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
             ]
         );
         assert!(compile(PLAIN).unwrap().textures.is_empty());
+    }
+
+    #[test]
+    fn a_depth_texture_is_sampled_by_comparing() {
+        let compiled = compile(
+            "
+var shadow: texture_depth_2d;
+var noise: texture_2d<f32>;
+
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    let lit = textureSampleCompare(shadow, shadow_sampler, uv, 0.5);
+    return textureSample(noise, noise_sampler, uv) * lit * color;
+}
+",
+        )
+        .unwrap();
+        let textures: Vec<_> = compiled
+            .textures
+            .iter()
+            .map(|texture| (texture.name.as_str(), texture.kind, texture.comparison))
+            .collect();
+        assert_eq!(
+            textures,
+            [
+                ("shadow", TextureKind::Flat, true),
+                ("noise", TextureKind::Flat, false),
+            ]
+        );
     }
 
     #[test]

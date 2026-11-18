@@ -165,6 +165,12 @@ struct Texture {
     /// Whether a render target's mipmaps are made again after each run of
     /// passes that draws to it.
     auto_mipmaps: bool,
+    /// How a readable depth target is compared when a shader samples it
+    /// as a depth texture, or `None` to read plain depth values.
+    depth_compare: Option<CompareMode>,
+    /// Whether shaders can sample it. Only a depth target can be made
+    /// without.
+    readable: bool,
 }
 
 /// How a texture with mipmaps blends between them.
@@ -181,6 +187,8 @@ struct SamplerKey {
     filter: Filter,
     wrap: (Wrap, Wrap),
     mipmaps: Option<Mipmaps>,
+    /// For a depth texture sampled by comparing, how it compares.
+    compare: Option<CompareMode>,
 }
 
 /// A fragment shader supplied by the game.
@@ -190,8 +198,9 @@ struct CustomShader {
     source: String,
     /// How many bytes of uniform data each draw must supply.
     uniform_size: u32,
-    /// The kinds of the textures it declares besides `image`.
-    textures: Vec<TextureKind>,
+    /// The kinds of the textures it declares besides `image`, and whether
+    /// each is a depth texture sampled by comparing.
+    textures: Vec<(TextureKind, bool)>,
     /// Whether the game wrote a vertex shader, `position`, which is
     /// compiled for each vertex layout it is drawn with.
     has_vertex: bool,
@@ -261,6 +270,11 @@ pub(crate) struct Renderer {
     white_array: *mut SDL_GPUTexture,
     white_cube: *mut SDL_GPUTexture,
     white_volume: *mut SDL_GPUTexture,
+    /// A stand-in for a depth texture a shader declares but was not sent,
+    /// made the first time one is needed, at the far depth of 1, and the
+    /// comparing sampler that goes with it.
+    white_depth: *mut SDL_GPUTexture,
+    comparing: *mut SDL_GPUSampler,
     textures: HashMap<u32, Texture>,
     next_texture_id: u32,
     vertex_buffer: *mut SDL_GPUBuffer,
@@ -307,6 +321,8 @@ impl Renderer {
             white_array: ptr::null_mut(),
             white_cube: ptr::null_mut(),
             white_volume: ptr::null_mut(),
+            white_depth: ptr::null_mut(),
+            comparing: ptr::null_mut(),
             textures: HashMap::new(),
             next_texture_id: 1,
             vertex_buffer: ptr::null_mut(),
@@ -410,6 +426,19 @@ impl Renderer {
                 1,
                 &[white],
             )?;
+            // Every GPU can sample 16-bit depth.
+            renderer.white_depth =
+                new_depth_texture(device, SDL_GPU_TEXTUREFORMAT_D16_UNORM, 1, 1, 1, true);
+            if renderer.white_depth.is_null() {
+                return Err(format!("could not create a depth texture: {}", sdl_error()));
+            }
+            renderer.comparing = create_sampler(
+                device,
+                SamplerKey {
+                    compare: Some(CompareMode::LessEqual),
+                    ..SamplerKey::clamped(Filter::Linear)
+                },
+            )?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
         Ok(renderer)
@@ -469,6 +498,8 @@ impl Renderer {
                 layers: 1,
                 compressed: false,
                 auto_mipmaps: false,
+                depth_compare: None,
+                readable: true,
             },
         );
         Ok(TextureId(id))
@@ -491,7 +522,9 @@ impl Renderer {
     pub fn supports_pixel_format(&self, format: PixelFormat, render_target: bool) -> bool {
         let usage = match (format.is_depth(), render_target) {
             (true, true) => SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
-            (true, false) => return false,
+            (true, false) => {
+                SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER
+            }
             (false, true) => SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
             (false, false) => SDL_GPU_TEXTUREUSAGE_SAMPLER,
         };
@@ -617,6 +650,8 @@ impl Renderer {
                 layers: 1,
                 compressed: true,
                 auto_mipmaps: false,
+                depth_compare: None,
+                readable: true,
             },
         );
         Ok(TextureId(id))
@@ -675,6 +710,8 @@ impl Renderer {
                 layers: layers.len() as u32,
                 compressed: false,
                 auto_mipmaps: false,
+                depth_compare: None,
+                readable: true,
             },
         );
         Ok(TextureId(id))
@@ -693,9 +730,13 @@ impl Renderer {
             samples,
             kind,
             layers,
+            readable,
         } = desc;
         if width == 0 || height == 0 {
             return Err("a canvas must be at least 1x1 pixels".to_string());
+        }
+        if format.is_depth() {
+            return self.create_depth_target(desc);
         }
         let layers = match kind {
             TextureKind::Flat => 1,
@@ -711,10 +752,8 @@ impl Renderer {
         if kind != TextureKind::Flat && samples > 1 {
             return Err("only a flat canvas can be multisampled".to_string());
         }
-        if format.is_depth() {
-            return Err(format!(
-                "a {format} canvas cannot be drawn to as a color canvas"
-            ));
+        if !readable {
+            return Err("a color canvas is always readable".to_string());
         }
         if !self.supports_pixel_format(format, true) {
             return Err(format!("this GPU cannot draw to {format} canvases"));
@@ -838,6 +877,76 @@ impl Renderer {
                 layers,
                 compressed: false,
                 auto_mipmaps: mipmaps == Some(true),
+                depth_compare: None,
+                readable: true,
+            },
+        );
+        Ok(TextureId(id))
+    }
+
+    /// Creates a depth target as `desc`, which has a depth format,
+    /// describes.
+    fn create_depth_target(&mut self, desc: &RenderTargetDesc) -> Result<TextureId, String> {
+        let &RenderTargetDesc {
+            width,
+            height,
+            format,
+            mipmaps,
+            samples,
+            kind,
+            readable,
+            ..
+        } = desc;
+        if kind != TextureKind::Flat {
+            return Err(format!("a {format} canvas must be flat"));
+        }
+        if mipmaps.is_some() {
+            return Err(format!("a {format} canvas cannot have mipmaps"));
+        }
+        if readable && samples > 1 {
+            return Err(format!(
+                "a multisampled {format} canvas cannot be readable; make it with readable off"
+            ));
+        }
+        if !self.supports_pixel_format(format, !readable) {
+            return Err(if readable {
+                format!("this GPU cannot sample {format} canvases; make it with readable off")
+            } else {
+                format!("this GPU cannot draw to {format} canvases")
+            });
+        }
+        let format = sdl_pixel_format(format);
+        let samples = self.supported_samples(format, samples);
+        // SAFETY: the device is alive.
+        let handle =
+            unsafe { new_depth_texture(self.device, format, width, height, samples, readable) };
+        if handle.is_null() {
+            return Err(format!("could not create a depth canvas: {}", sdl_error()));
+        }
+        let id = self.next_texture_id;
+        self.next_texture_id += 1;
+        self.textures.insert(
+            id,
+            Texture {
+                handle,
+                format,
+                width,
+                height,
+                is_target: true,
+                stencil: ptr::null_mut(),
+                stencil_fresh: false,
+                msaa: ptr::null_mut(),
+                samples,
+                wrap: (Wrap::Clamp, Wrap::Clamp),
+                bytes: mipmap_bytes(format, width, height, 1) * u64::from(samples.max(1)),
+                levels: 1,
+                mipmaps: None,
+                kind,
+                layers: 1,
+                compressed: false,
+                auto_mipmaps: false,
+                depth_compare: None,
+                readable,
             },
         );
         Ok(TextureId(id))
@@ -919,11 +1028,22 @@ impl Renderer {
         wrap: (Wrap, Wrap),
         mipmaps: Option<Mipmaps>,
     ) -> Result<(), String> {
+        self.ensure_samplers_comparing(wrap, mipmaps, None)
+    }
+
+    /// As `ensure_samplers`, for samplers that compare with `compare`.
+    fn ensure_samplers_comparing(
+        &mut self,
+        wrap: (Wrap, Wrap),
+        mipmaps: Option<Mipmaps>,
+        compare: Option<CompareMode>,
+    ) -> Result<(), String> {
         for filter in [Filter::Linear, Filter::Nearest] {
             let key = SamplerKey {
                 filter,
                 wrap,
                 mipmaps,
+                compare,
             };
             if key == SamplerKey::clamped(filter) || self.samplers.contains_key(&key) {
                 continue;
@@ -940,8 +1060,14 @@ impl Renderer {
             return;
         };
         let wrap = (horizontal, vertical);
-        let mipmaps = entry.mipmaps;
-        if let Err(message) = self.ensure_samplers(wrap, mipmaps) {
+        let (mipmaps, compare) = (entry.mipmaps, entry.depth_compare);
+        let made = self
+            .ensure_samplers(wrap, mipmaps)
+            .and_then(|()| match compare {
+                Some(_) => self.ensure_samplers_comparing(wrap, mipmaps, compare),
+                None => Ok(()),
+            });
+        if let Err(message) = made {
             eprintln!("smitten: {message}");
             return;
         }
@@ -950,7 +1076,31 @@ impl Renderer {
         }
     }
 
-    /// The GPU memory taken by every texture the game holds, in bytes.
+    /// Sets how a readable depth target compares when a shader samples it
+    /// as a depth texture.
+    pub fn set_texture_depth_compare(
+        &mut self,
+        texture: TextureId,
+        compare: Option<CompareMode>,
+    ) -> Result<(), String> {
+        let Some(&entry) = self.textures.get(&texture.0) else {
+            return Err("the texture no longer exists".to_string());
+        };
+        if !is_depth_format(entry.format) {
+            return Err("only a depth canvas has a depth sample mode".to_string());
+        }
+        if !entry.readable {
+            return Err("only a readable depth canvas can be sampled".to_string());
+        }
+        if compare.is_some() {
+            self.ensure_samplers_comparing(entry.wrap, entry.mipmaps, compare)?;
+        }
+        if let Some(entry) = self.textures.get_mut(&texture.0) {
+            entry.depth_compare = compare;
+        }
+        Ok(())
+    }
+
     /// Makes a render target's mipmaps again from what it holds now.
     pub fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {
         let Some(&target) = self.textures.get(&texture.0) else {
@@ -1198,7 +1348,7 @@ impl Renderer {
             textures: compiled
                 .textures
                 .iter()
-                .map(|texture| texture.kind)
+                .map(|texture| (texture.kind, texture.comparison))
                 .collect(),
             has_vertex: compiled.has_vertex,
             vertex_variants: HashMap::new(),
@@ -1332,6 +1482,9 @@ impl Renderer {
     /// says, and its extra targets' formats after it.
     fn pass_target_desc(&self, pass: &Pass) -> TargetDesc {
         let mut desc = self.target_desc(pass.target);
+        if let Some(depth) = pass.depth_target.and_then(|id| self.textures.get(&id.0)) {
+            desc.depth_stencil = depth.format;
+        }
         for id in pass.extra_targets.iter().flatten() {
             let Some(texture) = self.textures.get(&id.0) else {
                 break;
@@ -1447,6 +1600,7 @@ impl Renderer {
             if let Some(id) = pass.target
                 && let Some(target) = self.textures.get_mut(&id.0)
                 && target.is_target
+                && !is_depth_format(target.format)
                 && target.stencil.is_null()
             {
                 // SAFETY: the device is alive.
@@ -1511,22 +1665,48 @@ impl Renderer {
 
     /// The texture and sampler for each texture `shader` declares, from
     /// what the game sent, or white where it sent nothing usable.
+    /// A depth texture declared for comparing gets a depth target with a
+    /// compare mode, and the stand-in, at the far depth, otherwise.
+    /// Nothing reads the depth target being drawn to, `depth_target`.
     fn shader_bindings(
         &self,
         shader: &CustomShader,
         sent: &[Option<BoundTexture>],
+        depth_target: Option<TextureId>,
     ) -> Vec<SDL_GPUTextureSamplerBinding> {
         shader
             .textures
             .iter()
             .enumerate()
-            .map(|(index, &kind)| {
+            .map(|(index, &(kind, comparison))| {
                 let found = sent
                     .get(index)
                     .copied()
                     .flatten()
+                    .filter(|bound| Some(bound.texture) != depth_target)
                     .and_then(|bound| Some((bound, self.textures.get(&bound.texture.0)?)))
-                    .filter(|(_, texture)| texture.kind == kind);
+                    .filter(|(_, texture)| {
+                        texture.kind == kind
+                            && texture.readable
+                            && texture.depth_compare.is_some() == comparison
+                    });
+                if comparison {
+                    return match found {
+                        Some((bound, texture)) => SDL_GPUTextureSamplerBinding {
+                            texture: texture.handle,
+                            sampler: self.comparing_sampler(
+                                bound.filter,
+                                texture.wrap,
+                                texture.mipmaps,
+                                texture.depth_compare.unwrap_or(CompareMode::LessEqual),
+                            ),
+                        },
+                        None => SDL_GPUTextureSamplerBinding {
+                            texture: self.white_depth,
+                            sampler: self.comparing,
+                        },
+                    };
+                }
                 match found {
                     Some((bound, texture)) => SDL_GPUTextureSamplerBinding {
                         texture: texture.handle,
@@ -1563,9 +1743,30 @@ impl Renderer {
                 filter,
                 wrap,
                 mipmaps,
+                compare: None,
             })
             .copied()
             .unwrap_or(clamped)
+    }
+
+    /// The comparing sampler for a depth texture with these settings,
+    /// made beforehand by `set_texture_depth_compare`, or the stand-in's.
+    fn comparing_sampler(
+        &self,
+        filter: Filter,
+        wrap: (Wrap, Wrap),
+        mipmaps: Option<Mipmaps>,
+        compare: CompareMode,
+    ) -> *mut SDL_GPUSampler {
+        self.samplers
+            .get(&SamplerKey {
+                filter,
+                wrap,
+                mipmaps,
+                compare: Some(compare),
+            })
+            .copied()
+            .unwrap_or(self.comparing)
     }
 
     /// Makes the screen's stencil texture match the screen's size.
@@ -1871,17 +2072,42 @@ impl Renderer {
                         screen_height,
                     ),
                     Some(id) => match self.textures.get_mut(&id.0) {
-                        Some(target) if target.is_target && slice_fits(target, pass.slices[0]) => {
+                        Some(target)
+                            if target.is_target
+                                && !is_depth_format(target.format)
+                                && slice_fits(target, pass.slices[0]) =>
+                        {
                             let (width, height) =
                                 level_size(target.width, target.height, pass.slices[0].mipmap);
                             (
                                 target.handle,
                                 target.msaa,
                                 target.stencil,
-                                std::mem::take(&mut target.stencil_fresh),
+                                // A depth canvas leaves the target's own
+                                // values for a later pass to clear.
+                                pass.depth_target.is_none()
+                                    && std::mem::take(&mut target.stencil_fresh),
                                 width,
                                 height,
                             )
+                        }
+                        _ => continue,
+                    },
+                };
+                // A depth canvas takes the place of the target's own depth
+                // and stencil values, and must match it.
+                let (stencil, fresh) = match pass.depth_target {
+                    None => (stencil, fresh),
+                    Some(id) => match (pass.target, self.textures.get(&id.0)) {
+                        (Some(target), Some(depth))
+                            if is_depth_format(depth.format)
+                                && (depth.width, depth.height) == (width, height)
+                                && self
+                                    .textures
+                                    .get(&target.0)
+                                    .is_some_and(|target| target.samples == depth.samples) =>
+                        {
+                            (depth.handle, false)
                         }
                         _ => continue,
                     },
@@ -1962,6 +2188,7 @@ impl Renderer {
                         calls,
                         frame,
                         pass.target,
+                        pass.depth_target,
                         self.pass_target_desc(pass),
                         vertex_count,
                         width,
@@ -2048,6 +2275,7 @@ impl Renderer {
         calls: &[DrawCall],
         frame: &Frame,
         target: Option<TextureId>,
+        depth_target: Option<TextureId>,
         target_desc: TargetDesc,
         vertex_count: u32,
         width: u32,
@@ -2099,7 +2327,9 @@ impl Renderer {
                     }
                 };
                 // A target cannot be sampled while it is being drawn to.
-                if call.texture.is_some() && call.texture == target {
+                if call.texture.is_some()
+                    && (call.texture == target || call.texture == depth_target)
+                {
                     continue;
                 }
                 // A texture that was freed while still queued draws nothing.
@@ -2111,10 +2341,10 @@ impl Renderer {
                         TextureKind::Flat,
                     ),
                     Some(id) => match self.textures.get(&id.0) {
-                        Some(texture) => {
+                        Some(texture) if texture.readable => {
                             (texture.handle, texture.wrap, texture.mipmaps, texture.kind)
                         }
-                        None => continue,
+                        _ => continue,
                     },
                 };
                 // A cube cannot be drawn flat, and a custom shader's
@@ -2150,7 +2380,7 @@ impl Renderer {
                             .checked_add(shader.textures.len())
                             .and_then(|end| sent_textures.get(start..end))
                             .unwrap_or(&[]);
-                        extra_bindings = self.shader_bindings(shader, sent);
+                        extra_bindings = self.shader_bindings(shader, sent, depth_target);
                     }
                     if shader.uniform_size > 0 {
                         let start = call.uniform_offset as usize;
@@ -2606,6 +2836,7 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTexture(self.device, self.white_array);
             SDL_ReleaseGPUTexture(self.device, self.white_cube);
             SDL_ReleaseGPUTexture(self.device, self.white_volume);
+            SDL_ReleaseGPUTexture(self.device, self.white_depth);
             SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
             for (_, buffer) in self.buffers.drain() {
@@ -2613,6 +2844,9 @@ impl Drop for Renderer {
             }
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
+            if !self.comparing.is_null() {
+                SDL_ReleaseGPUSampler(self.device, self.comparing);
+            }
             for &sampler in self.samplers.values() {
                 SDL_ReleaseGPUSampler(self.device, sampler);
             }
@@ -2726,7 +2960,15 @@ unsafe fn create_pipeline(
                 has_depth_stencil_target: target.depth_stencil != SDL_GPU_TEXTUREFORMAT_INVALID,
                 ..Default::default()
             },
-            depth_stencil_state: depth_stencil_state(stencil, key.depth),
+            // A depth canvas without a stencil part ignores stencil modes.
+            depth_stencil_state: depth_stencil_state(
+                if has_stencil(target.depth_stencil) {
+                    stencil
+                } else {
+                    StencilMode::Off
+                },
+                key.depth,
+            ),
             ..Default::default()
         };
         let pipeline = SDL_CreateGPUGraphicsPipeline(device, &info);
@@ -2776,21 +3018,26 @@ fn standard_vertex_input() -> VertexInput {
     }
 }
 
+/// The GPU's name for a comparison of a new value with the one there.
+fn compare_op(compare: CompareMode) -> SDL_GPUCompareOp {
+    match compare {
+        CompareMode::Equal => SDL_GPU_COMPAREOP_EQUAL,
+        CompareMode::NotEqual => SDL_GPU_COMPAREOP_NOT_EQUAL,
+        CompareMode::Less => SDL_GPU_COMPAREOP_LESS,
+        CompareMode::LessEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+        CompareMode::Greater => SDL_GPU_COMPAREOP_GREATER,
+        CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
+        CompareMode::Never => SDL_GPU_COMPAREOP_NEVER,
+        CompareMode::Always => SDL_GPU_COMPAREOP_ALWAYS,
+    }
+}
+
 /// The GPU depth and stencil settings for a depth and a stencil mode.
 fn depth_stencil_state(stencil: StencilMode, depth: DepthMode) -> SDL_GPUDepthStencilState {
     SDL_GPUDepthStencilState {
         // The GPU compares the new depth with the one there, as
         // `DepthMode` reads.
-        compare_op: match depth.compare {
-            CompareMode::Equal => SDL_GPU_COMPAREOP_EQUAL,
-            CompareMode::NotEqual => SDL_GPU_COMPAREOP_NOT_EQUAL,
-            CompareMode::Less => SDL_GPU_COMPAREOP_LESS,
-            CompareMode::LessEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
-            CompareMode::Greater => SDL_GPU_COMPAREOP_GREATER,
-            CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
-            CompareMode::Never => SDL_GPU_COMPAREOP_NEVER,
-            CompareMode::Always => SDL_GPU_COMPAREOP_ALWAYS,
-        },
+        compare_op: compare_op(depth.compare),
         // Writing needs the test on, even one that always passes.
         enable_depth_test: depth.is_used(),
         enable_depth_write: depth.write,
@@ -2875,6 +3122,65 @@ unsafe fn new_stencil_texture(
                 ..Default::default()
             },
         )
+    }
+}
+
+/// Creates a depth target, which `readable` lets shaders sample, with
+/// every depth value at 1, the farthest, and every stencil value at 0.
+/// Null if the GPU refuses.
+///
+/// # Safety
+/// `device` must be alive.
+unsafe fn new_depth_texture(
+    device: *mut SDL_GPUDevice,
+    format: SDL_GPUTextureFormat,
+    width: u32,
+    height: u32,
+    samples: u32,
+    readable: bool,
+) -> *mut SDL_GPUTexture {
+    let mut usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+    if readable {
+        usage |= SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    }
+    // SAFETY: the create-info is valid for the call, and the pass is
+    // begun, ended and submitted in order.
+    unsafe {
+        let texture = SDL_CreateGPUTexture(
+            device,
+            &SDL_GPUTextureCreateInfo {
+                r#type: SDL_GPU_TEXTURETYPE_2D,
+                format,
+                usage,
+                width,
+                height,
+                layer_count_or_depth: 1,
+                num_levels: 1,
+                sample_count: sample_count(samples),
+                ..Default::default()
+            },
+        );
+        if texture.is_null() {
+            return texture;
+        }
+        let commands = SDL_AcquireGPUCommandBuffer(device);
+        if !commands.is_null() {
+            let target = SDL_GPUDepthStencilTargetInfo {
+                texture,
+                clear_depth: 1.0,
+                load_op: SDL_GPU_LOADOP_CLEAR,
+                store_op: SDL_GPU_STOREOP_STORE,
+                stencil_load_op: SDL_GPU_LOADOP_CLEAR,
+                stencil_store_op: SDL_GPU_STOREOP_STORE,
+                ..Default::default()
+            };
+            let pass = SDL_BeginGPURenderPass(commands, ptr::null(), 0, &target);
+            if !pass.is_null() {
+                SDL_EndGPURenderPass(pass);
+            }
+            SDL_SubmitGPUCommandBuffer(commands);
+        }
+        texture
     }
 }
 
@@ -2971,6 +3277,10 @@ unsafe fn create_sampler(
         address_mode_w: SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
         ..Default::default()
     };
+    if let Some(compare) = key.compare {
+        info.enable_compare = true;
+        info.compare_op = compare_op(compare);
+    }
     // Without mipmaps the level of detail stays at 0, the full picture.
     if let Some(mipmaps) = key.mipmaps {
         info.mipmap_mode = match mipmaps.filter {
@@ -2996,6 +3306,7 @@ impl SamplerKey {
             filter,
             wrap: (Wrap::Clamp, Wrap::Clamp),
             mipmaps: None,
+            compare: None,
         }
     }
 }
@@ -3163,6 +3474,15 @@ fn is_depth_format(format: SDL_GPUTextureFormat) -> bool {
         SDL_GPU_TEXTUREFORMAT_D16_UNORM,
         SDL_GPU_TEXTUREFORMAT_D24_UNORM,
         SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+        SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+        SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
+    ]
+    .contains(&format)
+}
+
+/// Whether a depth `format` has a stencil part.
+fn has_stencil(format: SDL_GPUTextureFormat) -> bool {
+    [
         SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
         SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
     ]

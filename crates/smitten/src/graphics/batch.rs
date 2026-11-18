@@ -19,6 +19,9 @@ pub(crate) struct Targets {
     pub extra: [Option<TextureId>; MAX_TARGETS - 1],
     /// The part of each target drawn to, `first` then `extra`.
     pub slices: [TargetSlice; MAX_TARGETS],
+    /// The depth canvas drawn with, in place of `first`'s own depth and
+    /// stencil values.
+    pub depth: Option<TextureId>,
 }
 
 impl Targets {
@@ -28,12 +31,14 @@ impl Targets {
             first: target,
             extra: [None; MAX_TARGETS - 1],
             slices: [TargetSlice::default(); MAX_TARGETS],
+            depth: None,
         }
     }
 
     /// Whether `texture` is one of these targets.
     fn contains(&self, texture: Option<TextureId>) -> bool {
         self.first == texture
+            || (self.depth.is_some() && self.depth == texture)
             || self
                 .extra
                 .iter()
@@ -42,7 +47,10 @@ impl Targets {
 
     /// Whether `pass` draws to these targets.
     fn matches(&self, pass: &Pass) -> bool {
-        pass.target == self.first && pass.extra_targets == self.extra && pass.slices == self.slices
+        pass.target == self.first
+            && pass.extra_targets == self.extra
+            && pass.slices == self.slices
+            && pass.depth_target == self.depth
     }
 
     /// A pass to these targets that clears nothing.
@@ -55,6 +63,7 @@ impl Targets {
             slices: self.slices,
             clear_stencil: None,
             clear_depth: None,
+            depth_target: self.depth,
             first_call,
             call_count: 0,
         }
@@ -682,6 +691,47 @@ mod tests {
         batch.push(None, Filter::Linear, &TRIANGLE);
         assert_eq!(batch.passes.len(), 3);
         assert_eq!(batch.passes[2].first_call, 2);
+    }
+
+    #[test]
+    fn a_depth_canvas_joins_the_pass_and_a_change_of_it_starts_another() {
+        let mut batch = Batch::default();
+        let canvas = Some(TextureId(7));
+        let depth = Some(TextureId(8));
+        batch.set_targets(Targets {
+            depth,
+            ..Targets::single(canvas)
+        });
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.clear_target_ex(None, None, Some(0.25));
+        batch.set_target(canvas);
+        batch.push(None, Filter::Linear, &TRIANGLE);
+
+        let passes: Vec<_> = batch
+            .passes
+            .iter()
+            .map(|pass| (pass.target, pass.depth_target, pass.clear_depth))
+            .collect();
+        assert_eq!(
+            passes,
+            [
+                (canvas, depth, None),
+                (canvas, depth, Some(0.25)),
+                (canvas, None, None)
+            ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot be drawn onto itself")]
+    fn drawing_the_depth_canvas_being_drawn_with_panics() {
+        let mut batch = Batch::default();
+        let depth = Some(TextureId(8));
+        batch.set_targets(Targets {
+            depth,
+            ..Targets::single(Some(TextureId(7)))
+        });
+        batch.push(depth, Filter::Linear, &TRIANGLE);
     }
 
     #[test]

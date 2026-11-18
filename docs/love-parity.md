@@ -44,20 +44,6 @@ GPU features, such as depth canvases.
 
 ## graphics
 
-### Module functions
-
-- A depth canvas as the depth buffer drawn to (`setCanvas` with
-  `depthstencil`). `setDepthMode` and `getDepthMode` are done, and the
-  screen and every canvas have a 24-bit depth buffer of their own.
-
-### Canvas and Texture
-
-- `newCanvas` settings: depth formats. Color formats, `readable`, MSAA
-  and `type` (array, cube and volume canvases) are done, and so are
-  `setCanvas` with a layer, face, slice or mipmap as the target
-  (`set_canvas_targets`) and `Texture:getTextureType` and `getDepth`.
-- `Texture:getDepthSampleMode`, `setDepthSampleMode`.
-
 ### SpriteBatch
 
 - `SpriteBatch:attachAttribute`.
