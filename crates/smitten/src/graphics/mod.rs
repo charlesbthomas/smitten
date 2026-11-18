@@ -116,6 +116,9 @@ pub(crate) struct GraphicsState {
     extra_canvases: Vec<Canvas>,
     /// The layer and mipmap level drawn to on each canvas in use.
     canvas_slices: [TargetSlice; MAX_CANVASES],
+    /// The depth canvas drawn with, in place of the canvases' own depth
+    /// and stencil values.
+    depth_canvas: Option<Canvas>,
     /// The custom shader in use, if any.
     shader: Option<Shader>,
     /// Reused between draws of large things so they do not allocate.
@@ -140,6 +143,19 @@ pub(crate) struct GraphicsState {
     retired_buffers: Vec<BufferId>,
 }
 
+/// The canvases drawn to at once, as [`try_set_canvas_targets`] and
+/// [`set_canvas_with_depth`] choose them.
+#[derive(Clone, Default)]
+pub(crate) struct CanvasList {
+    /// The first, or `None` for the screen.
+    canvas: Option<Canvas>,
+    extra: Vec<Canvas>,
+    /// The layer and mipmap level drawn to on each.
+    slices: [TargetSlice; MAX_CANVASES],
+    /// The depth canvas, only with a `canvas`.
+    depth: Option<Canvas>,
+}
+
 /// Called with the finished frame by [`capture_screenshot`].
 pub(crate) type ScreenshotCallback = Box<dyn FnOnce(ImageData)>;
 
@@ -160,6 +176,7 @@ impl Default for GraphicsState {
             canvas: None,
             extra_canvases: Vec::new(),
             canvas_slices: Default::default(),
+            depth_canvas: None,
             shader: None,
             scratch: Vec::new(),
             screen: Screen::default(),
@@ -284,6 +301,7 @@ impl GraphicsState {
             self.surface.take(),
             self.canvas.take(),
             std::mem::take(&mut self.extra_canvases),
+            self.depth_canvas.take(),
             self.shader.take(),
             self.font.take(),
         );
@@ -514,30 +532,36 @@ impl GraphicsState {
 
     /// The canvases drawn to now and the slice of each, for putting back
     /// later with `set_canvas_list`.
-    pub(crate) fn canvas_list(&self) -> (Option<Canvas>, Vec<Canvas>, [TargetSlice; MAX_CANVASES]) {
-        (
-            self.canvas.clone(),
-            self.extra_canvases.clone(),
-            self.canvas_slices,
-        )
+    pub(crate) fn canvas_list(&self) -> CanvasList {
+        CanvasList {
+            canvas: self.canvas.clone(),
+            extra: self.extra_canvases.clone(),
+            slices: self.canvas_slices,
+            depth: self.depth_canvas.clone(),
+        }
     }
 
     fn set_canvas(&mut self, canvas: Option<Canvas>) {
-        self.set_canvas_list(canvas, Vec::new(), Default::default());
+        self.set_canvas_list(CanvasList {
+            canvas,
+            ..CanvasList::default()
+        });
     }
 
-    /// Draws to `canvas` and, at the same time, to each of `extra`, which
-    /// the caller has checked match it.
-    pub(crate) fn set_canvas_list(
-        &mut self,
-        canvas: Option<Canvas>,
-        extra: Vec<Canvas>,
-        slices: [TargetSlice; MAX_CANVASES],
-    ) {
-        let slices = if canvas.is_some() {
-            slices
+    /// Draws to `list.canvas` and, at the same time, to each of
+    /// `list.extra`, with `list.depth`, which the caller has checked match
+    /// it.
+    pub(crate) fn set_canvas_list(&mut self, list: CanvasList) {
+        let CanvasList {
+            canvas,
+            extra,
+            slices,
+            depth,
+        } = list;
+        let (slices, depth) = if canvas.is_some() {
+            (slices, depth)
         } else {
-            Default::default()
+            (Default::default(), None)
         };
         let target = canvas.as_ref().or(self.surface.as_ref());
         let mut targets = batch::Targets::single(target.map(|canvas| canvas.texture()));
@@ -545,10 +569,12 @@ impl GraphicsState {
             *slot = Some(canvas.texture());
         }
         targets.slices = slices;
+        targets.depth = depth.as_ref().map(|depth| depth.texture());
         self.batch.set_targets(targets);
         self.canvas = canvas;
         self.extra_canvases = extra;
         self.canvas_slices = slices;
+        self.depth_canvas = depth;
         self.apply_scissor();
     }
 
@@ -985,7 +1011,18 @@ pub fn new_canvas(width: u32, height: u32) -> Canvas {
 ///
 /// Positions are then in units from the canvas's top-left corner. The
 /// screen becomes the target again at the start of every `draw`.
+///
+/// Panics for a depth canvas, which holds no colors to draw to; draw
+/// with one through [`set_canvas_with_depth`].
 pub fn set_canvas(canvas: Option<&Canvas>) {
+    if let Some(canvas) = canvas
+        && canvas.format().is_depth()
+    {
+        panic!(
+            "a {} canvas holds depth, not colors; draw with it through set_canvas_with_depth",
+            canvas.format()
+        );
+    }
     context::with(|ctx| ctx.gfx.set_canvas(canvas.cloned()));
 }
 
@@ -1085,10 +1122,75 @@ pub fn set_canvas_targets(targets: &[CanvasTarget]) {
 
 /// As [`set_canvas_targets`], returning an error rather than panicking.
 pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), String> {
+    set_targets_and_depth(targets, None)
+}
+
+/// Sends everything drawn from now on to these canvases, as
+/// [`set_canvas_targets`] does, testing and writing depth and stencil
+/// values in `depth_stencil` rather than in the canvases' own, the
+/// equivalent of LÖVE's `setCanvas{canvas, depthstencil = depth}`.
+///
+/// `depth_stencil` is a canvas made with a depth format, such as
+/// [`PixelFormat::Depth24Stencil8`](crate::PixelFormat::Depth24Stencil8),
+/// the same size in pixels as what is drawn to and multisampled alike.
+/// Unlike a canvas's own values, it can be shared between canvases,
+/// cleared with [`clear_ex`], and, made readable, sampled afterwards, for
+/// instance as a shadow map. Without a stencil part, stencil drawing and
+/// tests do nothing. [`depth_stencil_canvas`] returns it.
+///
+/// Panics as [`set_canvas_targets`] does, or if `depth_stencil` is not a
+/// depth canvas that matches the targets. Use
+/// [`try_set_canvas_with_depth`] to handle that instead.
+pub fn set_canvas_with_depth(targets: &[CanvasTarget], depth_stencil: &Canvas) {
+    try_set_canvas_with_depth(targets, depth_stencil).unwrap_or_else(|message| panic!("{message}"));
+}
+
+/// As [`set_canvas_with_depth`], returning an error rather than
+/// panicking.
+pub fn try_set_canvas_with_depth(
+    targets: &[CanvasTarget],
+    depth_stencil: &Canvas,
+) -> Result<(), String> {
+    set_targets_and_depth(targets, Some(depth_stencil))
+}
+
+/// The depth canvas being drawn with, set by [`set_canvas_with_depth`],
+/// or `None` when the canvases use their own depth and stencil values.
+pub fn depth_stencil_canvas() -> Option<Canvas> {
+    context::with(|ctx| ctx.gfx.depth_canvas.clone())
+}
+
+fn set_targets_and_depth(targets: &[CanvasTarget], depth: Option<&Canvas>) -> Result<(), String> {
     let Some(first) = targets.first() else {
+        if depth.is_some() {
+            return Err(
+                "a depth canvas can only be drawn with color canvases, not the screen".to_string(),
+            );
+        }
         set_canvas(None);
         return Ok(());
     };
+    if let Some(depth) = depth {
+        if !depth.format().is_depth() {
+            return Err(format!(
+                "a {} canvas cannot hold depth; make it with a depth format",
+                depth.format()
+            ));
+        }
+        if depth.pixel_dimensions() != first.canvas_pixels() {
+            let (width, height) = first.canvas_pixels();
+            let (depth_width, depth_height) = depth.pixel_dimensions();
+            return Err(format!(
+                "the depth canvas must be the size of what is drawn to: {width} by {height} \
+                 pixels, not {depth_width} by {depth_height}"
+            ));
+        }
+        if depth.msaa() != first.canvas.msaa() {
+            return Err(
+                "the depth canvas must be multisampled like the canvases drawn to".to_string(),
+            );
+        }
+    }
     if targets.len() > MAX_CANVASES {
         return Err(format!(
             "at most {MAX_CANVASES} canvases can be drawn to at once, not {}",
@@ -1097,6 +1199,12 @@ pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), String> {
     }
     for (index, target) in targets.iter().enumerate() {
         let canvas = target.canvas;
+        if canvas.format().is_depth() {
+            return Err(format!(
+                "a {} canvas holds depth, not colors; draw with it through set_canvas_with_depth",
+                canvas.format()
+            ));
+        }
         if target.layer >= canvas.layer_count() {
             return Err(format!(
                 "layer {} does not exist: the canvas has {}",
@@ -1144,8 +1252,12 @@ pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), String> {
         .map(|target| target.canvas.clone())
         .collect();
     context::with(|ctx| {
-        ctx.gfx
-            .set_canvas_list(Some(first.canvas.clone()), rest, slices)
+        ctx.gfx.set_canvas_list(CanvasList {
+            canvas: Some(first.canvas.clone()),
+            extra: rest,
+            slices,
+            depth: depth.cloned(),
+        })
     });
     Ok(())
 }
@@ -2647,7 +2759,7 @@ pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
 /// [`Image::from_image_data`]. The uncompressed half of
 /// `love.graphics.getImageFormats`.
 pub fn is_image_format_supported(format: PixelFormat) -> bool {
-    context::with(|ctx| ctx.backend.supports_pixel_format(format, false))
+    format.is_color() && context::with(|ctx| ctx.backend.supports_pixel_format(format, false))
 }
 
 /// The uncompressed formats images can have on this GPU, in the order
@@ -2664,8 +2776,8 @@ pub fn image_formats() -> Vec<PixelFormat> {
 /// `readable`, it must also be drawable and readable by shaders, as a
 /// canvas usually is.
 ///
-/// Depth formats are reported as the GPU allows them, but
-/// [`Canvas::with_settings`] does not make depth canvases yet.
+/// A depth canvas is readable when shaders can sample it; LÖVE's depth
+/// canvases are not by default.
 pub fn is_canvas_format_supported(format: PixelFormat, readable: bool) -> bool {
     context::with(|ctx| {
         ctx.backend.supports_pixel_format(format, true)

@@ -23,9 +23,9 @@ use smitten_core::backend::{
     TargetSlice, TextureId, TextureKind, VertexLayout, VertexLayoutId,
 };
 use smitten_core::{
-    Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
-    JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PixelFormat,
-    PowerInfo, PowerState, TouchId, WindowState, Wrap,
+    CompareMode, Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis,
+    GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton,
+    PixelFormat, PowerInfo, PowerState, TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -761,6 +761,14 @@ impl Backend for SdlBackend {
     fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap) {
         self.renderer
             .set_texture_wrap(texture, horizontal, vertical);
+    }
+
+    fn set_texture_depth_compare(
+        &mut self,
+        texture: TextureId,
+        compare: Option<CompareMode>,
+    ) -> Result<(), String> {
+        self.renderer.set_texture_depth_compare(texture, compare)
     }
 
     fn destroy_texture(&mut self, texture: TextureId) {

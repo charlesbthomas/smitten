@@ -75,15 +75,26 @@ pub struct CanvasSettings {
     /// [`PixelFormat::Rgba16f`] holds colors brighter than white, for HDR
     /// effects. [`graphics::canvas_formats`](super::canvas_formats) lists
     /// what the GPU can draw to.
+    ///
+    /// A depth format, such as [`PixelFormat::Depth24Stencil8`], makes a
+    /// depth canvas: one that holds depth, and maybe stencil, values for
+    /// the color canvases drawn to with it, given to
+    /// [`graphics::set_canvas_with_depth`](super::set_canvas_with_depth).
+    /// It is flat and has no mipmaps. Made readable, shaders can sample
+    /// it, for instance as a shadow map; see
+    /// [`Image::set_depth_sample_mode`].
     pub format: Option<PixelFormat>,
     /// Whether the canvas has mipmaps and when they are made.
     pub mipmaps: MipmapMode,
     /// How many samples each pixel holds; 0 or 1 for no multisampling.
     pub msaa: u32,
     /// Whether the canvas will be drawn or sampled, as well as drawn to.
-    /// `None` means yes. LÖVE draws a canvas made with `Some(false)` faster
-    /// on some GPUs; smitten records the setting for
-    /// [`Image::is_readable`] but draws it the same way.
+    /// `None` means yes for a color canvas and no for a depth one, as in
+    /// LÖVE. LÖVE draws a color canvas made with `Some(false)` faster on
+    /// some GPUs; smitten records the setting for [`Image::is_readable`]
+    /// but draws it the same way. A depth canvas that is not readable
+    /// cannot be drawn or sent to a shader, but some GPUs only offer
+    /// some depth formats that way, and only it can be multisampled.
     pub readable: Option<bool>,
     /// The canvas's shape, LÖVE's `type` setting: flat, an array of
     /// layers, the six faces of a cube, or a volume. Draw to one layer,
@@ -173,8 +184,9 @@ impl Canvas {
     /// `settings` describe, the equivalent of
     /// `love.graphics.newCanvas(width, height, settings)`.
     ///
-    /// Fails for a depth format, which is not yet supported, for a format
-    /// the GPU cannot draw to, and for multisampling with mipmaps.
+    /// Fails for a format the GPU cannot draw to, for multisampling with
+    /// mipmaps, and for a depth canvas that has mipmaps, is not flat, or
+    /// is both readable and multisampled.
     pub fn with_settings(
         width: u32,
         height: u32,
@@ -233,10 +245,14 @@ impl Canvas {
         if samples > 1 && settings.mipmaps != MipmapMode::None {
             return Err("a multisampled canvas cannot have mipmaps".to_string());
         }
+        let readable = settings.readable.unwrap_or(format.is_color());
         if format.is_depth() {
-            return Err(format!(
-                "{format} canvases are not supported yet; only color formats are"
-            ));
+            if settings.mipmaps != MipmapMode::None {
+                return Err(format!("a {format} canvas cannot have mipmaps"));
+            }
+            if settings.texture_type != TextureKind::Flat {
+                return Err(format!("a {format} canvas must be flat"));
+            }
         }
         let pixels = Canvas::pixels_for(width, height, scale);
         let texture = backend.create_render_target_with(&RenderTargetDesc {
@@ -251,10 +267,13 @@ impl Canvas {
             samples,
             kind: settings.texture_type,
             layers: settings.layers,
+            // A color canvas can always be sampled; only the setting is
+            // kept.
+            readable: readable || format.is_color(),
         })?;
         let msaa = backend.texture_msaa(texture);
         let image = Image::from_texture(texture, width, height, filter, Kind::Canvas);
-        image.set_storage(format, settings.readable.unwrap_or(true));
+        image.set_storage(format, readable);
         image.set_texture_kind(settings.texture_type);
         if settings.mipmaps != MipmapMode::None {
             image.mark_mipmapped(32 - pixels.0.max(pixels.1).max(1).leading_zeros());
@@ -362,10 +381,7 @@ impl Canvas {
         let previous = context::with(|ctx| ctx.gfx.canvas_list());
         super::set_canvas(Some(self));
         draw();
-        context::with(|ctx| {
-            let (canvas, extra, slices) = previous;
-            ctx.gfx.set_canvas_list(canvas, extra, slices)
-        });
+        context::with(|ctx| ctx.gfx.set_canvas_list(previous));
     }
 }
 

@@ -69,8 +69,29 @@ use crate::{Color, context};
 /// }
 /// ```
 ///
-/// The types it can be are `texture_2d<f32>`, `texture_2d_array<f32>` and
-/// `texture_cube<f32>`.
+/// The types it can be are `texture_2d<f32>`, `texture_2d_array<f32>`,
+/// `texture_cube<f32>`, `texture_3d<f32>` and `texture_depth_2d`.
+///
+/// A `texture_depth_2d` is LÖVE's `sampler2DShadow`: its sampler is a
+/// `sampler_comparison`, and it takes a readable depth canvas with a
+/// depth sample mode set by [`Image::set_depth_sample_mode`]. Until one is
+/// sent, every comparison reads as passing. This is how a shadow map is
+/// read:
+///
+/// ```wgsl
+/// var shadow: texture_depth_2d;
+///
+/// struct Params { light_uv: vec2<f32>, light_depth: f32 }
+///
+/// fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+///     // 1 where nothing nearer the light was drawn, 0 in shadow.
+///     let lit = textureSampleCompare(shadow, shadow_sampler, params.light_uv, params.light_depth);
+///     return vec4<f32>(color.rgb * (0.4 + 0.6 * lit), color.a);
+/// }
+/// ```
+///
+/// A depth canvas without a depth sample mode is sent to a
+/// `texture_2d<f32>` instead, and reads as its depth in the red channel.
 ///
 /// When several canvases are drawn to at once with
 /// [`set_canvases`](super::set_canvases), `effect`'s color goes to all of
@@ -408,6 +429,12 @@ impl Shader {
                     declared: declared.kind,
                 });
             }
+            if declared.comparison != texture.compares() {
+                return Err(ShaderError::WrongDepthSampleMode {
+                    name: name.to_string(),
+                    declared_depth: declared.comparison,
+                });
+            }
             index
         };
         self.inner.sent.borrow_mut()[index] = Some(bound);
@@ -524,6 +551,13 @@ pub trait Texture: sealed::Sealed {
     /// The texture to bind, its kind, and a handle that keeps it alive.
     #[doc(hidden)]
     fn binding(&self) -> (BoundTexture, TextureKind, Rc<dyn Any>);
+
+    /// Whether it is a depth canvas with a depth sample mode, which only
+    /// a `texture_depth_2d` can be sent.
+    #[doc(hidden)]
+    fn compares(&self) -> bool {
+        false
+    }
 }
 
 impl sealed::Sealed for Image {}
@@ -535,6 +569,10 @@ impl Texture for Image {
         };
         (bound, TextureKind::Flat, self.keep_alive())
     }
+
+    fn compares(&self) -> bool {
+        self.depth_sample_mode().is_some()
+    }
 }
 
 impl sealed::Sealed for Canvas {}
@@ -543,6 +581,10 @@ impl Texture for Canvas {
         let image: &Image = self;
         let (bound, _, keep) = image.binding();
         (bound, self.texture_type(), keep)
+    }
+
+    fn compares(&self) -> bool {
+        self.depth_sample_mode().is_some()
     }
 }
 
@@ -810,6 +852,13 @@ pub enum ShaderError {
         sent: TextureKind,
         declared: TextureKind,
     },
+    /// A `texture_depth_2d` was sent something other than a depth canvas
+    /// with a depth sample mode, or another texture was sent one.
+    WrongDepthSampleMode {
+        name: String,
+        /// Whether the shader declares it as a `texture_depth_2d`.
+        declared_depth: bool,
+    },
 }
 
 impl fmt::Display for ShaderError {
@@ -849,6 +898,22 @@ impl fmt::Display for ShaderError {
                 "shader texture `{name}` was sent a {} but is declared as {}",
                 kind_name(*sent),
                 kind_name(*declared)
+            ),
+            ShaderError::WrongDepthSampleMode {
+                name,
+                declared_depth: true,
+            } => write!(
+                f,
+                "shader texture `{name}` is a `texture_depth_2d`, which takes a depth canvas \
+                 with a depth sample mode set"
+            ),
+            ShaderError::WrongDepthSampleMode {
+                name,
+                declared_depth: false,
+            } => write!(
+                f,
+                "shader texture `{name}` was sent a depth canvas with a depth sample mode, \
+                 which only a `texture_depth_2d` takes; clear the mode to read plain depth"
             ),
         }
     }

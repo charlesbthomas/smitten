@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use smitten_core::backend::{Backend, TextureId, TextureKind};
-use smitten_core::{Filter, PixelFormat, Wrap};
+use smitten_core::{CompareMode, Filter, PixelFormat, Wrap};
 
 use crate::context;
 use crate::reload::Asset;
@@ -45,6 +45,8 @@ pub(crate) struct Inner {
     srgb: Cell<bool>,
     /// The texture's shape; only a canvas can be other than flat.
     kind: Cell<TextureKind>,
+    /// How a depth canvas compares when a shader samples it.
+    depth_sample_mode: Cell<Option<CompareMode>>,
     _counted: Counted,
 }
 
@@ -135,6 +137,7 @@ impl Image {
                     readable: Cell::new(true),
                     srgb: Cell::new(format.is_srgb()),
                     kind: Cell::new(TextureKind::Flat),
+                    depth_sample_mode: Cell::new(None),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -164,6 +167,7 @@ impl Image {
                 readable: Cell::new(true),
                 srgb: Cell::new(false),
                 kind: Cell::new(TextureKind::Flat),
+                depth_sample_mode: Cell::new(None),
                 _counted: Counted::new(kind),
             }),
         }
@@ -296,6 +300,7 @@ impl Image {
                     readable: Cell::new(true),
                     srgb: Cell::new(srgb),
                     kind: Cell::new(TextureKind::Flat),
+                    depth_sample_mode: Cell::new(None),
                     _counted: Counted::new(Kind::Image),
                 }),
             })
@@ -382,6 +387,36 @@ impl Image {
 
     pub(crate) fn set_texture_kind(&self, kind: TextureKind) {
         self.inner.kind.set(kind);
+    }
+
+    /// How a depth canvas is compared when a shader samples it, the
+    /// equivalent of `Texture:getDepthSampleMode`. `None`, as a depth
+    /// canvas starts out, reads plain depth values. Always `None` for
+    /// anything other than a depth canvas.
+    pub fn depth_sample_mode(&self) -> Option<CompareMode> {
+        self.inner.depth_sample_mode.get()
+    }
+
+    /// Sets how a readable depth canvas is sampled, the equivalent of
+    /// `Texture:setDepthSampleMode`. With a compare mode, a shader reads
+    /// it as a `texture_depth_2d` with `textureSampleCompare`, which
+    /// compares the depth it gives with the one stored and returns 1
+    /// where the comparison passes and 0 where it fails, blended between
+    /// neighbouring pixels with the linear filter. That is how shadow maps
+    /// are read. With `None`, a shader reads it as a `texture_2d<f32>`
+    /// whose red channel holds the depth.
+    ///
+    /// Fails for anything other than a readable depth canvas.
+    pub fn set_depth_sample_mode(&self, mode: Option<CompareMode>) -> Result<(), String> {
+        if !self.format().is_depth() {
+            return Err("only a depth canvas has a depth sample mode".to_string());
+        }
+        if !self.is_readable() {
+            return Err("only a readable depth canvas can be sampled".to_string());
+        }
+        context::with(|ctx| ctx.backend.set_texture_depth_compare(self.texture(), mode))?;
+        self.inner.depth_sample_mode.set(mode);
+        Ok(())
     }
 
     pub(crate) fn mark_mipmapped(&self, levels: u32) {

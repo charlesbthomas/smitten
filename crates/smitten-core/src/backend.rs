@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendAlphaMode, BlendMode, Color, Cursor, DepthMode, DisplayOrientation, Filter,
+    BlendAlphaMode, BlendMode, Color, CompareMode, Cursor, DepthMode, DisplayOrientation, Filter,
     FullscreenType, GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key,
     MessageBoxKind, MouseButton, PixelFormat, PowerInfo, StencilMode, TouchId, VertexWinding,
     WindowState, Wrap,
@@ -23,8 +23,10 @@ use crate::{
 pub struct RenderTargetDesc {
     pub width: u32,
     pub height: u32,
-    /// A color format that [`Backend::supports_pixel_format`] allows for
-    /// render targets.
+    /// A format that [`Backend::supports_pixel_format`] allows for render
+    /// targets. A depth format makes a depth target, which is named as a
+    /// [`Pass::depth_target`] rather than a [`Pass::target`]; it must be
+    /// flat and have no mipmaps.
     pub format: PixelFormat,
     /// `None` for no mipmaps. With `Some(true)` they are made again
     /// whenever a frame has drawn to the target, and with `Some(false)`
@@ -39,6 +41,11 @@ pub struct RenderTargetDesc {
     /// How many layers an array target has, or how deep a volume target
     /// is. A cube has 6, and a flat target 1.
     pub layers: u32,
+    /// Whether shaders can sample it as well as draw to it. Only depth
+    /// targets can be made unreadable, which some GPUs need for some depth
+    /// formats; a multisampled depth target must be. Color targets are
+    /// always readable.
+    pub readable: bool,
 }
 
 impl RenderTargetDesc {
@@ -52,6 +59,7 @@ impl RenderTargetDesc {
             samples: 1,
             kind: TextureKind::Flat,
             layers: 1,
+            readable: true,
         }
     }
 }
@@ -561,6 +569,11 @@ impl CompressedFormat {
 pub struct ShaderTexture {
     pub name: String,
     pub kind: TextureKind,
+    /// Whether the shader declares it as a depth texture, sampled by
+    /// comparing against the depth it holds. Only a depth target with a
+    /// compare mode set by [`Backend::set_texture_depth_compare`] can be
+    /// bound to it.
+    pub comparison: bool,
 }
 
 /// What a backend reports about a shader it compiled.
@@ -701,6 +714,13 @@ pub struct Pass {
     /// 1, or `None` to keep them. Like stencil values, each target has its
     /// own, kept until cleared.
     pub clear_depth: Option<f32>,
+    /// A depth target, from [`Backend::create_render_target_with`] with a
+    /// depth format, to test and write depth and stencil values in
+    /// instead of `target`'s own. It is the same size as `target` and
+    /// multisampled alike, and `clear_stencil` and `clear_depth` clear it.
+    /// Without a stencil part, stencil modes are ignored. Only a pass with
+    /// a `target` can have one.
+    pub depth_target: Option<TextureId>,
     /// Index into [`Frame::calls`] of the first call.
     pub first_call: u32,
     pub call_count: u32,
@@ -848,7 +868,9 @@ pub trait Backend {
     ) -> Result<TextureId, String>;
 
     /// Whether the GPU can sample textures in `format`, and with
-    /// `render_target`, also draw to them.
+    /// `render_target`, also draw to them. A depth format is never an
+    /// image's, so without `render_target` it asks about a readable depth
+    /// target.
     fn supports_pixel_format(&self, format: PixelFormat, render_target: bool) -> bool;
 
     /// Creates a texture that can be drawn to by naming it as a
@@ -917,6 +939,17 @@ pub trait Backend {
     /// Sets what a texture shows beyond its edges, along each axis. It
     /// applies to everything drawn with the texture from this frame on.
     fn set_texture_wrap(&mut self, texture: TextureId, horizontal: Wrap, vertical: Wrap);
+
+    /// Sets how a readable depth target is sampled by a shader that
+    /// declares a depth texture: each sample compares the depth given with
+    /// the one stored with `compare`, giving 1 where it passes and 0 where
+    /// it fails. `None` turns comparing off, so the target reads as plain
+    /// depth values. Fails for any other texture.
+    fn set_texture_depth_compare(
+        &mut self,
+        texture: TextureId,
+        compare: Option<CompareMode>,
+    ) -> Result<(), String>;
 
     /// Frees a texture. Its handle must not be used afterwards.
     fn destroy_texture(&mut self, texture: TextureId);
