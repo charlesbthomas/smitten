@@ -98,6 +98,9 @@ fn main() {
 | `love.graphics.newParticleSystem(image, max)` | `graphics::new_particle_system(&image, max)` | Setters take the same values as LÖVE's, such as `set_emission_rate`, `set_speed`, `set_sizes`, `set_colors`. |
 | `psystem:update(dt)` / `psystem:emit(n)` | `system.update(dt)` / `system.emit(n)` | |
 | `love.graphics.draw(psystem, x, y)` | `graphics::draw_particles(&system, x, y)` | |
+| `love.graphics.validateShader(code)` | `graphics::validate_shader(code)` | Returns the compile error, if any. |
+| `love.graphics.getRendererInfo()` | `graphics::renderer_info()` | A `RendererInfo` with `name`, `version`, `vendor` and `device`. |
+| `love.graphics.setMeshCullMode(mode)` / `setFrontFaceWinding(w)` | `graphics::set_mesh_cull_mode(CullMode)` / `set_front_face_winding(VertexWinding)` | Meshes only, as in LÖVE. |
 | `love.graphics.newShader(code)` | `graphics::new_shader(code)` | WGSL, not GLSL. Defines `fn effect(color, uv, pixel) -> vec4<f32>`. `Shader::from_file(path)` loads a file. |
 | `love.graphics.setShader(shader)` / `setShader()` | `graphics::set_shader(Some(&shader))` / `set_shader(None)` | |
 | `shader:send(name, value)` | `shader.send(name, value)` | Sets a member of the shader's `Params` struct. |

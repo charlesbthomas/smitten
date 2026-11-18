@@ -37,7 +37,7 @@ use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId,
 use crate::context;
 use smitten_core::StencilMode;
 
-use crate::{BlendMode, Color, CompareMode, Filter, StencilAction};
+use crate::{BlendMode, Color, CompareMode, CullMode, Filter, StencilAction, VertexWinding};
 use batch::Batch;
 pub(crate) use screen::Screen;
 
@@ -57,7 +57,7 @@ pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
-pub use smitten_core::backend::CompressedFormat;
+pub use smitten_core::backend::{CompressedFormat, RendererInfo};
 pub use sprite_batch::SpriteBatch;
 pub use stats::Stats;
 pub use text::{Align, Font, FontError};
@@ -114,6 +114,10 @@ pub(crate) struct GraphicsState {
     scissor: Option<(i32, i32, u32, u32)>,
     /// Who wants a copy of the frame being drawn.
     screenshots: Vec<ScreenshotCallback>,
+    /// Which triangles of meshes are left out.
+    mesh_cull: CullMode,
+    /// Which winding faces the viewer.
+    front_face: VertexWinding,
 }
 
 /// Called with the finished frame by [`capture_screenshot`].
@@ -140,6 +144,8 @@ impl Default for GraphicsState {
             surface: None,
             scissor: None,
             screenshots: Vec::new(),
+            mesh_cull: CullMode::default(),
+            front_face: VertexWinding::default(),
         }
     }
 }
@@ -596,12 +602,14 @@ impl GraphicsState {
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
         mesh.write_vertices(&transform, self.color, &mut vertices);
+        self.batch.cull = self.mesh_cull.culled(self.front_face);
         match mesh.texture() {
             Some(image) => self
                 .batch
                 .push(Some(image.texture()), image.filter(), &vertices),
             None => self.batch.push(None, Filter::default(), &vertices),
         }
+        self.batch.cull = None;
         self.scratch = vertices;
     }
 
@@ -1084,6 +1092,55 @@ pub fn stats() -> Stats {
 /// Returns the filter that newly created images start with.
 pub fn default_filter() -> Filter {
     context::with(|ctx| ctx.gfx.default_filter)
+}
+
+/// Sets which triangles of meshes are left out, the equivalent of
+/// `love.graphics.setMeshCullMode`. Only [meshes](Mesh) are affected, as
+/// in LÖVE.
+///
+/// Leaving out the back faces of a closed 3D-looking shape skips the
+/// triangles that face away. [`set_front_face_winding`] says which faces
+/// are the front.
+pub fn set_mesh_cull_mode(mode: CullMode) {
+    context::with(|ctx| ctx.gfx.mesh_cull = mode);
+}
+
+/// Which triangles of meshes are left out.
+pub fn mesh_cull_mode() -> CullMode {
+    context::with(|ctx| ctx.gfx.mesh_cull)
+}
+
+/// Sets which way round a triangle's corners go, on screen, when it faces
+/// the viewer, the equivalent of `love.graphics.setFrontFaceWinding`. It
+/// starts out counter-clockwise, as in LÖVE. A transform that flips the
+/// picture flips the winding too.
+pub fn set_front_face_winding(winding: VertexWinding) {
+    context::with(|ctx| ctx.gfx.front_face = winding);
+}
+
+/// Which way round a triangle's corners go when it faces the viewer.
+pub fn front_face_winding() -> VertexWinding {
+    context::with(|ctx| ctx.gfx.front_face)
+}
+
+/// The graphics API, driver and GPU doing the drawing, the equivalent of
+/// `love.graphics.getRendererInfo`. Useful in bug reports.
+pub fn renderer_info() -> RendererInfo {
+    context::with(|ctx| ctx.backend.renderer_info())
+}
+
+/// Checks WGSL shader source without creating a shader, the equivalent of
+/// `love.graphics.validateShader`. The error is the message
+/// [`Shader::new`] would give.
+pub fn validate_shader(source: &str) -> Result<(), ShaderError> {
+    context::with(|ctx| ctx.backend.validate_shader(source)).map_err(ShaderError::Compile)
+}
+
+/// Whether colors are blended in linear space, the equivalent of
+/// `love.graphics.isGammaCorrect`. Always `false`: smitten blends in sRGB
+/// space, as LÖVE does unless `t.gammacorrect` is set.
+pub fn is_gamma_correct() -> bool {
+    false
 }
 
 // ---------------------------------------------------------------------------

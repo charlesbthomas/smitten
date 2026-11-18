@@ -12,10 +12,12 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, Scissor, ShaderId, ShaderInfo,
-    TextureId, TextureKind, Vertex,
+    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, RendererInfo, Scissor, ShaderId,
+    ShaderInfo, TextureId, TextureKind, Vertex,
 };
-use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
+use smitten_core::{
+    BlendMode, CompareMode, Filter, StencilAction, StencilMode, VertexWinding, Wrap,
+};
 
 use crate::{sdl_error, shader};
 
@@ -42,6 +44,8 @@ struct PipelineKey {
     stencil: StencilMode,
     color_mask: ColorMask,
     wireframe: bool,
+    /// The on-screen winding of the triangles to leave out.
+    cull: Option<VertexWinding>,
 }
 
 #[derive(Clone, Copy)]
@@ -215,6 +219,7 @@ impl Renderer {
                 stencil: StencilMode::Off,
                 color_mask: ColorMask::ALL,
                 wireframe: false,
+                cull: None,
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
@@ -661,6 +666,42 @@ impl Renderer {
         }
     }
 
+    /// The graphics API, driver and GPU, as SDL reports them.
+    pub fn renderer_info(&self) -> RendererInfo {
+        let text = |pointer: *const std::ffi::c_char| {
+            if pointer.is_null() {
+                String::new()
+            } else {
+                // SAFETY: SDL returns a NUL-terminated string that lives
+                // as long as the device.
+                unsafe { CStr::from_ptr(pointer) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        // SAFETY: the device is alive.
+        unsafe {
+            let properties = SDL_GetGPUDeviceProperties(self.device);
+            let property = |name| text(SDL_GetStringProperty(properties, name, ptr::null()));
+            let api = text(SDL_GetGPUDeviceDriver(self.device));
+            RendererInfo {
+                name: match api.as_str() {
+                    "vulkan" => "Vulkan".to_string(),
+                    "direct3d12" => "Direct3D 12".to_string(),
+                    "metal" => "Metal".to_string(),
+                    _ => api,
+                },
+                // The detailed version is usually the more useful one.
+                version: match property(SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING) {
+                    info if info.is_empty() => property(SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING),
+                    info => info,
+                },
+                vendor: property(SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING),
+                device: property(SDL_PROP_GPU_DEVICE_NAME_STRING),
+            }
+        }
+    }
+
     pub fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
         let compiled = shader::compile(source)?;
         // SAFETY: the device is alive and the SPIR-V outlives the call.
@@ -794,6 +835,7 @@ impl Renderer {
             stencil: call.stencil,
             color_mask: call.color_mask,
             wireframe: call.wireframe,
+            cull: call.cull,
         }
     }
 
@@ -1472,6 +1514,7 @@ unsafe fn create_pipeline(
         stencil,
         color_mask,
         wireframe,
+        cull,
         ..
     } = key;
     // SAFETY: all pointers in the create-info structs outlive the calls
@@ -1548,7 +1591,17 @@ unsafe fn create_pipeline(
                 } else {
                     SDL_GPU_FILLMODE_FILL
                 },
-                cull_mode: SDL_GPU_CULLMODE_NONE,
+                // The GPU keeps the triangles wound the front-face way,
+                // and windings read the same to it as on screen.
+                cull_mode: if cull.is_some() {
+                    SDL_GPU_CULLMODE_BACK
+                } else {
+                    SDL_GPU_CULLMODE_NONE
+                },
+                front_face: match cull {
+                    Some(VertexWinding::Clockwise) => SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+                    _ => SDL_GPU_FRONTFACE_CLOCKWISE,
+                },
                 ..Default::default()
             },
             target_info: SDL_GPUGraphicsPipelineTargetInfo {

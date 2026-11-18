@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use crate::{
     BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
     JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId,
-    WindowState, Wrap,
+    VertexWinding, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -230,6 +230,22 @@ pub struct UniformField {
     pub kind: Option<UniformKind>,
 }
 
+/// What is doing the drawing, the equivalent of the values of LÖVE's
+/// `getRendererInfo`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RendererInfo {
+    /// The graphics API, such as `"Vulkan"`.
+    pub name: String,
+    /// The driver's version, in whatever form the driver gives it. Empty
+    /// if it does not say.
+    pub version: String,
+    /// The driver's name, which usually names the GPU's maker. Empty if
+    /// it does not say.
+    pub vendor: String,
+    /// The GPU's name. Empty if it does not say.
+    pub device: String,
+}
+
 /// The shape of a texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextureKind {
@@ -374,6 +390,9 @@ pub struct DrawCall {
     /// Whether to draw only the edges of the triangles, one pixel wide,
     /// for debugging.
     pub wireframe: bool,
+    /// Triangles whose corners go this way round on the target are left
+    /// out. `None` draws them all.
+    pub cull: Option<VertexWinding>,
     /// The custom shader to draw with, or `None` for the built-in one.
     pub shader: Option<ShaderId>,
     /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its
@@ -565,6 +584,13 @@ pub trait Backend {
 
     /// Frees a shader. Its handle must not be used afterwards.
     fn destroy_shader(&mut self, shader: ShaderId);
+
+    /// Checks `source` as [`Backend::create_shader`] would, without
+    /// creating anything on the GPU.
+    fn validate_shader(&self, source: &str) -> Result<(), String>;
+
+    /// What is doing the drawing.
+    fn renderer_info(&self) -> RendererInfo;
 
     /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);

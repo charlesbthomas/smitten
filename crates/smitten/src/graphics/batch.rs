@@ -4,7 +4,7 @@
 use smitten_core::backend::{
     BoundTexture, ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex,
 };
-use smitten_core::{BlendMode, Color, Filter, StencilMode};
+use smitten_core::{BlendMode, Color, Filter, StencilMode, VertexWinding};
 
 use super::stats::FrameCounts;
 
@@ -25,6 +25,8 @@ pub(crate) struct Batch {
     pub stencil_value: u8,
     pub color_mask: ColorMask,
     pub wireframe: bool,
+    /// The on-screen winding of triangles to leave out.
+    pub cull: Option<VertexWinding>,
     /// Uniform data for the queued calls that use a custom shader.
     pub uniforms: Vec<u8>,
     /// Textures for the queued calls whose shader declares its own.
@@ -231,6 +233,7 @@ impl Batch {
                     && last.stencil_value == self.stencil_value
                     && last.color_mask == self.color_mask
                     && last.wireframe == self.wireframe
+                    && last.cull == self.cull
                     && last.shader == self.shader
                     && last.uniform_offset == uniform_offset
                     && last.texture_offset == texture_offset =>
@@ -258,6 +261,7 @@ impl Batch {
                     stencil_value: self.stencil_value,
                     color_mask: self.color_mask,
                     wireframe: self.wireframe,
+                    cull: self.cull,
                     shader: self.shader,
                     uniform_offset,
                     texture_offset,
