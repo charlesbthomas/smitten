@@ -47,7 +47,7 @@ impl fmt::Display for MeshError {
 
 impl std::error::Error for MeshError {}
 
-fn error(message: impl Into<String>) -> MeshError {
+pub(super) fn error(message: impl Into<String>) -> MeshError {
     MeshError(message.into())
 }
 
@@ -600,6 +600,15 @@ impl Mesh {
             attachments: Vec::new(),
             disabled: Vec::new(),
             gpu: RefCell::default(),
+        }
+    }
+
+    /// A handle to the same vertices, for attaching attributes from them
+    /// later. Nothing else of the mesh is kept.
+    pub(crate) fn share(&self) -> Mesh {
+        Mesh {
+            store: Rc::clone(&self.store),
+            ..Mesh::from_store(VertexStore::new(Format::standard(), Vec::new()), self.mode)
         }
     }
 

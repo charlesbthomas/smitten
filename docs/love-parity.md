@@ -44,10 +44,6 @@ GPU features, such as depth canvases.
 
 ## graphics
 
-### SpriteBatch
-
-- `SpriteBatch:attachAttribute`.
-
 ## Callbacks and `love.conf`
 
 - `love.conf` fields with no `Config` equivalent: `t.window.depth` and

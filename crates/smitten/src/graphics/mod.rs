@@ -710,18 +710,70 @@ impl GraphicsState {
     }
 
     /// Queues every sprite of `sprites`, placed by `local`.
-    fn push_sprite_batch(&mut self, sprites: &SpriteBatch, local: &Transform) {
+    fn push_sprite_batch(
+        &mut self,
+        backend: &mut dyn Backend,
+        sprites: &SpriteBatch,
+        local: &Transform,
+    ) {
         let transform = self.device().then_inner(local);
-        let mut vertices = std::mem::take(&mut self.scratch);
-        vertices.clear();
-        sprites.write_vertices(&transform, self.color, &mut vertices);
-        let (texture, filter) = sprites.texture();
         if sprites.is_layered() {
             assert!(
                 self.shader.is_none(),
                 "a sprite batch of an ArrayImage cannot be drawn with a custom shader active; \
                  send the array image to the shader with Shader::send_texture instead"
             );
+        }
+        // Attached attributes are only on the GPU, so the sprites are
+        // drawn from GPU buffers as a mesh.
+        if let Some(mesh) = sprites.attached_mesh() {
+            let (texture, filter) = sprites.texture();
+            let mut retired = Vec::new();
+            let uploaded = mesh.upload(backend, self.frame_number, &mut retired, 1);
+            self.retired_buffers.extend(retired);
+            match uploaded {
+                Ok(Some(geometry)) => {
+                    let draw = MeshDraw {
+                        layout: geometry.layout,
+                        buffers: geometry.buffers,
+                        vertex_count: geometry.vertex_count,
+                        indices: geometry.indices,
+                        index_type: geometry.index_type,
+                        first_index: 0,
+                        index_count: geometry.index_count,
+                        instance_count: 1,
+                        transform: transform.gpu_matrix(),
+                        tint: color_array(self.color),
+                    };
+                    if sprites.is_layered() {
+                        for (layer, range) in sprites.layer_runs() {
+                            self.batch.push_mesh_layer(
+                                Some(texture),
+                                layer,
+                                filter,
+                                MeshDraw {
+                                    first_index: range.start as u32,
+                                    index_count: range.len() as u32,
+                                    ..draw
+                                },
+                            );
+                        }
+                    } else {
+                        self.batch.push_mesh(Some(texture), filter, draw);
+                    }
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    eprintln!("smitten: could not send a sprite batch to the GPU: {message}");
+                }
+            }
+            return;
+        }
+        let mut vertices = std::mem::take(&mut self.scratch);
+        vertices.clear();
+        sprites.write_vertices(&transform, self.color, &mut vertices);
+        let (texture, filter) = sprites.texture();
+        if sprites.is_layered() {
             for (layer, range) in sprites.layer_runs() {
                 self.batch
                     .push_layer(Some(texture), layer, filter, &vertices[range]);
@@ -2259,7 +2311,10 @@ pub fn draw_sprite_batch_ex(
     oy: f32,
 ) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_sprite_batch(sprites, &local));
+    context::with(|ctx| {
+        ctx.gfx
+            .push_sprite_batch(&mut *ctx.backend, sprites, &local)
+    });
 }
 
 // ---------------------------------------------------------------------------

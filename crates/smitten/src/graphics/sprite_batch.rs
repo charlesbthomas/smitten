@@ -1,9 +1,10 @@
+use std::cell::RefCell;
 use std::ops::Range;
 
 use smitten_core::Filter;
 use smitten_core::backend::{TextureId, Vertex};
 
-use super::{ArrayImage, Image, Quad, Transform};
+use super::{ArrayImage, Image, Mesh, MeshDrawMode, MeshError, MeshVertex, Quad, Transform};
 use crate::Color;
 
 /// Many copies of one image, or of parts of it, kept ready to draw in one
@@ -33,6 +34,9 @@ use crate::Color;
 ///
 /// Unlike LÖVE's, a batch grows as needed: the size given when creating
 /// it only reserves memory up front.
+///
+/// A shader can read more per-vertex values than the batch has, taken
+/// from a [`Mesh`] with [`SpriteBatch::attach_attribute`].
 #[derive(Debug, Clone)]
 pub struct SpriteBatch {
     source: Source,
@@ -45,6 +49,11 @@ pub struct SpriteBatch {
     /// The sprites drawn, as start and count.
     draw_range: Option<(usize, usize)>,
     usage: SpriteBatchUsage,
+    /// Attributes taken from meshes, as attribute name and mesh.
+    attachments: Vec<(String, Mesh)>,
+    /// With attachments, the sprites as a mesh that attaches them, made
+    /// when first drawn after a change.
+    mesh: RefCell<Option<Mesh>>,
 }
 
 /// How often a batch's sprites are expected to change, the equivalent of
@@ -105,6 +114,8 @@ impl SpriteBatch {
             color: Color::WHITE,
             draw_range: None,
             usage,
+            attachments: Vec::new(),
+            mesh: RefCell::new(None),
         }
     }
 
@@ -130,6 +141,7 @@ impl SpriteBatch {
     /// `SpriteBatch:setDrawRange`. `None` draws them all again. Sprites
     /// outside the range are kept, just not drawn.
     pub fn set_draw_range(&mut self, range: Option<(usize, usize)>) {
+        self.changed();
         self.draw_range = range;
     }
 
@@ -231,6 +243,7 @@ impl SpriteBatch {
     fn push_sprite(&mut self, layer: u32, quad: &Quad, transform: &Transform) -> usize {
         let index = self.count();
         let sprite = self.sprite(quad, transform);
+        self.changed();
         self.vertices.extend_from_slice(&sprite);
         self.layers.push(layer);
         index
@@ -382,6 +395,7 @@ impl SpriteBatch {
         self.check_index(index);
         let sprite = self.sprite(quad, transform);
         let start = index * VERTICES_PER_SPRITE;
+        self.changed();
         self.vertices[start..start + VERTICES_PER_SPRITE].copy_from_slice(&sprite);
         self.layers[index] = layer;
     }
@@ -402,6 +416,7 @@ impl SpriteBatch {
     /// Removes every sprite. The reserved memory is kept, so a batch that
     /// is rebuilt every frame does not allocate.
     pub fn clear(&mut self) {
+        self.changed();
         self.vertices.clear();
         self.layers.clear();
     }
@@ -434,6 +449,7 @@ impl SpriteBatch {
     /// Every sprite shows layer 0 if the batch drew an [`ArrayImage`].
     pub fn set_image(&mut self, image: &Image) {
         self.source = Source::Image(image.clone());
+        self.changed();
         self.layers.fill(0);
     }
 
@@ -450,6 +466,108 @@ impl SpriteBatch {
             );
         }
         self.source = Source::Array(image.clone());
+    }
+
+    /// Draws the batch with the per-vertex attribute `name` of `mesh` as
+    /// well as its own, the equivalent of LÖVE's
+    /// `SpriteBatch:attachAttribute`. A shader reads it from its
+    /// `Attributes` struct, as it would for a mesh; see
+    /// [`Mesh::attach_attribute`].
+    ///
+    /// Each sprite has four vertices, in LÖVE's order: sprite `i` takes
+    /// the mesh's vertices `4 * i` to `4 * i + 3`, for its top-left,
+    /// bottom-left, top-right and bottom-right corners as the quad is
+    /// drawn. The mesh needs at least four vertices for each sprite in the
+    /// batch when it is drawn, or drawing panics. Changing the mesh's
+    /// vertices changes what is drawn from the next draw on.
+    ///
+    /// Attaching another attribute of the same name replaces the first.
+    /// Fails if the mesh has no attribute `name`.
+    pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), MeshError> {
+        if !mesh
+            .vertex_format()
+            .iter()
+            .any(|attribute| attribute.name == name)
+        {
+            return Err(super::mesh::error(format!(
+                "the mesh being attached has no attribute `{name}`"
+            )));
+        }
+        let mut attachments = self.attachments.clone();
+        attachments.retain(|(attached, _)| attached != name);
+        attachments.push((name.to_string(), mesh.share()));
+        // Checks the count of attributes the way a mesh does.
+        let mut probe = Mesh::new(&[], MeshDrawMode::Triangles);
+        for (name, mesh) in &attachments {
+            probe.attach_attribute(name, mesh)?;
+        }
+        self.attachments = attachments;
+        self.changed();
+        Ok(())
+    }
+
+    /// Stops drawing an attribute attached with
+    /// [`SpriteBatch::attach_attribute`]. Returns whether there was one.
+    pub fn detach_attribute(&mut self, name: &str) -> bool {
+        let before = self.attachments.len();
+        self.attachments.retain(|(attached, _)| attached != name);
+        self.changed();
+        self.attachments.len() != before
+    }
+
+    /// Notes that the sprites drawn changed, so the mesh drawn for
+    /// attachments is made again.
+    fn changed(&mut self) {
+        *self.mesh.get_mut() = None;
+    }
+
+    /// With attached attributes, the drawn sprites as a mesh of separate
+    /// triangles in the batch's own coordinates, four vertices to a
+    /// sprite, that attaches them. Its triangles are in the order of
+    /// [`SpriteBatch::layer_runs`], six indices to a sprite. `None`
+    /// without attachments.
+    pub(crate) fn attached_mesh(&self) -> Option<std::cell::Ref<'_, Mesh>> {
+        if self.attachments.is_empty() {
+            return None;
+        }
+        if self.mesh.borrow().is_none() {
+            let corners: Vec<MeshVertex> = self
+                .vertices
+                .chunks_exact(VERTICES_PER_SPRITE)
+                // The six vertices are top-left, top-right, bottom-right,
+                // top-left, bottom-right, bottom-left.
+                .flat_map(|sprite| [sprite[0], sprite[5], sprite[1], sprite[2]])
+                .map(|vertex| MeshVertex {
+                    x: vertex.position[0],
+                    y: vertex.position[1],
+                    u: vertex.uv[0],
+                    v: vertex.uv[1],
+                    color: Color::rgba(
+                        vertex.color[0],
+                        vertex.color[1],
+                        vertex.color[2],
+                        vertex.color[3],
+                    ),
+                })
+                .collect();
+            let indices: Vec<u32> = self
+                .drawn()
+                .flat_map(|sprite| {
+                    let first = sprite as u32 * 4;
+                    [0, 2, 3, 0, 3, 1].map(|corner| first + corner)
+                })
+                .collect();
+            let mut mesh = Mesh::new(&corners, MeshDrawMode::Triangles);
+            mesh.set_vertex_map(Some(&indices));
+            for (name, source) in &self.attachments {
+                mesh.attach_attribute(name, source)
+                    .expect("checked when attached");
+            }
+            *self.mesh.borrow_mut() = Some(mesh);
+        }
+        Some(std::cell::Ref::map(self.mesh.borrow(), |mesh| {
+            mesh.as_ref().expect("made above")
+        }))
     }
 
     /// The texture to draw with, and the filter to sample it with.
@@ -592,6 +710,50 @@ mod tests {
         assert!(drawn(&batch, &Transform::IDENTITY, Color::WHITE).is_empty());
         batch.set_draw_range(None);
         assert_eq!(drawn(&batch, &Transform::IDENTITY, Color::WHITE).len(), 30);
+    }
+
+    #[test]
+    fn attached_attributes_draw_the_sprites_as_a_mesh_of_four_corners_each() {
+        use crate::graphics::{VertexAttribute, VertexDataType};
+
+        let mut batch = batch();
+        assert!(batch.attached_mesh().is_none());
+        batch.add(0.0, 0.0);
+        batch.add(100.0, 0.0);
+        let shades = Mesh::with_format_and_count(
+            &[VertexAttribute::new("Shade", VertexDataType::Float, 1)],
+            8,
+            MeshDrawMode::Triangles,
+        )
+        .unwrap();
+        assert!(batch.attach_attribute("Missing", &shades).is_err());
+        batch.attach_attribute("Shade", &shades).unwrap();
+        batch.set_draw_range(Some((1, 1)));
+
+        let mesh = batch.attached_mesh().unwrap();
+        assert_eq!(mesh.vertex_count(), 8);
+        // Top-left, bottom-left, top-right and bottom-right, as in LÖVE.
+        let corners: Vec<(f32, f32)> = (4..8)
+            .map(|index| {
+                let vertex = mesh.vertex(index).unwrap();
+                (vertex.x, vertex.y)
+            })
+            .collect();
+        assert_eq!(
+            corners,
+            [(100.0, 0.0), (100.0, 32.0), (164.0, 0.0), (164.0, 32.0)]
+        );
+        assert_eq!(mesh.vertex_map(), Some(&[4, 6, 7, 4, 7, 5][..]));
+        drop(mesh);
+
+        // A change makes the mesh again.
+        batch.set_draw_range(None);
+        assert_eq!(
+            batch.attached_mesh().unwrap().vertex_map().unwrap().len(),
+            12
+        );
+        assert!(batch.detach_attribute("Shade"));
+        assert!(batch.attached_mesh().is_none());
     }
 
     #[test]
