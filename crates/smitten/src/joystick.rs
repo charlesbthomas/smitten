@@ -203,7 +203,33 @@ impl Joystick {
     /// Returns whether the gamepad took the request: `false` for one that
     /// cannot rumble or has been unplugged.
     pub fn set_vibration(&self, left: f32, right: f32, seconds: f32) -> bool {
-        context::with(|ctx| ctx.backend.rumble_gamepad(self.id, left, right, seconds))
+        context::with(|ctx| {
+            let taken = ctx.backend.rumble_gamepad(self.id, left, right, seconds);
+            if let Some(joystick) = ctx.input.joystick_mut(self.id) {
+                joystick.vibration = if taken {
+                    let length = (f64::from(seconds.max(0.0)) * 1e9) as u64;
+                    let end = ctx.backend.ticks_ns().saturating_add(length);
+                    (left.clamp(0.0, 1.0), right.clamp(0.0, 1.0), end)
+                } else {
+                    (0.0, 0.0, 0)
+                };
+            }
+            taken
+        })
+    }
+
+    /// The strengths of the left and right motors, as LÖVE's
+    /// `Joystick:getVibration`: what [`set_vibration`](Self::set_vibration)
+    /// last asked for, or `(0.0, 0.0)` once its time is up or if the
+    /// gamepad did not take it.
+    pub fn vibration(&self) -> (f32, f32) {
+        context::with(|ctx| {
+            let now = ctx.backend.ticks_ns();
+            ctx.input.joystick(self.id).map_or((0.0, 0.0), |joystick| {
+                let (left, right, end) = joystick.vibration;
+                if now < end { (left, right) } else { (0.0, 0.0) }
+            })
+        })
     }
 
     /// Stops any rumble. Returns whether the gamepad took the request.

@@ -97,6 +97,8 @@ pub struct VideoStream {
     shown: Option<usize>,
     /// The picture, four bytes a pixel in rows from the top.
     rgba: Vec<u8>,
+    /// The file it was loaded from, if it came from one.
+    path: Option<PathBuf>,
 }
 
 impl VideoStream {
@@ -180,10 +182,18 @@ impl VideoStream {
             next: 0,
             shown: None,
             rgba,
+            path: None,
         };
         // Show the first frame straight away.
         stream.show_frame(0);
         Ok(stream)
+    }
+
+    /// The path the video was loaded from, as given to
+    /// [`new_video_stream`], the equivalent of `VideoStream:getFilename`.
+    /// `None` for one made with [`VideoStream::from_bytes`].
+    pub fn filename(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     /// The size of the picture in pixels, as `(width, height)`.
@@ -362,7 +372,10 @@ pub fn new_video_stream(path: impl AsRef<Path>) -> VideoStream {
 
 /// Opens a video file for decoding, returning an error if it fails.
 pub fn try_new_video_stream(path: impl AsRef<Path>) -> Result<VideoStream, VideoError> {
-    VideoStream::from_bytes(read(path.as_ref())?)
+    let path = path.as_ref();
+    let mut stream = VideoStream::from_bytes(read(path)?)?;
+    stream.path = Some(path.to_path_buf());
+    Ok(stream)
 }
 
 pub(crate) fn read(path: &Path) -> Result<Vec<u8>, VideoError> {

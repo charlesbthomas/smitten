@@ -12,9 +12,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
-    JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId,
-    WindowState, Wrap,
+    BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis,
+    GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton,
+    PowerInfo, StencilMode, TouchId, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -413,6 +413,9 @@ pub struct DrawCall {
     pub layer: u32,
     pub filter: Filter,
     pub blend: BlendMode,
+    /// Whether the colors drawn are already multiplied by their alpha.
+    /// Ignored for the modes that are always premultiplied.
+    pub blend_alpha: BlendAlphaMode,
     /// Pixels outside this rectangle are left untouched. `None` draws
     /// anywhere on the target.
     pub scissor: Option<Scissor>,
