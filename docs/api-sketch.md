@@ -89,7 +89,8 @@ fn main() {
 | `love.graphics.newCanvas(w, h)` | `graphics::new_canvas(w, h)` | A `Canvas` can be passed wherever an `&Image` is expected. |
 | `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
 | `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
-| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`. |
+| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`, `Screen`, `Lighten`, `Darken`. |
+| `love.graphics.setBlendMode("add", "premultiplied")` | `graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied)` | `blend_mode_ex()` returns both, as `getBlendMode`. |
 | `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |
 | `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
 | `love.graphics.intersectScissor(x, y, w, h)` | `graphics::intersect_scissor(x, y, w, h)` | |

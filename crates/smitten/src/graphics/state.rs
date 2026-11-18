@@ -5,7 +5,7 @@ use smitten_core::StencilMode;
 use smitten_core::backend::ColorMask;
 
 use super::{Canvas, Font, GraphicsState, LineJoin, LineStyle, Shader, Transform};
-use crate::{BlendMode, Color, Filter};
+use crate::{BlendAlphaMode, BlendMode, Color, Filter};
 
 /// What [`push_ex`](super::push_ex) saves, the equivalent of LÖVE's
 /// `StackType`.
@@ -33,6 +33,7 @@ pub(super) struct DrawState {
     background: Color,
     font: Option<Font>,
     blend: BlendMode,
+    blend_alpha: BlendAlphaMode,
     shader: Option<Shader>,
     canvas: Option<Canvas>,
     scissor: Option<(i32, i32, u32, u32)>,
@@ -56,6 +57,7 @@ impl DrawState {
             background: Color::BLACK,
             font: None,
             blend: BlendMode::default(),
+            blend_alpha: BlendAlphaMode::default(),
             shader: None,
             canvas: None,
             scissor: None,
@@ -80,6 +82,7 @@ impl GraphicsState {
             background: self.background,
             font: self.font.clone(),
             blend: self.batch.blend,
+            blend_alpha: self.batch.blend_alpha,
             shader: self.shader.clone(),
             canvas: self.canvas.clone(),
             scissor: self.scissor,
@@ -105,6 +108,7 @@ impl GraphicsState {
             self.font = state.font;
         }
         self.batch.blend = state.blend;
+        self.batch.blend_alpha = state.blend_alpha;
         let shader_changed = match (&self.shader, &state.shader) {
             (Some(now), Some(then)) => !now.is(then),
             (None, None) => false,
@@ -178,6 +182,7 @@ mod tests {
         gfx.color = Color::rgb(1.0, 0.0, 0.0);
         gfx.background = Color::WHITE;
         gfx.batch.blend = BlendMode::Add;
+        gfx.batch.blend_alpha = BlendAlphaMode::Premultiplied;
         gfx.scissor = Some((1, 2, 3, 4));
         gfx.batch.stencil = StencilMode::Test(CompareMode::Greater);
         gfx.batch.stencil_value = 3;
@@ -199,6 +204,7 @@ mod tests {
         assert_eq!(gfx.color, Color::WHITE);
         assert_eq!(gfx.background, Color::BLACK);
         assert_eq!(gfx.batch.blend, BlendMode::Alpha);
+        assert_eq!(gfx.batch.blend_alpha, BlendAlphaMode::AlphaMultiply);
         assert_eq!(gfx.scissor, None);
         assert_eq!(gfx.batch.scissor, None);
         assert_eq!(gfx.batch.stencil, StencilMode::Off);
