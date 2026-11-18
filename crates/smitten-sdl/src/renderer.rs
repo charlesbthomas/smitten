@@ -12,10 +12,12 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, Scissor, ShaderId, ShaderInfo,
-    TextureId, TextureKind, Vertex,
+    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, RendererInfo, Scissor, ShaderId,
+    ShaderInfo, TextureId, TextureKind, Vertex,
 };
-use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
+use smitten_core::{
+    BlendAlphaMode, BlendMode, CompareMode, Filter, StencilAction, StencilMode, VertexWinding, Wrap,
+};
 
 use crate::{sdl_error, shader};
 
@@ -39,11 +41,14 @@ struct PipelineKey {
     /// Whether it draws to a render target rather than the screen.
     to_target: bool,
     blend: BlendMode,
+    blend_alpha: BlendAlphaMode,
     stencil: StencilMode,
     color_mask: ColorMask,
     wireframe: bool,
     /// How many samples each pixel of the target holds.
     samples: u32,
+    /// The on-screen winding of the triangles to leave out.
+    cull: Option<VertexWinding>,
 }
 
 #[derive(Clone, Copy)]
@@ -226,10 +231,12 @@ impl Renderer {
                 layered: false,
                 to_target: false,
                 blend: BlendMode::Alpha,
+                blend_alpha: BlendAlphaMode::AlphaMultiply,
                 stencil: StencilMode::Off,
                 color_mask: ColorMask::ALL,
                 wireframe: false,
                 samples: 1,
+                cull: None,
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
@@ -775,6 +782,42 @@ impl Renderer {
         }
     }
 
+    /// The graphics API, driver and GPU, as SDL reports them.
+    pub fn renderer_info(&self) -> RendererInfo {
+        let text = |pointer: *const std::ffi::c_char| {
+            if pointer.is_null() {
+                String::new()
+            } else {
+                // SAFETY: SDL returns a NUL-terminated string that lives
+                // as long as the device.
+                unsafe { CStr::from_ptr(pointer) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        // SAFETY: the device is alive.
+        unsafe {
+            let properties = SDL_GetGPUDeviceProperties(self.device);
+            let property = |name| text(SDL_GetStringProperty(properties, name, ptr::null()));
+            let api = text(SDL_GetGPUDeviceDriver(self.device));
+            RendererInfo {
+                name: match api.as_str() {
+                    "vulkan" => "Vulkan".to_string(),
+                    "direct3d12" => "Direct3D 12".to_string(),
+                    "metal" => "Metal".to_string(),
+                    _ => api,
+                },
+                // The detailed version is usually the more useful one.
+                version: match property(SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING) {
+                    info if info.is_empty() => property(SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING),
+                    info => info,
+                },
+                vendor: property(SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING),
+                device: property(SDL_PROP_GPU_DEVICE_NAME_STRING),
+            }
+        }
+    }
+
     pub fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
         let compiled = shader::compile(source)?;
         // SAFETY: the device is alive and the SPIR-V outlives the call.
@@ -907,10 +950,12 @@ impl Renderer {
             layered,
             to_target,
             blend: call.blend,
+            blend_alpha: call.blend_alpha,
             stencil: call.stencil,
             color_mask: call.color_mask,
             wireframe: call.wireframe,
             samples: self.target_samples(target),
+            cull: call.cull,
         }
     }
 
@@ -1288,13 +1333,13 @@ impl Renderer {
                     // The depth half of the texture is never used.
                     load_op: SDL_GPU_LOADOP_DONT_CARE,
                     store_op: SDL_GPU_STOREOP_DONT_CARE,
-                    stencil_load_op: if pass.clear_stencil || fresh {
+                    stencil_load_op: if pass.clear_stencil.is_some() || fresh {
                         SDL_GPU_LOADOP_CLEAR
                     } else {
                         SDL_GPU_LOADOP_LOAD
                     },
                     stencil_store_op: SDL_GPU_STOREOP_STORE,
-                    clear_stencil: 0,
+                    clear_stencil: pass.clear_stencil.unwrap_or(0),
                     ..Default::default()
                 };
                 let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, &stencil_info);
@@ -1523,60 +1568,56 @@ fn clip_scissor(scissor: Option<Scissor>, width: u32, height: u32) -> Option<(i3
     ))
 }
 
-/// The GPU blend settings for a blend mode, matching LÖVE's.
-fn blend_state(mode: BlendMode) -> SDL_GPUColorTargetBlendState {
-    let (src_color, dst_color, color_op, src_alpha, dst_alpha) = match mode {
-        BlendMode::Alpha => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+/// The GPU blend settings for a blend mode, worked out as LÖVE's
+/// `computeBlendState` does.
+fn blend_state(mode: BlendMode, alpha: BlendAlphaMode) -> SDL_GPUColorTargetBlendState {
+    const ONE: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ONE;
+    const ZERO: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ZERO;
+    const ONE_MINUS_SRC_ALPHA: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    // (source color, destination color, source alpha, destination alpha,
+    // operation), for colors that are already premultiplied.
+    let (mut src_color, dst_color, src_alpha, dst_alpha, op) = match mode {
+        BlendMode::Alpha | BlendMode::Premultiplied => (
+            ONE,
+            ONE_MINUS_SRC_ALPHA,
+            ONE,
+            ONE_MINUS_SRC_ALPHA,
             SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
         ),
-        BlendMode::Premultiplied => (
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-            SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-        ),
-        BlendMode::Add => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ZERO,
-            SDL_GPU_BLENDFACTOR_ONE,
-        ),
-        BlendMode::Subtract => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDOP_REVERSE_SUBTRACT,
-            SDL_GPU_BLENDFACTOR_ZERO,
-            SDL_GPU_BLENDFACTOR_ONE,
-        ),
+        BlendMode::Add => (ONE, ONE, ZERO, ONE, SDL_GPU_BLENDOP_ADD),
+        BlendMode::Subtract => (ONE, ONE, ZERO, ONE, SDL_GPU_BLENDOP_REVERSE_SUBTRACT),
         BlendMode::Multiply => (
             SDL_GPU_BLENDFACTOR_DST_COLOR,
-            SDL_GPU_BLENDFACTOR_ZERO,
-            SDL_GPU_BLENDOP_ADD,
+            ZERO,
             SDL_GPU_BLENDFACTOR_DST_ALPHA,
-            SDL_GPU_BLENDFACTOR_ZERO,
-        ),
-        BlendMode::Replace => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ZERO,
+            ZERO,
             SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ZERO,
         ),
+        BlendMode::Replace => (ONE, ZERO, ONE, ZERO, SDL_GPU_BLENDOP_ADD),
+        BlendMode::Screen => (
+            ONE,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+            ONE,
+            ONE_MINUS_SRC_ALPHA,
+            SDL_GPU_BLENDOP_ADD,
+        ),
+        // The factors are ignored by the minimum and maximum.
+        BlendMode::Lighten => (ONE, ONE, ONE, ONE, SDL_GPU_BLENDOP_MAX),
+        BlendMode::Darken => (ONE, ONE, ONE, ONE, SDL_GPU_BLENDOP_MIN),
     };
+    // Colors that are not premultiplied yet are multiplied as they land.
+    let premultiplied = alpha == BlendAlphaMode::Premultiplied || mode.needs_premultiplied();
+    if !premultiplied && src_color == ONE {
+        src_color = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+    }
     SDL_GPUColorTargetBlendState {
         enable_blend: true,
         src_color_blendfactor: src_color,
         dst_color_blendfactor: dst_color,
-        color_blend_op: color_op,
+        color_blend_op: op,
         src_alpha_blendfactor: src_alpha,
         dst_alpha_blendfactor: dst_alpha,
-        alpha_blend_op: SDL_GPU_BLENDOP_ADD,
+        alpha_blend_op: op,
         ..Default::default()
     }
 }
@@ -1629,9 +1670,11 @@ unsafe fn create_pipeline(
     let PipelineKey {
         blend,
         samples,
+        blend_alpha,
         stencil,
         color_mask,
         wireframe,
+        cull,
         ..
     } = key;
     // SAFETY: all pointers in the create-info structs outlive the calls
@@ -1667,7 +1710,7 @@ unsafe fn create_pipeline(
             ),
         ];
 
-        let mut blend_state = blend_state(blend);
+        let mut blend_state = blend_state(blend, blend_alpha);
         // Writing to the stencil leaves the picture itself untouched.
         if matches!(stencil, StencilMode::Write(_)) {
             blend_state.enable_color_write_mask = true;
@@ -1712,7 +1755,17 @@ unsafe fn create_pipeline(
                 } else {
                     SDL_GPU_FILLMODE_FILL
                 },
-                cull_mode: SDL_GPU_CULLMODE_NONE,
+                // The GPU keeps the triangles wound the front-face way,
+                // and windings read the same to it as on screen.
+                cull_mode: if cull.is_some() {
+                    SDL_GPU_CULLMODE_BACK
+                } else {
+                    SDL_GPU_CULLMODE_NONE
+                },
+                front_face: match cull {
+                    Some(VertexWinding::Clockwise) => SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+                    _ => SDL_GPU_FRONTFACE_CLOCKWISE,
+                },
                 ..Default::default()
             },
             target_info: SDL_GPUGraphicsPipelineTargetInfo {
@@ -1744,8 +1797,10 @@ fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
         StencilMode::Write(action) => (
             match action {
                 StencilAction::Replace => SDL_GPU_STENCILOP_REPLACE,
-                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
-                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
+                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_CLAMP,
+                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_CLAMP,
+                StencilAction::IncrementWrap => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
+                StencilAction::DecrementWrap => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
                 StencilAction::Invert => SDL_GPU_STENCILOP_INVERT,
             },
             SDL_GPU_COMPAREOP_ALWAYS,
@@ -1762,6 +1817,8 @@ fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
                 CompareMode::LessEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
                 CompareMode::Greater => SDL_GPU_COMPAREOP_LESS,
                 CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+                CompareMode::Never => SDL_GPU_COMPAREOP_NEVER,
+                CompareMode::Always => SDL_GPU_COMPAREOP_ALWAYS,
             },
             0,
         ),

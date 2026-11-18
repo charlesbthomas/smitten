@@ -12,9 +12,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
-    JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId,
-    WindowState, Wrap,
+    BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, FullscreenType,
+    GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind,
+    MouseButton, PowerInfo, StencilMode, TouchId, VertexWinding, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -206,18 +206,43 @@ pub enum UniformKind {
     Vec3,
     /// `vec4<f32>`
     Vec4,
+    /// `vec2<i32>`
+    IVec2,
+    /// `vec3<i32>`
+    IVec3,
+    /// `vec4<i32>`
+    IVec4,
+    /// `vec2<u32>`
+    UVec2,
+    /// `vec3<u32>`
+    UVec3,
+    /// `vec4<u32>`
+    UVec4,
+    /// `mat2x2<f32>`: two columns of `vec2<f32>`, 8 bytes apart.
+    Mat2,
+    /// `mat3x3<f32>`: three columns of `vec3<f32>`, 16 bytes apart.
+    Mat3,
+    /// `mat4x4<f32>`: four columns of `vec4<f32>`, 16 bytes apart.
+    Mat4,
 }
 
 impl UniformKind {
-    /// How many bytes a value of this type occupies.
+    /// How many bytes a value of this type occupies, padding between
+    /// matrix columns included.
     pub fn size(self) -> usize {
         match self {
             UniformKind::Float | UniformKind::Int | UniformKind::Uint => 4,
-            UniformKind::Vec2 => 8,
-            UniformKind::Vec3 => 12,
-            UniformKind::Vec4 => 16,
+            UniformKind::Vec2 | UniformKind::IVec2 | UniformKind::UVec2 => 8,
+            UniformKind::Vec3 | UniformKind::IVec3 | UniformKind::UVec3 => 12,
+            UniformKind::Vec4 | UniformKind::IVec4 | UniformKind::UVec4 => 16,
+            UniformKind::Mat2 => 16,
+            UniformKind::Mat3 => 48,
+            UniformKind::Mat4 => 64,
         }
     }
+
+    /// The largest [`UniformKind::size`].
+    pub const MAX_SIZE: usize = 64;
 }
 
 /// One named value in a shader's `Params` struct.
@@ -226,8 +251,50 @@ pub struct UniformField {
     pub name: String,
     /// Where the value starts in the shader's uniform bytes.
     pub offset: u32,
-    /// `None` for a type that cannot be sent yet, such as a matrix.
+    /// `None` for a type that cannot be sent, such as a nested struct. For
+    /// an array, the type of each element.
     pub kind: Option<UniformKind>,
+    /// Set when the member is a fixed-size array of `kind`.
+    pub array: Option<UniformArray>,
+}
+
+/// The shape of an array member of a shader's `Params` struct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UniformArray {
+    /// How many elements it holds.
+    pub count: u32,
+    /// How many bytes apart the elements start.
+    pub stride: u32,
+}
+
+impl UniformField {
+    /// How many bytes the whole member spans.
+    pub fn span(&self) -> usize {
+        let Some(kind) = self.kind else { return 0 };
+        match self.array {
+            Some(array) if array.count > 0 => {
+                (array.count as usize - 1) * array.stride as usize + kind.size()
+            }
+            Some(_) => 0,
+            None => kind.size(),
+        }
+    }
+}
+
+/// What is doing the drawing, the equivalent of the values of LÖVE's
+/// `getRendererInfo`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RendererInfo {
+    /// The graphics API, such as `"Vulkan"`.
+    pub name: String,
+    /// The driver's version, in whatever form the driver gives it. Empty
+    /// if it does not say.
+    pub version: String,
+    /// The driver's name, which usually names the GPU's maker. Empty if
+    /// it does not say.
+    pub vendor: String,
+    /// The GPU's name. Empty if it does not say.
+    pub device: String,
 }
 
 /// The shape of a texture.
@@ -362,6 +429,9 @@ pub struct DrawCall {
     pub layer: u32,
     pub filter: Filter,
     pub blend: BlendMode,
+    /// Whether the colors drawn are already multiplied by their alpha.
+    /// Ignored for the modes that are always premultiplied.
+    pub blend_alpha: BlendAlphaMode,
     /// Pixels outside this rectangle are left untouched. `None` draws
     /// anywhere on the target.
     pub scissor: Option<Scissor>,
@@ -374,6 +444,9 @@ pub struct DrawCall {
     /// Whether to draw only the edges of the triangles, one pixel wide,
     /// for debugging.
     pub wireframe: bool,
+    /// Triangles whose corners go this way round on the target are left
+    /// out. `None` draws them all.
+    pub cull: Option<VertexWinding>,
     /// The custom shader to draw with, or `None` for the built-in one.
     pub shader: Option<ShaderId>,
     /// Where the shader's uniform data starts in [`Frame::uniforms`]. Its
@@ -398,9 +471,10 @@ pub struct Pass {
     /// The color to fill the target with first. `None` keeps what the
     /// target already holds and draws on top of it.
     pub clear: Option<Color>,
-    /// Whether to reset the target's stencil values to zero first. Each
-    /// target has its own stencil values, kept until cleared.
-    pub clear_stencil: bool,
+    /// The value to reset the target's stencil values to first, or `None`
+    /// to keep them. Each target has its own stencil values, kept until
+    /// cleared.
+    pub clear_stencil: Option<u8>,
     /// Index into [`Frame::calls`] of the first call.
     pub first_call: u32,
     pub call_count: u32,
@@ -448,6 +522,11 @@ pub struct RecordingDeviceId(pub u32);
 pub trait Backend {
     /// Returns the next pending event, if any, without blocking.
     fn poll_event(&mut self) -> Option<BackendEvent>;
+
+    /// Waits for the next event and returns it. `timeout_ms` limits the
+    /// wait, and `None` waits as long as it takes. Returns `None` if the
+    /// time ran out first.
+    fn wait_event(&mut self, timeout_ms: Option<u32>) -> Option<BackendEvent>;
 
     /// Uploads an image and returns a handle to it.
     ///
@@ -587,6 +666,13 @@ pub trait Backend {
 
     /// Frees a shader. Its handle must not be used afterwards.
     fn destroy_shader(&mut self, shader: ShaderId);
+
+    /// Checks `source` as [`Backend::create_shader`] would, without
+    /// creating anything on the GPU.
+    fn validate_shader(&self, source: &str) -> Result<(), String>;
+
+    /// What is doing the drawing.
+    fn renderer_info(&self) -> RendererInfo;
 
     /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);
@@ -808,12 +894,65 @@ pub trait Backend {
 
     fn set_title(&mut self, title: &str);
 
-    /// Makes the window fill the whole screen, or puts it back. A
-    /// [`BackendEvent::Resized`] follows if the drawable size changed.
-    fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String>;
+    /// Makes the window fill the whole screen in the way `kind` says, or
+    /// puts it back. An exclusive mode takes the resolution closest to the
+    /// window's size. A [`BackendEvent::Resized`] follows if the drawable
+    /// size changed.
+    fn set_fullscreen(&mut self, fullscreen: bool, kind: FullscreenType) -> Result<(), String>;
 
     /// Whether the window currently fills the whole screen.
     fn is_fullscreen(&self) -> bool;
+
+    /// How the window fills the screen when it is fullscreen.
+    fn fullscreen_type(&self) -> FullscreenType;
+
+    /// The exclusive fullscreen sizes `display` offers, in units, largest
+    /// first, each listed once. Empty if there is no such display.
+    fn fullscreen_modes(&self, display: u32) -> Vec<(u32, u32)>;
+
+    /// Removes the window's title bar and frame, or puts them back.
+    fn set_borderless(&mut self, borderless: bool);
+
+    fn is_borderless(&self) -> bool;
+
+    /// Lets the user resize the window, or stops them.
+    fn set_resizable(&mut self, resizable: bool);
+
+    fn is_resizable(&self) -> bool;
+
+    /// The smallest size in units the user can shrink the window to.
+    fn set_minimum_size(&mut self, width: u32, height: u32);
+
+    fn minimum_size(&self) -> (u32, u32);
+
+    /// The index, counted from 0 in the order the system lists displays,
+    /// of the display the window is mostly on.
+    fn window_display(&self) -> u32;
+
+    /// The display's name, or `None` if there is no such display.
+    fn display_name(&self, display: u32) -> Option<String>;
+
+    /// The display's area in desktop coordinates, as `(x, y, width,
+    /// height)`. Desktop coordinates are what window positions use.
+    fn display_bounds(&self, display: u32) -> Option<(i32, i32, u32, u32)>;
+
+    /// The size in units of `display`'s desktop.
+    fn display_desktop_size(&self, display: u32) -> Option<(u32, u32)>;
+
+    /// What [`Backend::dpi_scale`] would be for a window on `display`.
+    fn display_dpi_scale(&self, display: u32) -> Option<f32>;
+
+    /// Moves the window to the middle of `display`.
+    fn center_window(&mut self, display: u32);
+
+    /// Shows or hides the window. A hidden window is not presented to.
+    fn set_window_shown(&mut self, shown: bool);
+
+    /// Lets the display sleep or start its screen saver while the game
+    /// runs, or keeps it awake.
+    fn set_display_sleep(&mut self, enabled: bool);
+
+    fn display_sleep_enabled(&self) -> bool;
 
     /// Sets the window's icon. `rgba` is laid out as in `create_texture`.
     fn set_icon(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), String>;

@@ -3,7 +3,8 @@
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
 //! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
 //! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
-//! the same way `love.graphics` and friends work in LÖVE.
+//! the same way `love.graphics` and friends work in LÖVE. [`data`], [`math`] and [`thread`]
+//! also work on other threads and when no game is running.
 //!
 //! ```no_run
 //! use smitten::{graphics, Color, Config, Game};
@@ -32,8 +33,10 @@ mod input;
 mod reload;
 
 pub mod audio;
+pub mod data;
 pub mod event;
 pub mod filesystem;
+pub mod font;
 pub mod graphics;
 pub mod joystick;
 pub mod keyboard;
@@ -43,20 +46,36 @@ pub mod mouse;
 pub mod physics;
 pub mod sound;
 pub mod system;
+pub mod thread;
 pub mod timer;
 pub mod touch;
 #[cfg(feature = "video")]
 pub mod video;
 pub mod window;
 
+pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
-    GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton,
-    Scaling, StencilAction, TouchId, Wrap,
+    BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor, DisplayOrientation,
+    Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput,
+    Key, MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, VertexWinding, Wrap,
 };
 
 use std::path::Path;
+
+/// Smitten's version, such as `"0.1.0"`, the equivalent of the string
+/// `love.getVersion` builds.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Smitten's major, minor and patch version numbers, the equivalent of
+/// `love.getVersion`.
+pub fn version() -> (u32, u32, u32) {
+    let mut parts = VERSION
+        .split(['.', '-', '+'])
+        .map(|part| part.parse().unwrap_or(0));
+    let mut next = || parts.next().unwrap_or(0);
+    (next(), next(), next())
+}
 
 use smitten_core::backend::BackendEvent;
 
@@ -270,7 +289,8 @@ pub fn run<G: Game>(config: Config) {
         context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
 
         'running: loop {
-            while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
+            event::pump();
+            while let Some(event) = context::with(|ctx| ctx.events.next_platform()) {
                 dispatch(&mut game, event);
             }
             for event in context::with(|ctx| ctx.events.take()) {
@@ -293,7 +313,11 @@ pub fn run<G: Game>(config: Config) {
             let screenshots = context::with(|ctx| {
                 ctx.gfx.finish_frame();
                 let screenshots = ctx.gfx.take_screenshots(&mut *ctx.backend);
-                ctx.backend.present(&ctx.gfx.frame());
+                if ctx.window_closed {
+                    ctx.backend.render_offscreen(&ctx.gfx.frame());
+                } else {
+                    ctx.backend.present(&ctx.gfx.frame());
+                }
                 ctx.gfx.end_frame();
                 screenshots
             });
@@ -314,7 +338,7 @@ pub fn run<G: Game>(config: Config) {
 }
 
 /// Turns the pixels in a backend event into the units the game works in.
-fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
+pub(crate) fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
     if let BackendEvent::Resized { width, height } = event {
         let scale = ctx.backend.dpi_scale();
         ctx.gfx.screen.update((width, height), scale);
@@ -426,44 +450,35 @@ fn localize(ctx: &mut context::Context, event: BackendEvent) -> BackendEvent {
     }
 }
 
-/// Records an event in the input state, then tells the game about it.
-fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
-    let event = context::with(|ctx| {
-        let event = localize(ctx, event);
-        ctx.input.apply(&event);
-        event
-    });
-
+/// Tells the game about an event from the queue.
+fn dispatch<G: Game>(game: &mut G, event: event::Event) {
+    use event::Event;
     match event {
-        BackendEvent::Quit => event::quit(),
-        BackendEvent::Resized { width, height } => game.resized(width, height),
-        BackendEvent::KeyDown { key, is_repeat } => {
-            if !is_repeat || context::with(|ctx| ctx.input.key_repeat) {
-                game.key_pressed(key, is_repeat);
-            }
-        }
-        BackendEvent::KeyUp { key } => game.key_released(key),
-        BackendEvent::TextInput(text) => game.text_input(&text),
-        BackendEvent::TextEdited {
+        Event::Quit => event::quit(),
+        Event::Resized { width, height } => game.resized(width, height),
+        Event::KeyPressed { key, is_repeat } => game.key_pressed(key, is_repeat),
+        Event::KeyReleased { key } => game.key_released(key),
+        Event::TextInput(text) => game.text_input(&text),
+        Event::TextEdited {
             text,
             start,
             length,
         } => game.text_edited(&text, start, length),
-        BackendEvent::MouseMoved { x, y, dx, dy } => game.mouse_moved(x, y, dx, dy),
-        BackendEvent::MousePressed {
+        Event::MouseMoved { x, y, dx, dy } => game.mouse_moved(x, y, dx, dy),
+        Event::MousePressed {
             x,
             y,
             button,
             presses,
         } => game.mouse_pressed(x, y, button, presses),
-        BackendEvent::MouseReleased {
+        Event::MouseReleased {
             x,
             y,
             button,
             presses,
         } => game.mouse_released(x, y, button, presses),
-        BackendEvent::WheelMoved { dx, dy } => game.wheel_moved(dx, dy),
-        BackendEvent::TouchPressed {
+        Event::WheelMoved { dx, dy } => game.wheel_moved(dx, dy),
+        Event::TouchPressed {
             id,
             x,
             y,
@@ -471,7 +486,7 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
             dy,
             pressure,
         } => game.touch_pressed(id, x, y, dx, dy, pressure),
-        BackendEvent::TouchMoved {
+        Event::TouchMoved {
             id,
             x,
             y,
@@ -479,7 +494,7 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
             dy,
             pressure,
         } => game.touch_moved(id, x, y, dx, dy, pressure),
-        BackendEvent::TouchReleased {
+        Event::TouchReleased {
             id,
             x,
             y,
@@ -487,35 +502,43 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
             dy,
             pressure,
         } => game.touch_released(id, x, y, dx, dy, pressure),
-        BackendEvent::JoystickAdded { id, .. } => game.joystick_added(Joystick::new(id)),
-        BackendEvent::JoystickRemoved { id } => game.joystick_removed(Joystick::new(id)),
-        BackendEvent::GamepadPressed { id, button } => {
-            game.gamepad_pressed(Joystick::new(id), button);
-        }
-        BackendEvent::GamepadReleased { id, button } => {
-            game.gamepad_released(Joystick::new(id), button);
-        }
-        BackendEvent::GamepadAxis { id, axis, value } => {
-            game.gamepad_axis(Joystick::new(id), axis, value);
-        }
-        BackendEvent::JoystickPressed { id, button } => {
-            game.joystick_pressed(Joystick::new(id), button);
-        }
-        BackendEvent::JoystickReleased { id, button } => {
-            game.joystick_released(Joystick::new(id), button);
-        }
-        BackendEvent::JoystickAxis { id, axis, value } => {
-            game.joystick_axis(Joystick::new(id), axis, value);
-        }
-        BackendEvent::JoystickHat { id, hat, direction } => {
-            game.joystick_hat(Joystick::new(id), hat, direction);
-        }
-        BackendEvent::Focus(focused) => game.focus(focused),
-        BackendEvent::MouseFocus(focused) => game.mouse_focus(focused),
-        BackendEvent::Visible(visible) => game.visible(visible),
-        BackendEvent::FileDropped { path, x, y } => game.file_dropped(&path, x, y),
-        BackendEvent::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
-        BackendEvent::LowMemory => game.low_memory(),
-        BackendEvent::DisplayRotated(orientation) => game.display_rotated(orientation),
+        Event::JoystickAdded(joystick) => game.joystick_added(joystick),
+        Event::JoystickRemoved(joystick) => game.joystick_removed(joystick),
+        Event::GamepadPressed { joystick, button } => game.gamepad_pressed(joystick, button),
+        Event::GamepadReleased { joystick, button } => game.gamepad_released(joystick, button),
+        Event::GamepadAxis {
+            joystick,
+            axis,
+            value,
+        } => game.gamepad_axis(joystick, axis, value),
+        Event::JoystickPressed { joystick, button } => game.joystick_pressed(joystick, button),
+        Event::JoystickReleased { joystick, button } => game.joystick_released(joystick, button),
+        Event::JoystickAxis {
+            joystick,
+            axis,
+            value,
+        } => game.joystick_axis(joystick, axis, value),
+        Event::JoystickHat {
+            joystick,
+            hat,
+            direction,
+        } => game.joystick_hat(joystick, hat, direction),
+        Event::Focus(focused) => game.focus(focused),
+        Event::MouseFocus(focused) => game.mouse_focus(focused),
+        Event::Visible(visible) => game.visible(visible),
+        Event::FileDropped { path, x, y } => game.file_dropped(&path, x, y),
+        Event::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
+        Event::LowMemory => game.low_memory(),
+        Event::DisplayRotated(orientation) => game.display_rotated(orientation),
+        Event::Custom(event) => game.custom_event(event),
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    #[test]
+    fn the_version_numbers_match_the_crate() {
+        let (major, minor, patch) = super::version();
+        assert_eq!(format!("{major}.{minor}.{patch}"), super::VERSION);
     }
 }

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::context;
 use crate::graphics::{ImageData, ImageError};
-use crate::{DisplayOrientation, MessageBoxKind};
+use crate::{DisplayOrientation, FullscreenType, MessageBoxKind};
 
 /// Sets the window title.
 pub fn set_title(title: &str) {
@@ -125,9 +125,306 @@ pub fn desktop_dimensions() -> (u32, u32) {
     context::with(|ctx| ctx.backend.desktop_size())
 }
 
+/// The size in units of `display`'s desktop, the equivalent of
+/// `love.window.getDesktopDimensions(displayindex)`. Displays are counted
+/// from 0, where LÖVE counts from 1. `None` if there is no such display.
+pub fn desktop_dimensions_of(display: u32) -> Option<(u32, u32)> {
+    context::with(|ctx| ctx.backend.display_desktop_size(display))
+}
+
 /// How many displays are connected.
 pub fn display_count() -> u32 {
     context::with(|ctx| ctx.backend.display_count())
+}
+
+/// Which display the window is on, counted from 0 in the order the system
+/// lists them (LÖVE counts from 1). A window across two displays is on the
+/// one holding most of it.
+pub fn display() -> u32 {
+    context::with(|ctx| ctx.backend.window_display())
+}
+
+/// The name the system gives `display`, such as the monitor's model, the
+/// equivalent of `love.window.getDisplayName`. Displays are counted from
+/// 0. `None` if there is no such display.
+pub fn display_name(display: u32) -> Option<String> {
+    context::with(|ctx| ctx.backend.display_name(display))
+}
+
+/// What [`dpi_scale`] would be for a window on `display`, counted from 0.
+/// `None` if there is no such display. It is always 1.0 when
+/// [`crate::Config::dpi_scaling`] is off.
+pub fn display_dpi_scale(display: u32) -> Option<f32> {
+    context::with(|ctx| {
+        if ctx.gfx.screen.dpi_scaling() {
+            ctx.backend.display_dpi_scale(display)
+        } else {
+            ctx.backend.display_bounds(display).map(|_| 1.0)
+        }
+    })
+}
+
+/// Where the window's top-left corner is, as `(x, y, display)`: the
+/// display it is on, and the position from that display's top-left. This
+/// is the three values of `love.window.getPosition`, with the display
+/// counted from 0.
+pub fn position_on_display() -> (i32, i32, u32) {
+    context::with(|ctx| {
+        let (x, y) = ctx.backend.window_position();
+        let display = ctx.backend.window_display();
+        let (left, top, _, _) = ctx.backend.display_bounds(display).unwrap_or_default();
+        (x - left, y - top, display)
+    })
+}
+
+/// Moves the window's top-left corner to `(x, y)` from the top-left of
+/// `display`, counted from 0, the three-argument form of
+/// `love.window.setPosition`. A display that is not connected is taken as
+/// the first.
+pub fn set_position_on_display(x: i32, y: i32, display: u32) {
+    context::with(|ctx| place(ctx, x, y, display));
+}
+
+fn place(ctx: &mut context::Context, x: i32, y: i32, display: u32) {
+    let bounds = ctx
+        .backend
+        .display_bounds(display)
+        .or_else(|| ctx.backend.display_bounds(0));
+    let (left, top, _, _) = bounds.unwrap_or_default();
+    ctx.backend.set_window_position(left + x, top + y);
+}
+
+/// Hides the window, the equivalent of `love.window.close`. The game keeps
+/// running: callbacks are still called and canvases are still drawn, but
+/// nothing reaches the screen. [`set_mode`] or [`open`] shows it again.
+///
+/// Closing the window does not end the game. Use [`crate::event::quit`]
+/// for that.
+pub fn close() {
+    context::with(|ctx| {
+        ctx.backend.set_window_shown(false);
+        ctx.window_closed = true;
+    });
+}
+
+/// Shows the window again after [`close`].
+pub fn open() {
+    context::with(|ctx| {
+        if ctx.window_closed {
+            ctx.backend.set_window_shown(true);
+            ctx.window_closed = false;
+            measure(ctx);
+        }
+    });
+}
+
+/// Whether the window is open, the equivalent of `love.window.isOpen`. It
+/// is only closed after [`close`].
+pub fn is_open() -> bool {
+    context::with(|ctx| !ctx.window_closed)
+}
+
+/// Lets the display turn off or start its screen saver while the game
+/// runs, the equivalent of `love.window.setDisplaySleepEnabled`. Games keep
+/// it awake by default, as in LÖVE.
+pub fn set_display_sleep_enabled(enabled: bool) {
+    context::with(|ctx| ctx.backend.set_display_sleep(enabled));
+}
+
+/// Whether the display may sleep while the game runs.
+pub fn is_display_sleep_enabled() -> bool {
+    context::with(|ctx| ctx.backend.display_sleep_enabled())
+}
+
+/// The window's settings, the flags table of `love.window.setMode` and
+/// `love.window.getMode`. Start from [`WindowMode::default`], which matches
+/// [`crate::Config`]'s defaults, or from [`mode`] to keep what the window
+/// has now.
+///
+/// Sizes and positions are in units, as everywhere else. Displays are
+/// counted from 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowMode {
+    /// Whether the game fills the whole screen.
+    pub fullscreen: bool,
+    /// How it fills the screen when [`WindowMode::fullscreen`] is on.
+    pub fullscreen_type: FullscreenType,
+    /// Whether presenting waits for the display's refresh.
+    pub vsync: bool,
+    /// Whether the user can resize the window.
+    pub resizable: bool,
+    /// Whether the window has no title bar or frame.
+    pub borderless: bool,
+    /// Whether to move the window to the middle of its display when no
+    /// [`WindowMode::position`] is given.
+    pub centered: bool,
+    /// The display the window goes on.
+    pub display: u32,
+    /// The smallest width the user can shrink the window to.
+    pub min_width: u32,
+    /// The smallest height the user can shrink the window to.
+    pub min_height: u32,
+    /// Where the window's top-left corner goes, from the top-left of
+    /// [`WindowMode::display`]. When `None`, [`WindowMode::centered`]
+    /// decides.
+    pub position: Option<(i32, i32)>,
+    /// How many samples each pixel of the screen holds, 0 or 1 for none.
+    /// The GPU may give fewer; [`mode`] reports how many it gave. See
+    /// [`set_msaa`].
+    pub msaa: u32,
+}
+
+impl Default for WindowMode {
+    fn default() -> Self {
+        Self {
+            fullscreen: false,
+            fullscreen_type: FullscreenType::Desktop,
+            vsync: true,
+            resizable: false,
+            borderless: false,
+            centered: true,
+            display: 0,
+            min_width: 1,
+            min_height: 1,
+            position: None,
+            msaa: 0,
+        }
+    }
+}
+
+/// The window's size in units and its settings, the equivalent of
+/// `love.window.getMode`.
+///
+/// The settings hold the window's current position, so passing them back
+/// to [`set_mode`] leaves the window where it is. They report
+/// [`WindowMode::centered`] as on, so clearing [`WindowMode::position`]
+/// centers the window instead.
+pub fn mode() -> (u32, u32, WindowMode) {
+    let (width, height) = dimensions();
+    let (x, y, display) = position_on_display();
+    context::with(|ctx| {
+        let (min_width, min_height) = ctx.backend.minimum_size();
+        let mode = WindowMode {
+            fullscreen: ctx.backend.is_fullscreen(),
+            fullscreen_type: ctx.backend.fullscreen_type(),
+            vsync: ctx.backend.vsync(),
+            resizable: ctx.backend.is_resizable(),
+            borderless: ctx.backend.is_borderless(),
+            centered: true,
+            display,
+            min_width,
+            min_height,
+            position: Some((x, y)),
+            msaa: ctx.backend.screen_msaa(),
+        };
+        (width, height, mode)
+    })
+}
+
+/// Changes the window's size and every setting at once, the equivalent of
+/// `love.window.setMode`. A size of 0 takes the size of the display's
+/// desktop, as in LÖVE. Opens the window if [`close`] hid it.
+///
+/// This calls [`crate::Game::resized`] if the size changed. Settings the
+/// platform refuses print a message and are left as they were; the rest
+/// still apply. Returns whether everything applied.
+///
+/// ```no_run
+/// use smitten::window::{self, WindowMode};
+///
+/// window::set_mode(1280, 720, WindowMode {
+///     resizable: true,
+///     min_width: 640,
+///     min_height: 360,
+///     ..WindowMode::default()
+/// });
+/// ```
+pub fn set_mode(width: u32, height: u32, mode: WindowMode) -> bool {
+    context::with(|ctx| apply_mode(ctx, width, height, &mode))
+}
+
+/// Changes some of the window's settings and leaves the rest, the
+/// equivalent of `love.window.updateMode`. `change` gets the current
+/// settings from [`mode`] to edit; `width` and `height` replace the size.
+///
+/// ```no_run
+/// use smitten::window;
+///
+/// let (width, height) = window::dimensions();
+/// window::update_mode(width, height, |mode| mode.borderless = true);
+/// ```
+pub fn update_mode(width: u32, height: u32, change: impl FnOnce(&mut WindowMode)) -> bool {
+    let (_, _, mut mode) = mode();
+    change(&mut mode);
+    set_mode(width, height, mode)
+}
+
+fn apply_mode(ctx: &mut context::Context, width: u32, height: u32, mode: &WindowMode) -> bool {
+    let mut applied = true;
+    if ctx.window_closed {
+        ctx.backend.set_window_shown(true);
+        ctx.window_closed = false;
+    }
+    let display = if ctx.backend.display_bounds(mode.display).is_some() {
+        mode.display
+    } else {
+        0
+    };
+    let (width, height) = if width == 0 || height == 0 {
+        let desktop = ctx
+            .backend
+            .display_desktop_size(display)
+            .unwrap_or_else(|| ctx.backend.desktop_size());
+        (
+            if width == 0 { desktop.0 } else { width },
+            if height == 0 { desktop.1 } else { height },
+        )
+    } else {
+        (width, height)
+    };
+
+    // Leave fullscreen first, so the size and position below apply to the
+    // window rather than to the fullscreen mode.
+    let kind = ctx.backend.fullscreen_type();
+    if ctx.backend.is_fullscreen()
+        && let Err(message) = ctx.backend.set_fullscreen(false, kind)
+    {
+        eprintln!("smitten: could not leave fullscreen: {message}");
+        applied = false;
+    }
+    ctx.backend.set_borderless(mode.borderless);
+    ctx.backend.set_resizable(mode.resizable);
+    ctx.backend
+        .set_minimum_size(mode.min_width.max(1), mode.min_height.max(1));
+    if let Err(message) = ctx.backend.set_window_size(width, height) {
+        eprintln!("smitten: could not resize the window: {message}");
+        applied = false;
+    }
+    match mode.position {
+        Some((x, y)) => place(ctx, x, y, display),
+        None if mode.centered || display != ctx.backend.window_display() => {
+            ctx.backend.center_window(display);
+        }
+        None => {}
+    }
+    if let Err(message) = ctx
+        .backend
+        .set_fullscreen(mode.fullscreen, mode.fullscreen_type)
+    {
+        eprintln!("smitten: could not change fullscreen: {message}");
+        applied = false;
+    }
+    if mode.vsync != ctx.backend.vsync()
+        && let Err(message) = ctx.backend.set_vsync(mode.vsync)
+    {
+        eprintln!("smitten: could not change vsync: {message}");
+        applied = false;
+    }
+    if mode.msaa.max(1) != ctx.backend.screen_msaa() {
+        ctx.backend.set_screen_msaa(mode.msaa);
+    }
+    measure(ctx);
+    applied
 }
 
 /// Shows a message with an OK button and waits until the player closes
@@ -200,19 +497,53 @@ pub fn request_attention(continuous: bool) {
 
 /// Makes the game fill the whole screen, or puts it back in a window.
 ///
-/// Fullscreen uses the desktop's own resolution, so switching is quick and
-/// other windows are left alone. The drawable size changes, which calls
+/// Fullscreen keeps the [`FullscreenType`] last used, which is
+/// [`FullscreenType::Desktop`] unless the game chose otherwise: the
+/// desktop's own resolution, so switching is quick and other windows are
+/// left alone. The drawable size changes, which calls
 /// [`crate::Game::resized`]. To start in fullscreen, set
 /// [`crate::Config::fullscreen`] instead.
 ///
 /// If the platform refuses, a message is printed and nothing changes.
 pub fn set_fullscreen(fullscreen: bool) {
     context::with(|ctx| {
-        if let Err(message) = ctx.backend.set_fullscreen(fullscreen) {
-            eprintln!("smitten: could not change fullscreen: {message}");
-        }
+        let kind = ctx.backend.fullscreen_type();
+        apply_fullscreen(ctx, fullscreen, kind);
         measure(ctx);
     });
+}
+
+/// Makes the game fill the whole screen in the way `kind` says, or puts it
+/// back in a window, the two-argument form of `love.window.setFullscreen`.
+///
+/// [`FullscreenType::Exclusive`] changes the display's resolution to the
+/// one closest to the window's size, so set the size first with
+/// [`set_size`] or pick one from [`fullscreen_modes`].
+pub fn set_fullscreen_with(fullscreen: bool, kind: FullscreenType) {
+    context::with(|ctx| {
+        apply_fullscreen(ctx, fullscreen, kind);
+        measure(ctx);
+    });
+}
+
+fn apply_fullscreen(ctx: &mut context::Context, fullscreen: bool, kind: FullscreenType) {
+    if let Err(message) = ctx.backend.set_fullscreen(fullscreen, kind) {
+        eprintln!("smitten: could not change fullscreen: {message}");
+    }
+}
+
+/// How the game fills the screen when it is fullscreen, the second value
+/// of `love.window.getFullscreen`.
+pub fn fullscreen_type() -> FullscreenType {
+    context::with(|ctx| ctx.backend.fullscreen_type())
+}
+
+/// The sizes in units that [`FullscreenType::Exclusive`] can switch
+/// `display` to, largest first, the equivalent of
+/// `love.window.getFullscreenModes`. Displays are counted from 0. Empty if
+/// there is no such display.
+pub fn fullscreen_modes(display: u32) -> Vec<(u32, u32)> {
+    context::with(|ctx| ctx.backend.fullscreen_modes(display))
 }
 
 /// Whether the game currently fills the whole screen.
@@ -241,7 +572,7 @@ pub fn dimensions() -> (u32, u32) {
     context::with(|ctx| ctx.gfx.screen.window_size())
 }
 
-/// Sets the window's icon from an image file (PNG or JPEG), looked up like
+/// Sets the window's icon from an image file (PNG, JPEG or TGA), looked up like
 /// any other asset. To set it from the start, use [`crate::Config::icon`].
 ///
 /// Panics with the file name if it cannot be loaded. Use [`try_set_icon`]

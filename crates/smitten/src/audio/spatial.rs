@@ -103,6 +103,9 @@ pub(crate) struct Placement {
     pub cone_outer_volume: f32,
     pub min_volume: f32,
     pub max_volume: f32,
+    /// How strongly air muffles the sound with distance, from 0.0 (not at
+    /// all) to 10.0.
+    pub air_absorption: f32,
 }
 
 impl Default for Placement {
@@ -120,9 +123,15 @@ impl Default for Placement {
             cone_outer_volume: 0.0,
             min_volume: 0.0,
             max_volume: 1.0,
+            air_absorption: 0.0,
         }
     }
 }
+
+/// How much of the high frequencies is left per unit of distance per unit
+/// of air absorption: OpenAL's `AL_AIR_ABSORPTION_FACTOR`, about 0.05 dB
+/// lost per metre.
+const AIR_HIGH_GAIN_PER_UNIT: f32 = 0.99426;
 
 /// What a listener hears of a source at one moment.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,6 +140,8 @@ pub(crate) struct Heard {
     pub gains: [f32; 2],
     /// How much faster or slower the sound plays because it is moving.
     pub pitch: f32,
+    /// How much of the high frequencies the air leaves, from 0.0 to 1.0.
+    pub high_gain: f32,
 }
 
 impl Placement {
@@ -244,9 +255,16 @@ impl Placement {
         let far = (pan.abs() * FRAC_PI_2).cos();
         let (left, right) = if pan >= 0.0 { (far, 1.0) } else { (1.0, far) };
 
+        let high_gain = if self.air_absorption > 0.0 {
+            AIR_HIGH_GAIN_PER_UNIT.powf(self.air_absorption * distance)
+        } else {
+            1.0
+        };
+
         Heard {
             gains: [gain * left, gain * right],
             pitch: self.doppler(listener, to_listener, listener_velocity),
+            high_gain,
         }
     }
 
@@ -285,6 +303,25 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn air_absorption_muffles_distant_sounds() {
+        let near = Placement {
+            position: [0.0, 0.0, -10.0],
+            air_absorption: 1.0,
+            ..Placement::default()
+        };
+        let far = Placement {
+            position: [0.0, 0.0, -100.0],
+            ..near
+        };
+        let listener = Listener::default();
+        assert_eq!(heard_at([0.0, 0.0, -100.0]).high_gain, 1.0);
+        let near = near.heard(&listener, 1.0).high_gain;
+        let far = far.heard(&listener, 1.0).high_gain;
+        assert!(close(near, AIR_HIGH_GAIN_PER_UNIT.powi(10)));
+        assert!(far < near && near < 1.0);
     }
 
     #[test]
