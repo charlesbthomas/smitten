@@ -2715,6 +2715,12 @@ pub enum GraphicsFeature {
     PixelShaderHighp,
     /// The derivative functions in shaders, such as `dpdx`.
     ShaderDerivatives,
+    /// What LÖVE allows only with GLSL 3: integer types in shaders and
+    /// between [`Shader`] stages, sampling textures in `position`, and
+    /// `instance_index`. WGSL always has them.
+    Glsl3,
+    /// Drawing many copies of a mesh at once with [`draw_instanced`].
+    Instancing,
 }
 
 /// Whether the GPU supports `feature`, the equivalent of the table
@@ -2728,7 +2734,56 @@ pub fn is_supported(feature: GraphicsFeature) -> bool {
         | GraphicsFeature::Lighten
         | GraphicsFeature::FullNpot
         | GraphicsFeature::PixelShaderHighp
-        | GraphicsFeature::ShaderDerivatives => true,
+        | GraphicsFeature::ShaderDerivatives
+        | GraphicsFeature::Glsl3
+        | GraphicsFeature::Instancing => true,
+    }
+}
+
+/// The largest sizes and counts the GPU allows, the equivalent of the
+/// table `love.graphics.getSystemLimits` returns. See [`system_limits`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct SystemLimits {
+    /// The widest point [`set_point_size`] can make. Points are drawn as
+    /// squares, so there is no limit.
+    pub point_size: f32,
+    /// The widest and tallest an [`Image`] or [`Canvas`] can be.
+    pub texture_size: u32,
+    /// The widest, tallest and deepest a [`VolumeImage`] can be.
+    pub volume_texture_size: u32,
+    /// The widest and tallest each face of a [`CubeImage`] can be.
+    pub cube_texture_size: u32,
+    /// The most layers an [`ArrayImage`] can have.
+    pub texture_layers: u32,
+    /// The most canvases that can be drawn to at once with
+    /// [`set_canvases`].
+    pub multi_canvas: u32,
+    /// The most samples per pixel a multisampled canvas can have, 1 if
+    /// there is no multisampling.
+    pub canvas_msaa: u32,
+    /// The most anisotropic filtering a texture can have. Smitten does
+    /// not filter anisotropically yet, so this is 1.
+    pub anisotropy: f32,
+}
+
+/// The largest sizes and counts the GPU allows, the equivalent of
+/// `love.graphics.getSystemLimits`.
+///
+/// SDL's GPU API does not report most limits, so the texture sizes are
+/// the ones every GPU it supports on desktops has: Direct3D 12 feature
+/// level 11_0 promises them, and Vulkan and Metal desktop GPUs match. A
+/// phone's GPU may allow less. `canvas_msaa` is asked of the GPU.
+pub fn system_limits() -> SystemLimits {
+    SystemLimits {
+        point_size: f32::INFINITY,
+        texture_size: 16384,
+        volume_texture_size: 2048,
+        cube_texture_size: 16384,
+        texture_layers: 2048,
+        multi_canvas: MAX_CANVASES as u32,
+        canvas_msaa: context::with(|ctx| ctx.backend.max_msaa()),
+        anisotropy: 1.0,
     }
 }
 
