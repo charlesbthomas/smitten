@@ -4,6 +4,8 @@
 //! where, instead of vanishing and leaving the message in a terminal that
 //! may not be visible. Escape or closing the window ends the program, and
 //! the panic then carries on as it would have.
+//!
+//! A game can show its own screen instead with [`set_error_handler`].
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -30,9 +32,67 @@ const MARGIN: f32 = 70.0;
 /// still has room for the text.
 const MARGIN_SHARE: f32 = 0.1;
 
+/// Draws one frame of an error screen.
+type DrawError = Box<dyn FnMut()>;
+
+/// What a game asked to happen when it panics.
+type Handler = Box<dyn FnOnce(&ErrorReport) -> Option<DrawError>>;
+
 thread_local! {
     /// Where the most recent panic on this thread happened.
     static LOCATION: RefCell<Option<String>> = const { RefCell::new(None) };
+    static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
+}
+
+/// What went wrong, as given to the handler set with
+/// [`set_error_handler`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorReport {
+    /// The panic's message.
+    pub message: String,
+    /// Where the panic happened, as `file:line:column`, if known.
+    pub location: Option<String>,
+}
+
+/// Replaces the error screen, the equivalent of `love.errorhandler`.
+///
+/// When the game panics, the game is dropped, music stops, and the
+/// graphics state is reset. Then `handler` is called once with what went
+/// wrong. It can log the error or save the player's progress, and then:
+///
+/// - return `None` to end the program straight away, or
+/// - return `Some(draw)`, and `draw` is called every frame to draw the
+///   screen, with the [`graphics`](crate::graphics) functions, until the
+///   player presses Escape or closes the window.
+///
+/// If the handler or `draw` panics, the built-in screen is shown instead,
+/// with the game's first error. Either way, the panic then carries on as
+/// it would have. Setting a new handler replaces the last one.
+///
+/// ```no_run
+/// use smitten::{graphics, Color};
+///
+/// smitten::set_error_handler(|report| {
+///     eprintln!("crashed: {}", report.message);
+///     let text = format!("Oops!\n\n{}", report.message);
+///     Some(move || {
+///         graphics::clear(Color::rgb(0.2, 0.0, 0.0));
+///         graphics::print(&text, 40.0, 40.0);
+///     })
+/// });
+/// ```
+pub fn set_error_handler<D>(handler: impl FnOnce(&ErrorReport) -> Option<D> + 'static)
+where
+    D: FnMut() + 'static,
+{
+    let handler: Handler =
+        Box::new(move |report| handler(report).map(|draw| Box::new(draw) as DrawError));
+    HANDLER.with(|slot| *slot.borrow_mut() = Some(handler));
+}
+
+/// Goes back to the built-in error screen.
+pub fn reset_error_handler() {
+    HANDLER.with(|slot| *slot.borrow_mut() = None);
 }
 
 /// Starts recording where panics happen. The message is still printed to
@@ -88,20 +148,60 @@ fn report(message: &str, location: Option<&str>) -> String {
     text
 }
 
+/// The built-in screen: `text` in the corner.
+fn built_in(text: String) -> DrawError {
+    Box::new(move || {
+        context::with(|ctx| {
+            let (width, height) = ctx.gfx.screen.size();
+            let margin = MARGIN.min(width.min(height) as f32 * MARGIN_SHARE);
+            ctx.gfx.print_plain(
+                ctx.backend.as_mut(),
+                &text,
+                margin,
+                margin,
+                Some((width as f32 - margin * 2.0, Align::Left)),
+            );
+        });
+    })
+}
+
+/// Clears away whatever the game or a failed handler left behind.
+fn reset_graphics() {
+    // Whatever was left behind is freed once the framework state is no
+    // longer borrowed, because freeing it needs that state.
+    let leftovers = context::with(|ctx| ctx.gfx.reset_for_error_screen(BACKGROUND));
+    drop(leftovers);
+}
+
 /// Shows the panic in the window until the player presses Escape or
-/// closes it. Returns straight away if the screen itself cannot be drawn.
+/// closes it. Returns straight away if the screen itself cannot be drawn,
+/// or if the game's error handler asks to quit.
 pub(crate) fn show(payload: &(dyn Any + Send)) {
-    let location = LOCATION.with(|slot| slot.borrow_mut().take());
-    let text = report(message(payload), location.as_deref());
+    let report = ErrorReport {
+        message: message(payload).to_owned(),
+        location: LOCATION.with(|slot| slot.borrow_mut().take()),
+    };
+    let text = self::report(&report.message, report.location.as_deref());
+    let handler = HANDLER.with(|slot| slot.borrow_mut().take());
 
     let shown = catch_unwind(AssertUnwindSafe(|| {
-        // Music should not play on over the error. Whatever the game left behind is freed once the framework state
-        // is no longer borrowed, because freeing it needs that state.
+        // Music should not play on over the error.
         crate::audio::stop();
         // A window the game closed is opened again to show the error.
         crate::window::open();
-        let leftovers = context::with(|ctx| ctx.gfx.reset_for_error_screen(BACKGROUND));
-        drop(leftovers);
+        reset_graphics();
+
+        let mut draw = match handler {
+            None => built_in(text.clone()),
+            Some(handler) => match catch_unwind(AssertUnwindSafe(|| handler(&report))) {
+                Ok(None) => return,
+                Ok(Some(draw)) => draw,
+                Err(_) => {
+                    reset_graphics();
+                    built_in(text.clone())
+                }
+            },
+        };
 
         loop {
             while let Some(event) = context::with(|ctx| ctx.backend.poll_event()) {
@@ -113,23 +213,19 @@ pub(crate) fn show(payload: &(dyn Any + Send)) {
                     _ => {}
                 }
             }
+            context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
+            let drawn = catch_unwind(AssertUnwindSafe(&mut draw));
             context::with(|ctx| {
-                ctx.gfx.begin_frame(&mut *ctx.backend);
-                let (width, height) = ctx.gfx.screen.size();
-                let margin = MARGIN.min(width.min(height) as f32 * MARGIN_SHARE);
-                ctx.gfx.print_plain(
-                    ctx.backend.as_mut(),
-                    &text,
-                    margin,
-                    margin,
-                    Some((width as f32 - margin * 2.0, Align::Left)),
-                );
                 ctx.gfx.finish_frame();
                 ctx.backend.present(&ctx.gfx.frame());
                 ctx.gfx.end_frame();
             });
-            // Nothing moves, so there is no need to draw as fast as a
-            // display without vsync would allow.
+            if drawn.is_err() {
+                reset_graphics();
+                draw = built_in(text.clone());
+            }
+            // Nothing moves on the built-in screen, so there is no need
+            // to draw as fast as a display without vsync would allow.
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }));
@@ -175,6 +271,22 @@ mod tests {
         let location = LOCATION.with(|slot| slot.borrow_mut().take()).unwrap();
         assert!(location.contains("error.rs"), "{location}");
         assert!(location.contains(&format!(":{line}:")), "{location}");
+    }
+
+    #[test]
+    fn a_new_error_handler_replaces_the_last() {
+        set_error_handler(|_| None::<fn()>);
+        set_error_handler(|_| Some(|| {}));
+        let handler = HANDLER.with(|slot| slot.borrow_mut().take()).unwrap();
+        let report = ErrorReport {
+            message: "boom".to_owned(),
+            location: None,
+        };
+        assert!(handler(&report).is_some());
+
+        set_error_handler(|_| Some(|| {}));
+        reset_error_handler();
+        assert!(HANDLER.with(|slot| slot.borrow().is_none()));
     }
 
     #[test]

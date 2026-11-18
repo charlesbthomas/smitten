@@ -16,7 +16,7 @@ mod key;
 mod stencil;
 mod system;
 
-pub use blend::BlendMode;
+pub use blend::{BlendAlphaMode, BlendMode};
 pub use color::Color;
 pub use config::{Config, Scaling};
 pub use filter::{Filter, Wrap};

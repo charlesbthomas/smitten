@@ -22,6 +22,7 @@
 //! [`open_file`] to read or write it a piece at a time.
 
 mod file;
+mod file_data;
 mod search;
 
 use std::collections::BTreeSet;
@@ -32,7 +33,8 @@ use std::time::SystemTime;
 use crate::Config;
 use crate::context::{self, Context};
 
-pub use file::{File, FileMode, open_file};
+pub use file::{BufferMode, File, FileMode, open_file};
+pub use file_data::{FileData, new_file_data};
 use search::SearchPath;
 
 pub(crate) struct FilesystemState {
@@ -242,6 +244,10 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
 pub enum FileType {
     File,
     Directory,
+    /// A symbolic link. Only reported while links are turned off with
+    /// [`set_symlinks_enabled`]; otherwise a link is reported as what it
+    /// points to.
+    Symlink,
     /// Something else, such as a device.
     Other,
 }
@@ -422,6 +428,117 @@ pub fn remove(path: impl AsRef<Path>) -> io::Result<()> {
     }
 }
 
+/// Where the system keeps programs' per-user data, the equivalent of
+/// `love.filesystem.getAppdataDirectory`: `%APPDATA%` on Windows,
+/// `~/Library/Application Support` on macOS, and `$XDG_DATA_HOME` or
+/// `~/.local/share` elsewhere. The save directory is inside it.
+///
+/// `None` if the system does not say.
+pub fn appdata_directory() -> Option<PathBuf> {
+    appdata_directory_from(
+        |name| std::env::var_os(name),
+        cfg!(windows),
+        cfg!(target_os = "macos"),
+    )
+}
+
+fn appdata_directory_from(
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+    windows: bool,
+    macos: bool,
+) -> Option<PathBuf> {
+    let set = |name: &str| {
+        var(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if windows {
+        set("APPDATA")
+    } else if macos {
+        Some(set("HOME")?.join("Library/Application Support"))
+    } else {
+        set("XDG_DATA_HOME").or_else(|| Some(set("HOME")?.join(".local/share")))
+    }
+}
+
+/// The user's home directory, the equivalent of
+/// `love.filesystem.getUserDirectory`. `None` if the system does not say.
+pub fn user_directory() -> Option<PathBuf> {
+    std::env::home_dir().filter(|path| !path.as_os_str().is_empty())
+}
+
+/// The directory the game was started from, the equivalent of
+/// `love.filesystem.getWorkingDirectory`. Relative paths given to
+/// `std::fs` are taken from here; smitten's own functions do not use it.
+pub fn working_directory() -> io::Result<PathBuf> {
+    std::env::current_dir()
+}
+
+/// Where the game itself is, the equivalent of
+/// `love.filesystem.getSource`: under `cargo run`, the folder holding
+/// the game's `Cargo.toml`; otherwise the executable.
+pub fn source() -> PathBuf {
+    match std::env::var_os("CARGO_MANIFEST_DIR") {
+        Some(folder) => PathBuf::from(folder),
+        None => std::env::current_exe().unwrap_or_default(),
+    }
+}
+
+/// The directory that holds [`source`], the equivalent of
+/// `love.filesystem.getSourceBaseDirectory`. For a released game this is
+/// the folder the executable is in, which is the place to look for files
+/// the player puts next to it.
+pub fn source_base_directory() -> PathBuf {
+    source().parent().map(Path::to_path_buf).unwrap_or_default()
+}
+
+/// Whether the game is running as a released executable rather than
+/// under `cargo run`, the equivalent of `love.filesystem.isFused`.
+///
+/// A smitten game is always one executable, so this tells the two ways
+/// of running it apart instead: it is `false` when `cargo run` started
+/// the game, and `true` otherwise. The save directory is the same either
+/// way.
+pub fn is_fused() -> bool {
+    std::env::var_os("CARGO_MANIFEST_DIR").is_none()
+}
+
+/// The directory or archive a read of `path` would come from, the
+/// equivalent of `love.filesystem.getRealDirectory`: the save directory,
+/// the asset directory, or a file given to [`mount`].
+///
+/// `None` if nothing is at `path`, or if `path` is absolute or could
+/// leave the game's files, since such a path is not looked up.
+pub fn real_directory(path: impl AsRef<Path>) -> Option<PathBuf> {
+    let names = match context::with(|ctx| lookup(ctx, path.as_ref())) {
+        Lookup::Disk(_) => return None,
+        Lookup::Search(names) => names,
+    };
+    with_search(|search, save, assets| {
+        let found = search.find(save, assets, &names)?;
+        Some(search.real_directory(&found))
+    })
+}
+
+/// Turns following symbolic links on or off, the equivalent of
+/// `love.filesystem.setSymlinksEnabled`. They are on to begin with.
+///
+/// While they are off, a link in the save directory, the asset directory
+/// or a mounted directory is reported by [`info`] as
+/// [`FileType::Symlink`] and cannot be read, and nothing behind a linked
+/// directory is found. This keeps a game from reading outside its files
+/// through a link someone has put there. Absolute paths, and writing,
+/// are not affected.
+pub fn set_symlinks_enabled(enabled: bool) {
+    context::with(|ctx| ctx.fs.mounts.follow_symlinks = enabled);
+}
+
+/// Whether symbolic links are followed, the equivalent of
+/// `love.filesystem.areSymlinksEnabled`. See [`set_symlinks_enabled`].
+pub fn are_symlinks_enabled() -> bool {
+    context::with(|ctx| ctx.fs.mounts.follow_symlinks)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,6 +641,92 @@ mod tests {
         assert_eq!(list("levels"), ["a.txt", "b.txt", "custom.txt"]);
         assert_eq!(list(""), ["levels"]);
         assert!(list("nowhere").is_empty());
+    }
+
+    #[test]
+    fn the_appdata_directory_follows_each_system() {
+        let vars = |name: &str| match name {
+            "APPDATA" => Some(r"C:\Users\ada\AppData\Roaming".into()),
+            "HOME" => Some("/home/ada".into()),
+            _ => None,
+        };
+        assert_eq!(
+            appdata_directory_from(vars, true, false).unwrap(),
+            PathBuf::from(r"C:\Users\ada\AppData\Roaming")
+        );
+        assert_eq!(
+            appdata_directory_from(vars, false, true).unwrap(),
+            PathBuf::from("/home/ada/Library/Application Support")
+        );
+        assert_eq!(
+            appdata_directory_from(vars, false, false).unwrap(),
+            PathBuf::from("/home/ada/.local/share")
+        );
+        let xdg = |name: &str| (name == "XDG_DATA_HOME").then(|| "/data".into());
+        assert_eq!(
+            appdata_directory_from(xdg, false, false).unwrap(),
+            PathBuf::from("/data")
+        );
+        assert!(appdata_directory_from(|_| None, false, false).is_none());
+    }
+
+    #[test]
+    fn the_source_holds_the_game() {
+        // Tests run under cargo, which sets CARGO_MANIFEST_DIR.
+        assert!(!is_fused());
+        assert!(source().join("Cargo.toml").is_file());
+        assert_eq!(source_base_directory(), source().parent().unwrap());
+        assert!(working_directory().unwrap().is_absolute());
+    }
+
+    #[test]
+    fn the_real_directory_is_where_a_file_was_found() {
+        let assets = TempDir::new("real-assets");
+        let saves = TempDir::new("real-saves");
+        std::fs::write(assets.0.join("level.txt"), "").unwrap();
+        std::fs::write(saves.0.join("save.txt"), "").unwrap();
+
+        let search = SearchPath::default();
+        let real = |path: &str| {
+            let names = names(Path::new(path)).unwrap();
+            let found = search.find(Some(&saves.0), &assets.0, &names)?;
+            Some(search.real_directory(&found))
+        };
+        assert_eq!(real("level.txt").unwrap(), assets.0);
+        assert_eq!(real("save.txt").unwrap(), saves.0);
+        assert!(real("missing.txt").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_can_be_turned_off() {
+        let assets = TempDir::new("links-assets");
+        let outside = TempDir::new("links-outside");
+        std::fs::write(outside.0.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(outside.0.join("secret.txt"), assets.0.join("link.txt"))
+            .unwrap();
+        std::os::unix::fs::symlink(&outside.0, assets.0.join("linked")).unwrap();
+
+        let mut search = SearchPath::default();
+        let file = names(Path::new("link.txt")).unwrap();
+        let behind = names(Path::new("linked/secret.txt")).unwrap();
+        let linked = names(Path::new("linked")).unwrap();
+
+        let found = search.find(None, &assets.0, &file).unwrap();
+        assert_eq!(found.info.kind, FileType::File);
+        assert_eq!(search.read(&found).unwrap(), b"secret");
+        assert!(search.find(None, &assets.0, &behind).is_some());
+
+        search.follow_symlinks = false;
+        let found = search.find(None, &assets.0, &file).unwrap();
+        assert_eq!(found.info.kind, FileType::Symlink);
+        assert_eq!(
+            search.read(&found).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(search.find(None, &assets.0, &behind).is_none());
+        let found = search.find(None, &assets.0, &linked).unwrap();
+        assert_eq!(found.info.kind, FileType::Symlink);
     }
 
     #[test]

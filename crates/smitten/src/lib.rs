@@ -3,7 +3,8 @@
 //! A game implements [`Game`] and hands it to [`run`]. While the game is
 //! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
 //! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
-//! the same way `love.graphics` and friends work in LÖVE.
+//! the same way `love.graphics` and friends work in LÖVE. [`data`], [`math`] and [`thread`]
+//! also work on other threads and when no game is running.
 //!
 //! ```no_run
 //! use smitten::{graphics, Color, Config, Game};
@@ -32,8 +33,10 @@ mod input;
 mod reload;
 
 pub mod audio;
+pub mod data;
 pub mod event;
 pub mod filesystem;
+pub mod font;
 pub mod graphics;
 pub mod joystick;
 pub mod keyboard;
@@ -43,20 +46,36 @@ pub mod mouse;
 pub mod physics;
 pub mod sound;
 pub mod system;
+pub mod thread;
 pub mod timer;
 pub mod touch;
 #[cfg(feature = "video")]
 pub mod video;
 pub mod window;
 
+pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, FullscreenType,
-    GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind,
-    MouseButton, Scaling, StencilAction, TouchId, Wrap,
+    BlendAlphaMode, BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter,
+    FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key,
+    MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
 };
 
 use std::path::Path;
+
+/// Smitten's version, such as `"0.1.0"`, the equivalent of the string
+/// `love.getVersion` builds.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Smitten's major, minor and patch version numbers, the equivalent of
+/// `love.getVersion`.
+pub fn version() -> (u32, u32, u32) {
+    let mut parts = VERSION
+        .split(['.', '-', '+'])
+        .map(|part| part.parse().unwrap_or(0));
+    let mut next = || parts.next().unwrap_or(0);
+    (next(), next(), next())
+}
 
 use smitten_core::backend::BackendEvent;
 
@@ -518,5 +537,14 @@ fn dispatch<G: Game>(game: &mut G, event: BackendEvent) {
         BackendEvent::DirectoryDropped { path, x, y } => game.directory_dropped(&path, x, y),
         BackendEvent::LowMemory => game.low_memory(),
         BackendEvent::DisplayRotated(orientation) => game.display_rotated(orientation),
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    #[test]
+    fn the_version_numbers_match_the_crate() {
+        let (major, minor, patch) = super::version();
+        assert_eq!(format!("{major}.{minor}.{patch}"), super::VERSION);
     }
 }
