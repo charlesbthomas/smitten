@@ -16,6 +16,8 @@
 
 use std::cell::RefCell;
 
+use crate::Color;
+
 pub use crate::graphics::Transform;
 
 /// Makes a [`Transform`] from LÖVE's `newTransform` arguments: move the
@@ -80,6 +82,48 @@ impl RandomGenerator {
     /// Starts the sequence belonging to `seed` from its beginning.
     pub fn set_seed(&mut self, seed: u64) {
         *self = RandomGenerator::new(seed);
+    }
+
+    /// The generator's current place in its sequence, like LÖVE's
+    /// `RandomGenerator:getState`. Give it to [`set_state`](Self::set_state)
+    /// later, on this generator or another, to carry on from here: a saved
+    /// game can then replay the same numbers.
+    ///
+    /// The state is a string of hexadecimal digits, so it can be written
+    /// to a save file as it is. Like LÖVE's, it is meant to be passed back
+    /// unchanged, not read.
+    pub fn state(&self) -> String {
+        let mut text = format!("0x{:016x}", self.seed);
+        for word in self.state {
+            text.push_str(&format!(":{word:016x}"));
+        }
+        text
+    }
+
+    /// Carries on from a place saved by [`state`](Self::state). Returns
+    /// [`InvalidRandomState`] and changes nothing if `state` did not come
+    /// from [`state`](Self::state).
+    pub fn set_state(&mut self, state: &str) -> Result<(), InvalidRandomState> {
+        let digits = state.strip_prefix("0x").ok_or(InvalidRandomState)?;
+        let words: Vec<&str> = digits.split(':').collect();
+        if words.len() != 5 {
+            return Err(InvalidRandomState);
+        }
+        let mut parsed = [0u64; 5];
+        for (slot, word) in parsed.iter_mut().zip(words) {
+            if word.len() != 16 {
+                return Err(InvalidRandomState);
+            }
+            *slot = u64::from_str_radix(word, 16).map_err(|_| InvalidRandomState)?;
+        }
+        let [seed, a, b, c, d] = parsed;
+        let state = [a, b, c, d];
+        // xoshiro never reaches an all-zero state and would stay stuck there.
+        if state == [0; 4] {
+            return Err(InvalidRandomState);
+        }
+        *self = RandomGenerator { seed, state };
+        Ok(())
     }
 
     /// The next 64 random bits (xoshiro256++).
@@ -152,6 +196,19 @@ impl RandomGenerator {
     }
 }
 
+/// The error from [`RandomGenerator::set_state`] and [`set_random_state`]
+/// when the text is not a state that [`RandomGenerator::state`] made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidRandomState;
+
+impl std::fmt::Display for InvalidRandomState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("not a random generator state")
+    }
+}
+
+impl std::error::Error for InvalidRandomState {}
+
 thread_local! {
     static SHARED: RefCell<RandomGenerator> = RefCell::new(RandomGenerator::new(time_seed()));
 }
@@ -178,6 +235,18 @@ pub fn set_random_seed(seed: u64) {
 /// The seed the shared generator was last given.
 pub fn random_seed() -> u64 {
     shared(|generator| generator.seed())
+}
+
+/// The shared generator's current place in its sequence. See
+/// [`RandomGenerator::state`].
+pub fn random_state() -> String {
+    shared(|generator| generator.state())
+}
+
+/// Carries the shared generator on from a place saved by
+/// [`random_state`]. See [`RandomGenerator::set_state`].
+pub fn set_random_state(state: &str) -> Result<(), InvalidRandomState> {
+    shared(|generator| generator.set_state(state))
 }
 
 /// A number from 0.0 up to, but not including, 1.0.
@@ -264,6 +333,72 @@ pub fn noise3(x: f32, y: f32, z: f32) -> f32 {
         v,
     );
     (0.5 + 0.5 * mix(near, far, w)).clamp(0.0, 1.0)
+}
+
+/// Smooth noise through four dimensions, from 0.0 to 1.0, like
+/// `love.math.noise(x, y, z, w)`. See [`noise`]. Using time as the fourth
+/// input animates a 3D pattern.
+pub fn noise4(x: f32, y: f32, z: f32, w: f32) -> f32 {
+    let floors = [x.floor(), y.floor(), z.floor(), w.floor()];
+    let cells = floors.map(|floor| floor as i32);
+    let offsets = [x - floors[0], y - floors[1], z - floors[2], w - floors[3]];
+    let fade = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+
+    // The sixteen corners of the cell, numbered by their bits: bit 0 is
+    // one step along x, bit 1 along y, and so on.
+    let mut values = [0.0f32; 16];
+    for (corner, value) in values.iter_mut().enumerate() {
+        let step = |axis: usize| ((corner >> axis) & 1) as i32;
+        let hash = hash4(
+            cells[0].wrapping_add(step(0)),
+            cells[1].wrapping_add(step(1)),
+            cells[2].wrapping_add(step(2)),
+            cells[3].wrapping_add(step(3)),
+        );
+        let local = [0, 1, 2, 3].map(|axis| offsets[axis] - step(axis) as f32);
+        *value = gradient4(hash, local);
+    }
+    // Blend neighboring corners, one axis at a time, x first.
+    let mut count = 16;
+    for offset in offsets {
+        count /= 2;
+        for index in 0..count {
+            values[index] = mix(values[2 * index], values[2 * index + 1], fade(offset));
+        }
+    }
+    (0.5 + 0.5 * values[0]).clamp(0.0, 1.0)
+}
+
+fn hash4(x: i32, y: i32, z: i32, w: i32) -> u32 {
+    let mixed = hash3(x, y, z) ^ (w as u32).wrapping_mul(0x9E37_79B1);
+    let mixed = mixed.wrapping_mul(0x2C1B_3C6D);
+    mixed ^ (mixed >> 15)
+}
+
+/// The dot product of `offset` with one of the 32 gradient directions of
+/// 4D Perlin noise, picked by `hash`. Each direction leaves one axis out
+/// and points one way or the other along the rest.
+fn gradient4(hash: u32, offset: [f32; 4]) -> f32 {
+    let pick = (hash & 31) as usize;
+    let skip = pick >> 3;
+    let mut total = 0.0;
+    let mut sign_bit = 0;
+    for (axis, value) in offset.into_iter().enumerate() {
+        if axis == skip {
+            continue;
+        }
+        let sign = if pick & (1 << sign_bit) == 0 {
+            1.0
+        } else {
+            -1.0
+        };
+        total += sign * value;
+        sign_bit += 1;
+    }
+    // Three axes reach further than the 3D gradients' two; scale back to
+    // about the same range.
+    total * (2.0 / 3.0)
 }
 
 fn hash3(x: i32, y: i32, z: i32) -> u32 {
@@ -381,6 +516,22 @@ fn cross(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
 
 fn inside_triangle(point: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
     cross(a, b, point) >= 0.0 && cross(b, c, point) >= 0.0 && cross(c, a, point) >= 0.0
+}
+
+/// Turns color components from 0 to 255, as image editors show them, into
+/// a [`Color`] with components from 0.0 to 1.0, like
+/// `love.math.colorFromBytes`.
+pub fn color_from_bytes(r: u8, g: u8, b: u8, a: u8) -> Color {
+    let unit = |byte: u8| byte as f32 / 255.0;
+    Color::rgba(unit(r), unit(g), unit(b), unit(a))
+}
+
+/// Turns a [`Color`] into components from 0 to 255, like
+/// `love.math.colorToBytes`. Components outside 0.0 to 1.0 are cut to
+/// that range, and each is rounded to the nearest whole number.
+pub fn color_to_bytes(color: Color) -> [u8; 4] {
+    let byte = |unit: f32| (unit.clamp(0.0, 1.0) * 255.0).round() as u8;
+    [byte(color.r), byte(color.g), byte(color.b), byte(color.a)]
 }
 
 /// Converts one color component from the usual sRGB encoding to linear
@@ -768,6 +919,69 @@ mod tests {
         let second = (random(), random_int(1, 100), random_range(0.0, 9.0));
         assert_eq!(first, second);
         assert_eq!(random_seed(), 77);
+    }
+
+    #[test]
+    fn a_saved_state_carries_on_the_same_sequence() {
+        let mut generator = RandomGenerator::new(9);
+        generator.next_u64();
+        let saved = generator.state();
+        let expected: Vec<u64> = (0..5).map(|_| generator.next_u64()).collect();
+
+        let mut other = RandomGenerator::new(1);
+        other.set_state(&saved).unwrap();
+        assert_eq!(other.seed(), 9);
+        let replayed: Vec<u64> = (0..5).map(|_| other.next_u64()).collect();
+        assert_eq!(replayed, expected);
+
+        let too_long = format!("{saved}:0000000000000000");
+        let zeros = format!("0x{}", ["0000000000000000"; 5].join(":"));
+        for bad in ["", "0x12", "garbage", &too_long, &zeros] {
+            assert_eq!(other.set_state(bad), Err(InvalidRandomState), "{bad}");
+        }
+        assert_eq!(other.seed(), 9);
+    }
+
+    #[test]
+    fn the_shared_state_round_trips() {
+        set_random_seed(4);
+        let saved = random_state();
+        let first = random();
+        set_random_state(&saved).unwrap();
+        assert_eq!(random(), first);
+    }
+
+    #[test]
+    fn colors_convert_to_and_from_bytes() {
+        let color = color_from_bytes(255, 0, 51, 128);
+        assert_eq!(color.r, 1.0);
+        assert_eq!(color.g, 0.0);
+        assert!((color.b - 0.2).abs() < 1e-6);
+        assert_eq!(color_to_bytes(color), [255, 0, 51, 128]);
+        assert_eq!(
+            color_to_bytes(Color::rgba(2.0, -1.0, 0.5, 1.0)),
+            [255, 0, 128, 255]
+        );
+    }
+
+    #[test]
+    fn four_dimensional_noise_is_smooth_repeatable_and_in_range() {
+        let at = |t: f32| noise4(t, 0.3 + t * 0.5, 0.7, 1.1 - t);
+        let mut previous = at(0.0);
+        let mut low: f32 = 1.0;
+        let mut high: f32 = 0.0;
+        for step in 1..2000 {
+            let t = step as f32 * 0.01;
+            let value = at(t);
+            assert!((0.0..=1.0).contains(&value));
+            assert!((value - previous).abs() < 0.1, "jumped at {t}");
+            low = low.min(value);
+            high = high.max(value);
+            previous = value;
+        }
+        assert!(high - low > 0.3, "too flat: {low} to {high}");
+        assert_eq!(noise4(1.5, 2.5, 3.5, 4.5), noise4(1.5, 2.5, 3.5, 4.5));
+        assert_eq!(noise4(1.0, 2.0, 3.0, 4.0), 0.5);
     }
 
     #[test]
