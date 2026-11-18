@@ -64,6 +64,12 @@ impl Screen {
     }
 
     /// Records the window's current size and the display's scale.
+    /// Whether sizes are measured in units rather than pixels. See
+    /// [`Config::dpi_scaling`].
+    pub fn dpi_scaling(&self) -> bool {
+        self.dpi_scaling
+    }
+
     pub fn update(&mut self, pixels: (u32, u32), display_scale: f32) {
         self.pixels = pixels;
         self.dpi = if self.dpi_scaling && display_scale > 0.0 {

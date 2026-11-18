@@ -93,3 +93,16 @@ pub enum DisplayOrientation {
     /// Taller than wide, upside down.
     PortraitFlipped,
 }
+
+/// How a window fills the screen, as LÖVE's `FullscreenType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FullscreenType {
+    /// Covers the display at the desktop's own resolution. Switching is
+    /// quick, and other windows and displays are left alone.
+    #[default]
+    Desktop,
+    /// Changes the display's resolution to the one closest to the
+    /// window's size, as older games do. Switching can take a moment and
+    /// may rearrange other windows.
+    Exclusive,
+}

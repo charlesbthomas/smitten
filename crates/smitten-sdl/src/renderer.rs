@@ -12,10 +12,12 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, Scissor, ShaderId, ShaderInfo,
-    TextureId, TextureKind, Vertex,
+    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, RendererInfo, Scissor, ShaderId,
+    ShaderInfo, TextureId, TextureKind, Vertex,
 };
-use smitten_core::{BlendMode, CompareMode, Filter, StencilAction, StencilMode, Wrap};
+use smitten_core::{
+    BlendAlphaMode, BlendMode, CompareMode, Filter, StencilAction, StencilMode, VertexWinding, Wrap,
+};
 
 use crate::{sdl_error, shader};
 
@@ -39,9 +41,14 @@ struct PipelineKey {
     /// Whether it draws to a render target rather than the screen.
     to_target: bool,
     blend: BlendMode,
+    blend_alpha: BlendAlphaMode,
     stencil: StencilMode,
     color_mask: ColorMask,
     wireframe: bool,
+    /// How many samples each pixel of the target holds.
+    samples: u32,
+    /// The on-screen winding of the triangles to leave out.
+    cull: Option<VertexWinding>,
 }
 
 #[derive(Clone, Copy)]
@@ -56,6 +63,11 @@ struct Texture {
     stencil: *mut SDL_GPUTexture,
     /// Whether `stencil` is new and still holds garbage.
     stencil_fresh: bool,
+    /// For a multisampled render target, the texture drawn to, which is
+    /// resolved into `handle` at the end of every pass. Null otherwise.
+    msaa: *mut SDL_GPUTexture,
+    /// How many samples each pixel of `msaa` holds, 1 without it.
+    samples: u32,
     /// What shows beyond the edges, horizontally and vertically.
     wrap: (Wrap, Wrap),
     /// How much GPU memory the pixels take, for the game's statistics.
@@ -116,6 +128,11 @@ pub(crate) struct Renderer {
     screen_stencil: *mut SDL_GPUTexture,
     screen_stencil_size: (u32, u32),
     screen_stencil_fresh: bool,
+    /// The multisampled picture of the screen, resolved into the window
+    /// at the end of every pass, or null without multisampling.
+    screen_msaa: *mut SDL_GPUTexture,
+    /// How many samples each pixel of the screen holds, 1 for none.
+    screen_samples: u32,
     linear: *mut SDL_GPUSampler,
     nearest: *mut SDL_GPUSampler,
     /// Samplers for textures that do not clamp or have mipmaps, made when
@@ -149,6 +166,8 @@ impl Renderer {
             screen_stencil: ptr::null_mut(),
             screen_stencil_size: (0, 0),
             screen_stencil_fresh: false,
+            screen_msaa: ptr::null_mut(),
+            screen_samples: 1,
             linear: ptr::null_mut(),
             samplers: HashMap::new(),
             nearest: ptr::null_mut(),
@@ -212,9 +231,12 @@ impl Renderer {
                 layered: false,
                 to_target: false,
                 blend: BlendMode::Alpha,
+                blend_alpha: BlendAlphaMode::AlphaMultiply,
                 stencil: StencilMode::Off,
                 color_mask: ColorMask::ALL,
                 wireframe: false,
+                samples: 1,
+                cull: None,
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
@@ -267,6 +289,8 @@ impl Renderer {
                 is_target: false,
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
+                msaa: ptr::null_mut(),
+                samples: 1,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
                 bytes: mipmap_bytes(width, height, levels),
                 levels,
@@ -374,6 +398,8 @@ impl Renderer {
                 is_target: false,
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
+                msaa: ptr::null_mut(),
+                samples: 1,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
                 bytes: levels.iter().map(|level| level.len() as u64).sum(),
                 levels: level_count,
@@ -425,6 +451,8 @@ impl Renderer {
                 is_target: false,
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
+                msaa: ptr::null_mut(),
+                samples: 1,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
                 bytes: u64::from(width) * u64::from(height) * 4 * layers.len() as u64,
                 levels: 1,
@@ -440,11 +468,14 @@ impl Renderer {
     /// Creates a render target, with a full chain of mipmaps unless
     /// `mipmaps` is `None`. `Some(true)` makes them again whenever the
     /// target has been drawn to.
+    /// With `samples` above 1 it is multisampled, with as many samples as
+    /// the GPU allows up to that.
     pub fn create_render_target(
         &mut self,
         width: u32,
         height: u32,
         mipmaps: Option<bool>,
+        samples: u32,
     ) -> Result<TextureId, String> {
         if width == 0 || height == 0 {
             return Err("a canvas must be at least 1x1 pixels".to_string());
@@ -502,6 +533,40 @@ impl Renderer {
             }
             handle
         };
+        let samples = self.supported_samples(TEXTURE_FORMAT, samples);
+        let msaa = if samples > 1 {
+            // SAFETY: the device is alive.
+            let msaa =
+                unsafe { new_msaa_texture(self.device, TEXTURE_FORMAT, width, height, samples) };
+            if msaa.is_null() {
+                let message = format!("could not create a multisampled canvas: {}", sdl_error());
+                // SAFETY: the texture came from this device.
+                unsafe { SDL_ReleaseGPUTexture(self.device, handle) };
+                return Err(message);
+            }
+            // Its samples start out transparent too.
+            // SAFETY: the device and texture are alive, and the pass is
+            // begun, ended and submitted in order.
+            unsafe {
+                let commands = SDL_AcquireGPUCommandBuffer(self.device);
+                if !commands.is_null() {
+                    let target = SDL_GPUColorTargetInfo {
+                        texture: msaa,
+                        load_op: SDL_GPU_LOADOP_CLEAR,
+                        store_op: SDL_GPU_STOREOP_STORE,
+                        ..Default::default()
+                    };
+                    let pass = SDL_BeginGPURenderPass(commands, &target, 1, ptr::null());
+                    if !pass.is_null() {
+                        SDL_EndGPURenderPass(pass);
+                    }
+                    SDL_SubmitGPUCommandBuffer(commands);
+                }
+            }
+            msaa
+        } else {
+            ptr::null_mut()
+        };
         let id = self.next_texture_id;
         self.next_texture_id += 1;
         self.textures.insert(
@@ -513,8 +578,11 @@ impl Renderer {
                 is_target: true,
                 stencil: ptr::null_mut(),
                 stencil_fresh: false,
+                msaa,
+                samples,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: mipmap_bytes(width, height, levels),
+                bytes: mipmap_bytes(width, height, levels)
+                    + u64::from(width) * u64::from(height) * 4 * u64::from(samples.max(1) - 1),
                 levels,
                 mipmaps: blend,
                 kind: TextureKind::Flat,
@@ -657,6 +725,95 @@ impl Renderer {
             unsafe {
                 SDL_ReleaseGPUTexture(self.device, texture.handle);
                 SDL_ReleaseGPUTexture(self.device, texture.stencil);
+                SDL_ReleaseGPUTexture(self.device, texture.msaa);
+            }
+        }
+    }
+
+    /// The most samples up to `wanted` that the GPU can give a target of
+    /// `format` and its stencil, or 1.
+    fn supported_samples(&self, format: SDL_GPUTextureFormat, wanted: u32) -> u32 {
+        [8, 4, 2]
+            .into_iter()
+            .find(|&count| {
+                count <= wanted
+                    // SAFETY: the device is alive.
+                    && unsafe {
+                        SDL_GPUTextureSupportsSampleCount(self.device, format, sample_count(count))
+                            && SDL_GPUTextureSupportsSampleCount(
+                                self.device,
+                                self.stencil_format,
+                                sample_count(count),
+                            )
+                    }
+            })
+            .unwrap_or(1)
+    }
+
+    /// Multisamples the screen with as many samples as the GPU allows up
+    /// to `wanted`, or stops for 1 or less. Returns the number used.
+    pub fn set_screen_msaa(&mut self, wanted: u32) -> u32 {
+        let samples = self.supported_samples(self.screen_format, wanted);
+        if samples != self.screen_samples {
+            self.screen_samples = samples;
+            // Made again at the right size and count before the next draw.
+            self.screen_stencil_size = (0, 0);
+        }
+        samples
+    }
+
+    /// How many samples each pixel of the screen holds.
+    pub fn screen_msaa(&self) -> u32 {
+        self.screen_samples
+    }
+
+    /// How many samples each pixel of a canvas holds.
+    pub fn texture_msaa(&self, texture: TextureId) -> u32 {
+        self.textures
+            .get(&texture.0)
+            .map_or(1, |texture| texture.samples)
+    }
+
+    /// How many samples each pixel of a pass's target holds.
+    fn target_samples(&self, target: Option<TextureId>) -> u32 {
+        match target {
+            None => self.screen_samples,
+            Some(id) => self.texture_msaa(id),
+        }
+    }
+
+    /// The graphics API, driver and GPU, as SDL reports them.
+    pub fn renderer_info(&self) -> RendererInfo {
+        let text = |pointer: *const std::ffi::c_char| {
+            if pointer.is_null() {
+                String::new()
+            } else {
+                // SAFETY: SDL returns a NUL-terminated string that lives
+                // as long as the device.
+                unsafe { CStr::from_ptr(pointer) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        // SAFETY: the device is alive.
+        unsafe {
+            let properties = SDL_GetGPUDeviceProperties(self.device);
+            let property = |name| text(SDL_GetStringProperty(properties, name, ptr::null()));
+            let api = text(SDL_GetGPUDeviceDriver(self.device));
+            RendererInfo {
+                name: match api.as_str() {
+                    "vulkan" => "Vulkan".to_string(),
+                    "direct3d12" => "Direct3D 12".to_string(),
+                    "metal" => "Metal".to_string(),
+                    _ => api,
+                },
+                // The detailed version is usually the more useful one.
+                version: match property(SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING) {
+                    info if info.is_empty() => property(SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING),
+                    info => info,
+                },
+                vendor: property(SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING),
+                device: property(SDL_PROP_GPU_DEVICE_NAME_STRING),
             }
         }
     }
@@ -760,6 +917,7 @@ impl Renderer {
                         self.stencil_format,
                         target.width,
                         target.height,
+                        target.samples,
                     )
                 };
                 target.stencil_fresh = true;
@@ -769,7 +927,7 @@ impl Renderer {
                 .and_then(|end| frame.calls.get(pass.first_call as usize..end))
                 .unwrap_or(&[]);
             for call in calls {
-                let key = self.pipeline_key(call, pass.target.is_some());
+                let key = self.pipeline_key(call, pass.target);
                 if !self.pipelines.contains_key(&key)
                     && let Ok(pipeline) = self.create_pipeline(key)
                 {
@@ -780,7 +938,8 @@ impl Renderer {
     }
 
     /// The pipeline `call` draws with.
-    fn pipeline_key(&self, call: &DrawCall, to_target: bool) -> PipelineKey {
+    fn pipeline_key(&self, call: &DrawCall, target: Option<TextureId>) -> PipelineKey {
+        let to_target = target.is_some();
         let layered = call.shader.is_none()
             && call
                 .texture
@@ -791,9 +950,12 @@ impl Renderer {
             layered,
             to_target,
             blend: call.blend,
+            blend_alpha: call.blend_alpha,
             stencil: call.stencil,
             color_mask: call.color_mask,
             wireframe: call.wireframe,
+            samples: self.target_samples(target),
+            cull: call.cull,
         }
     }
 
@@ -867,8 +1029,33 @@ impl Renderer {
         // null.
         unsafe {
             SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
-            self.screen_stencil =
-                new_stencil_texture(self.device, self.stencil_format, width, height);
+            SDL_ReleaseGPUTexture(self.device, self.screen_msaa);
+            self.screen_stencil = new_stencil_texture(
+                self.device,
+                self.stencil_format,
+                width,
+                height,
+                self.screen_samples,
+            );
+            self.screen_msaa = if self.screen_samples > 1 {
+                new_msaa_texture(
+                    self.device,
+                    self.screen_format,
+                    width,
+                    height,
+                    self.screen_samples,
+                )
+            } else {
+                ptr::null_mut()
+            };
+            // Without the multisampled picture, draw straight to the
+            // window rather than not at all.
+            if self.screen_samples > 1 && self.screen_msaa.is_null() {
+                self.screen_samples = 1;
+                SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
+                self.screen_stencil =
+                    new_stencil_texture(self.device, self.stencil_format, width, height, 1);
+            }
         }
         self.screen_stencil_size = (width, height);
         self.screen_stencil_fresh = true;
@@ -1083,10 +1270,13 @@ impl Renderer {
                 // this frame, is skipped.
                 // New stencil memory holds garbage, so its first pass
                 // clears it whatever the pass asked for.
-                let (texture, stencil, fresh, width, height) = match pass.target {
+                // A multisampled target is drawn in its `msaa` texture,
+                // which is resolved into the real one.
+                let (texture, msaa, stencil, fresh, width, height) = match pass.target {
                     None if window.is_none() => continue,
                     None => (
                         swapchain,
+                        self.screen_msaa,
                         self.screen_stencil,
                         std::mem::take(&mut self.screen_stencil_fresh),
                         screen_width,
@@ -1095,6 +1285,7 @@ impl Renderer {
                     Some(id) => match self.textures.get_mut(&id.0) {
                         Some(target) if target.is_target => (
                             target.handle,
+                            target.msaa,
                             target.stencil,
                             std::mem::take(&mut target.stencil_fresh),
                             target.width,
@@ -1111,11 +1302,22 @@ impl Renderer {
                     continue;
                 }
 
-                let mut info = SDL_GPUColorTargetInfo {
-                    texture,
-                    load_op: SDL_GPU_LOADOP_LOAD,
-                    store_op: SDL_GPU_STOREOP_STORE,
-                    ..Default::default()
+                let mut info = if msaa.is_null() {
+                    SDL_GPUColorTargetInfo {
+                        texture,
+                        load_op: SDL_GPU_LOADOP_LOAD,
+                        store_op: SDL_GPU_STOREOP_STORE,
+                        ..Default::default()
+                    }
+                } else {
+                    // The samples are kept for later passes to draw on.
+                    SDL_GPUColorTargetInfo {
+                        texture: msaa,
+                        load_op: SDL_GPU_LOADOP_LOAD,
+                        store_op: SDL_GPU_STOREOP_RESOLVE_AND_STORE,
+                        resolve_texture: texture,
+                        ..Default::default()
+                    }
                 };
                 if let Some(color) = pass.clear {
                     info.load_op = SDL_GPU_LOADOP_CLEAR;
@@ -1131,13 +1333,13 @@ impl Renderer {
                     // The depth half of the texture is never used.
                     load_op: SDL_GPU_LOADOP_DONT_CARE,
                     store_op: SDL_GPU_STOREOP_DONT_CARE,
-                    stencil_load_op: if pass.clear_stencil || fresh {
+                    stencil_load_op: if pass.clear_stencil.is_some() || fresh {
                         SDL_GPU_LOADOP_CLEAR
                     } else {
                         SDL_GPU_LOADOP_LOAD
                     },
                     stencil_store_op: SDL_GPU_STOREOP_STORE,
-                    clear_stencil: 0,
+                    clear_stencil: pass.clear_stencil.unwrap_or(0),
                     ..Default::default()
                 };
                 let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, &stencil_info);
@@ -1261,7 +1463,7 @@ impl Renderer {
                 let Some(scissor) = clip_scissor(call.scissor, width, height) else {
                     continue;
                 };
-                let key = self.pipeline_key(call, target.is_some());
+                let key = self.pipeline_key(call, target);
                 // A pipeline that could not be built draws nothing.
                 let Some(&pipeline) = self.pipelines.get(&key) else {
                     continue;
@@ -1366,60 +1568,56 @@ fn clip_scissor(scissor: Option<Scissor>, width: u32, height: u32) -> Option<(i3
     ))
 }
 
-/// The GPU blend settings for a blend mode, matching LÖVE's.
-fn blend_state(mode: BlendMode) -> SDL_GPUColorTargetBlendState {
-    let (src_color, dst_color, color_op, src_alpha, dst_alpha) = match mode {
-        BlendMode::Alpha => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+/// The GPU blend settings for a blend mode, worked out as LÖVE's
+/// `computeBlendState` does.
+fn blend_state(mode: BlendMode, alpha: BlendAlphaMode) -> SDL_GPUColorTargetBlendState {
+    const ONE: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ONE;
+    const ZERO: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ZERO;
+    const ONE_MINUS_SRC_ALPHA: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    // (source color, destination color, source alpha, destination alpha,
+    // operation), for colors that are already premultiplied.
+    let (mut src_color, dst_color, src_alpha, dst_alpha, op) = match mode {
+        BlendMode::Alpha | BlendMode::Premultiplied => (
+            ONE,
+            ONE_MINUS_SRC_ALPHA,
+            ONE,
+            ONE_MINUS_SRC_ALPHA,
             SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
         ),
-        BlendMode::Premultiplied => (
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-            SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-        ),
-        BlendMode::Add => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ZERO,
-            SDL_GPU_BLENDFACTOR_ONE,
-        ),
-        BlendMode::Subtract => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDOP_REVERSE_SUBTRACT,
-            SDL_GPU_BLENDFACTOR_ZERO,
-            SDL_GPU_BLENDFACTOR_ONE,
-        ),
+        BlendMode::Add => (ONE, ONE, ZERO, ONE, SDL_GPU_BLENDOP_ADD),
+        BlendMode::Subtract => (ONE, ONE, ZERO, ONE, SDL_GPU_BLENDOP_REVERSE_SUBTRACT),
         BlendMode::Multiply => (
             SDL_GPU_BLENDFACTOR_DST_COLOR,
-            SDL_GPU_BLENDFACTOR_ZERO,
-            SDL_GPU_BLENDOP_ADD,
+            ZERO,
             SDL_GPU_BLENDFACTOR_DST_ALPHA,
-            SDL_GPU_BLENDFACTOR_ZERO,
-        ),
-        BlendMode::Replace => (
-            SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-            SDL_GPU_BLENDFACTOR_ZERO,
+            ZERO,
             SDL_GPU_BLENDOP_ADD,
-            SDL_GPU_BLENDFACTOR_ONE,
-            SDL_GPU_BLENDFACTOR_ZERO,
         ),
+        BlendMode::Replace => (ONE, ZERO, ONE, ZERO, SDL_GPU_BLENDOP_ADD),
+        BlendMode::Screen => (
+            ONE,
+            SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_COLOR,
+            ONE,
+            ONE_MINUS_SRC_ALPHA,
+            SDL_GPU_BLENDOP_ADD,
+        ),
+        // The factors are ignored by the minimum and maximum.
+        BlendMode::Lighten => (ONE, ONE, ONE, ONE, SDL_GPU_BLENDOP_MAX),
+        BlendMode::Darken => (ONE, ONE, ONE, ONE, SDL_GPU_BLENDOP_MIN),
     };
+    // Colors that are not premultiplied yet are multiplied as they land.
+    let premultiplied = alpha == BlendAlphaMode::Premultiplied || mode.needs_premultiplied();
+    if !premultiplied && src_color == ONE {
+        src_color = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+    }
     SDL_GPUColorTargetBlendState {
         enable_blend: true,
         src_color_blendfactor: src_color,
         dst_color_blendfactor: dst_color,
-        color_blend_op: color_op,
+        color_blend_op: op,
         src_alpha_blendfactor: src_alpha,
         dst_alpha_blendfactor: dst_alpha,
-        alpha_blend_op: SDL_GPU_BLENDOP_ADD,
+        alpha_blend_op: op,
         ..Default::default()
     }
 }
@@ -1432,8 +1630,10 @@ impl Drop for Renderer {
             for (_, texture) in self.textures.drain() {
                 SDL_ReleaseGPUTexture(self.device, texture.handle);
                 SDL_ReleaseGPUTexture(self.device, texture.stencil);
+                SDL_ReleaseGPUTexture(self.device, texture.msaa);
             }
             SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
+            SDL_ReleaseGPUTexture(self.device, self.screen_msaa);
             SDL_ReleaseGPUTexture(self.device, self.white);
             SDL_ReleaseGPUTexture(self.device, self.white_array);
             SDL_ReleaseGPUTexture(self.device, self.white_cube);
@@ -1469,9 +1669,12 @@ unsafe fn create_pipeline(
 ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
     let PipelineKey {
         blend,
+        samples,
+        blend_alpha,
         stencil,
         color_mask,
         wireframe,
+        cull,
         ..
     } = key;
     // SAFETY: all pointers in the create-info structs outlive the calls
@@ -1507,7 +1710,7 @@ unsafe fn create_pipeline(
             ),
         ];
 
-        let mut blend_state = blend_state(blend);
+        let mut blend_state = blend_state(blend, blend_alpha);
         // Writing to the stencil leaves the picture itself untouched.
         if matches!(stencil, StencilMode::Write(_)) {
             blend_state.enable_color_write_mask = true;
@@ -1542,13 +1745,27 @@ unsafe fn create_pipeline(
                 num_vertex_attributes: attributes.len() as u32,
             },
             primitive_type: SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            multisample_state: SDL_GPUMultisampleState {
+                sample_count: sample_count(samples),
+                ..Default::default()
+            },
             rasterizer_state: SDL_GPURasterizerState {
                 fill_mode: if wireframe {
                     SDL_GPU_FILLMODE_LINE
                 } else {
                     SDL_GPU_FILLMODE_FILL
                 },
-                cull_mode: SDL_GPU_CULLMODE_NONE,
+                // The GPU keeps the triangles wound the front-face way,
+                // and windings read the same to it as on screen.
+                cull_mode: if cull.is_some() {
+                    SDL_GPU_CULLMODE_BACK
+                } else {
+                    SDL_GPU_CULLMODE_NONE
+                },
+                front_face: match cull {
+                    Some(VertexWinding::Clockwise) => SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+                    _ => SDL_GPU_FRONTFACE_CLOCKWISE,
+                },
                 ..Default::default()
             },
             target_info: SDL_GPUGraphicsPipelineTargetInfo {
@@ -1580,8 +1797,10 @@ fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
         StencilMode::Write(action) => (
             match action {
                 StencilAction::Replace => SDL_GPU_STENCILOP_REPLACE,
-                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
-                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
+                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_CLAMP,
+                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_CLAMP,
+                StencilAction::IncrementWrap => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
+                StencilAction::DecrementWrap => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
                 StencilAction::Invert => SDL_GPU_STENCILOP_INVERT,
             },
             SDL_GPU_COMPAREOP_ALWAYS,
@@ -1598,6 +1817,8 @@ fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
                 CompareMode::LessEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
                 CompareMode::Greater => SDL_GPU_COMPAREOP_LESS,
                 CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+                CompareMode::Never => SDL_GPU_COMPAREOP_NEVER,
+                CompareMode::Always => SDL_GPU_COMPAREOP_ALWAYS,
             },
             0,
         ),
@@ -1628,6 +1849,7 @@ unsafe fn new_stencil_texture(
     format: SDL_GPUTextureFormat,
     width: u32,
     height: u32,
+    samples: u32,
 ) -> *mut SDL_GPUTexture {
     // SAFETY: the create-info is valid for the call.
     unsafe {
@@ -1641,10 +1863,51 @@ unsafe fn new_stencil_texture(
                 height,
                 layer_count_or_depth: 1,
                 num_levels: 1,
-                sample_count: SDL_GPU_SAMPLECOUNT_1,
+                sample_count: sample_count(samples),
                 ..Default::default()
             },
         )
+    }
+}
+
+/// A multisampled color texture to draw in and resolve from. Null if the
+/// GPU refuses.
+///
+/// # Safety
+/// `device` must be alive.
+unsafe fn new_msaa_texture(
+    device: *mut SDL_GPUDevice,
+    format: SDL_GPUTextureFormat,
+    width: u32,
+    height: u32,
+    samples: u32,
+) -> *mut SDL_GPUTexture {
+    // SAFETY: the create-info is valid for the call.
+    unsafe {
+        SDL_CreateGPUTexture(
+            device,
+            &SDL_GPUTextureCreateInfo {
+                r#type: SDL_GPU_TEXTURETYPE_2D,
+                format,
+                usage: SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+                width,
+                height,
+                layer_count_or_depth: 1,
+                num_levels: 1,
+                sample_count: sample_count(samples),
+                ..Default::default()
+            },
+        )
+    }
+}
+
+/// SDL's name for a number of samples per pixel.
+fn sample_count(samples: u32) -> SDL_GPUSampleCount {
+    match samples {
+        8.. => SDL_GPU_SAMPLECOUNT_8,
+        4..=7 => SDL_GPU_SAMPLECOUNT_4,
+        2..=3 => SDL_GPU_SAMPLECOUNT_2,
+        _ => SDL_GPU_SAMPLECOUNT_1,
     }
 }
 

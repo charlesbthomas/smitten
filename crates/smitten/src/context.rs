@@ -28,6 +28,9 @@ pub(crate) struct Context {
     pub reload: ReloadState,
     pub events: EventQueue,
     pub quit_requested: bool,
+    /// Whether [`crate::window::close`] has hidden the window. Frames are
+    /// then drawn to canvases only.
+    pub window_closed: bool,
     /// The window's icon, as last set.
     pub icon: Option<ImageData>,
 }
@@ -53,6 +56,7 @@ pub(crate) fn install(backend: Box<dyn Backend>, config: &Config) {
             reload: ReloadState::new(config.hot_reload),
             events: EventQueue::default(),
             quit_requested: false,
+            window_closed: false,
             icon: None,
         });
     });

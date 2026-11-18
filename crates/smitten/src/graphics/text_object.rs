@@ -256,14 +256,7 @@ impl Text {
         .max(1);
         let width = match entry.wrap {
             None => font.width(&entry.text),
-            Some((limit, align)) => {
-                let widest = font.wrap(&entry.text, limit).0;
-                match align {
-                    Align::Left => widest,
-                    Align::Center => (limit + widest) / 2.0,
-                    Align::Right => limit.max(widest),
-                }
-            }
+            Some((limit, align)) => font.aligned_width(&entry.text, limit, align),
         };
         let height = font.height() * (1.0 + (lines - 1) as f32 * font.line_height());
         let corners = [

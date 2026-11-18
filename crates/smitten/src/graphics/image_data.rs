@@ -53,7 +53,7 @@ impl ImageData {
         }
     }
 
-    /// Decodes the contents of a PNG or JPEG file.
+    /// Decodes the contents of a PNG, JPEG or TGA file.
     pub fn from_bytes(bytes: &[u8]) -> Result<ImageData, ImageError> {
         let decoded = decode(bytes).map_err(ImageError::Invalid)?;
         Ok(ImageData {
@@ -158,8 +158,13 @@ impl ImageData {
         &self.pixels
     }
 
-    /// The image as the contents of a PNG file.
-    pub fn encode_png(&self) -> Result<Vec<u8>, ImageError> {
+    /// The image as the contents of a file in `format`, the equivalent of
+    /// `ImageData:encode`.
+    pub fn encode(&self, format: ImageFormat) -> Result<Vec<u8>, ImageError> {
+        let format = match format {
+            ImageFormat::Png => ::image::ImageFormat::Png,
+            ImageFormat::Tga => ::image::ImageFormat::Tga,
+        };
         let mut file = Vec::new();
         ::image::write_buffer_with_format(
             &mut std::io::Cursor::new(&mut file),
@@ -167,17 +172,48 @@ impl ImageData {
             self.width,
             self.height,
             ::image::ExtendedColorType::Rgba8,
-            ::image::ImageFormat::Png,
+            format,
         )
         .map_err(|error| ImageError::Invalid(error.to_string()))?;
         Ok(file)
     }
 
-    /// Writes the image as a PNG file in the save directory.
+    /// The image as the contents of a PNG file.
+    pub fn encode_png(&self) -> Result<Vec<u8>, ImageError> {
+        self.encode(ImageFormat::Png)
+    }
+
+    /// Writes the image to a file in the save directory: a TGA file if
+    /// `path` ends in `.tga`, and a PNG file otherwise.
     pub fn save(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
-        let file = self.encode_png().map_err(std::io::Error::other)?;
+        let path = path.as_ref();
+        let is_tga = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("tga"));
+        let format = if is_tga {
+            ImageFormat::Tga
+        } else {
+            ImageFormat::Png
+        };
+        let file = self.encode(format).map_err(std::io::Error::other)?;
         crate::filesystem::write(path, file)
     }
+}
+
+/// A file format [`ImageData::encode`] can write, the equivalent of LÖVE's
+/// `ImageFormat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageFormat {
+    Png,
+    Tga,
+}
+
+/// Whether `bytes` are a compressed texture file, which loads as a
+/// [`CompressedImageData`](super::CompressedImageData) rather than an
+/// [`ImageData`], the equivalent of `love.image.isCompressed`. Smitten
+/// reads DDS files.
+pub fn is_compressed(bytes: &[u8]) -> bool {
+    super::compressed::is_dds(bytes)
 }
 
 impl fmt::Debug for ImageData {
@@ -215,6 +251,27 @@ mod tests {
         b: 0.0,
         a: 1.0,
     };
+
+    #[test]
+    fn images_round_trip_through_png_and_tga() {
+        let mut data = ImageData::new(3, 2);
+        data.set_pixel(0, 0, RED);
+        data.set_pixel(2, 1, Color::rgba(0.0, 0.5, 1.0, 0.5));
+        for format in [ImageFormat::Png, ImageFormat::Tga] {
+            let file = data.encode(format).unwrap();
+            let back = ImageData::from_bytes(&file).unwrap();
+            assert_eq!(back.dimensions(), (3, 2), "{format:?}");
+            assert_eq!(back.as_bytes(), data.as_bytes(), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn only_dds_files_count_as_compressed() {
+        let dds = super::super::compressed::dds_file(b"DXT1", 4, 4, &[&[0; 8]]);
+        assert!(is_compressed(&dds));
+        assert!(!is_compressed(&ImageData::new(1, 1).encode_png().unwrap()));
+        assert!(!is_compressed(b""));
+    }
 
     #[test]
     fn new_image_data_is_transparent() {

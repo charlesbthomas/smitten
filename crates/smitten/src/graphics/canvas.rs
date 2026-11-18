@@ -32,6 +32,8 @@ pub struct Canvas {
     pixels: (u32, u32),
     scale: f32,
     mipmaps: MipmapMode,
+    /// How many samples each pixel holds, 1 for none.
+    msaa: u32,
 }
 
 /// Whether a canvas has mipmaps and when they are made, the equivalent of
@@ -95,6 +97,46 @@ impl Canvas {
         })
     }
 
+    /// Creates a transparent canvas of `width` by `height` units, as sharp
+    /// as the screen, that holds `samples` samples per pixel, the `msaa`
+    /// setting of LÖVE's `newCanvas`. Shapes and images drawn to it get
+    /// smooth edges; 4 is a common choice.
+    ///
+    /// The GPU may give fewer samples than asked for; [`Canvas::msaa`]
+    /// says how many. A multisampled canvas has no mipmaps.
+    pub fn with_msaa(width: u32, height: u32, samples: u32) -> Result<Canvas, String> {
+        context::with(|ctx| {
+            let scale = ctx.gfx.screen.draw_scale();
+            let pixels = Canvas::pixels_for(width, height, scale);
+            let texture = ctx
+                .backend
+                .create_msaa_render_target(pixels.0, pixels.1, samples)?;
+            let msaa = ctx.backend.texture_msaa(texture);
+            let image =
+                Image::from_texture(texture, width, height, ctx.gfx.default_filter, Kind::Canvas);
+            Ok(Canvas {
+                image,
+                pixels,
+                scale,
+                mipmaps: MipmapMode::None,
+                msaa,
+            })
+        })
+    }
+
+    /// How many samples each pixel of the canvas holds, 1 if it is not
+    /// multisampled, the equivalent of `Canvas:getMSAA`.
+    pub fn msaa(&self) -> u32 {
+        self.msaa
+    }
+
+    fn pixels_for(width: u32, height: u32, scale: f32) -> (u32, u32) {
+        (
+            (width as f32 * scale).ceil() as u32,
+            (height as f32 * scale).ceil() as u32,
+        )
+    }
+
     pub(crate) fn create(
         backend: &mut dyn Backend,
         width: u32,
@@ -103,10 +145,7 @@ impl Canvas {
         filter: Filter,
         mipmaps: MipmapMode,
     ) -> Result<Canvas, String> {
-        let pixels = (
-            (width as f32 * scale).ceil() as u32,
-            (height as f32 * scale).ceil() as u32,
-        );
+        let pixels = Canvas::pixels_for(width, height, scale);
         let texture = match mipmaps {
             MipmapMode::None => backend.create_render_target(pixels.0, pixels.1)?,
             MipmapMode::Auto => backend.create_mipmapped_render_target(pixels.0, pixels.1, true)?,
@@ -123,6 +162,7 @@ impl Canvas {
             pixels,
             scale,
             mipmaps,
+            msaa: 1,
         })
     }
 
