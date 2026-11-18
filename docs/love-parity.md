@@ -14,10 +14,10 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 18 of LÖVE's 900 functions and methods are still missing, plus 9
+About 17 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **97% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
-GPU features: depth canvases and capability queries.
+GPU features, such as depth canvases.
 
 | Module | LÖVE functions and methods | Missing | Coverage |
 |---|---|---|---|
@@ -26,7 +26,7 @@ GPU features: depth canvases and capability queries.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 17 | 94% |
+| graphics | 268 | 16 | 94% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -46,9 +46,6 @@ GPU features: depth canvases and capability queries.
 
 ### Module functions
 
-- `getSystemLimits` (`GraphicsLimit`). `renderer_info`, `texture_types`,
-  `is_supported` (`GraphicsFeature`, a first version) and the format lists
-  exist.
 - A depth canvas as the depth buffer drawn to (`setCanvas` with
   `depthstencil`). `setDepthMode` and `getDepthMode` are done, and the
   screen and every canvas have a 24-bit depth buffer of their own.

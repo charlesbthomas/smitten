@@ -889,6 +889,10 @@ pub trait Backend {
     /// How many samples each pixel of the screen holds, 1 for none.
     fn screen_msaa(&self) -> u32;
 
+    /// The most samples per pixel a render target of the default format
+    /// can have, 1 if multisampling is not available.
+    fn max_msaa(&self) -> u32;
+
     /// As `create_render_target`, with a full chain of mipmaps that start
     /// out blended as those of `create_mipmapped_texture` do. With
     /// `automatic`, the mipmaps are made again whenever a frame has drawn

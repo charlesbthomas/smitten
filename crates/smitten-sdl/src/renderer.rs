@@ -1000,6 +1000,11 @@ impl Renderer {
             .unwrap_or(1)
     }
 
+    /// The most samples a render target of the default format can have.
+    pub fn max_msaa(&self) -> u32 {
+        self.supported_samples(DEFAULT_TEXTURE_FORMAT, u32::MAX)
+    }
+
     /// Multisamples the screen with as many samples as the GPU allows up
     /// to `wanted`, or stops for 1 or less. Returns the number used.
     pub fn set_screen_msaa(&mut self, wanted: u32) -> u32 {

@@ -750,6 +750,10 @@ impl Backend for SdlBackend {
         self.renderer.screen_msaa()
     }
 
+    fn max_msaa(&self) -> u32 {
+        self.renderer.max_msaa()
+    }
+
     fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {
         self.renderer.generate_mipmaps(texture)
     }
