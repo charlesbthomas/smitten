@@ -147,7 +147,7 @@ impl ImageCursor {
         let (width, height) = (data.width(), data.height());
         let id = context::with(|ctx| {
             ctx.backend
-                .create_cursor(width, height, data.as_bytes(), hot_x, hot_y)
+                .create_cursor(width, height, &data.rgba8(), hot_x, hot_y)
         })
         .map_err(ImageError::Upload)?;
         Ok(ImageCursor {

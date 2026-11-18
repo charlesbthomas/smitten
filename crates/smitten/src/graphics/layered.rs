@@ -48,7 +48,8 @@ impl Inner {
                  but layer {index} is {other_width} by {other_height}"
             )));
         }
-        let pixels: Vec<&[u8]> = layers.iter().map(ImageData::as_bytes).collect();
+        let rgba: Vec<_> = layers.iter().map(ImageData::rgba8).collect();
+        let pixels: Vec<&[u8]> = rgba.iter().map(|layer| &**layer).collect();
         context::with(|ctx| {
             let texture = ctx
                 .backend
@@ -277,7 +278,7 @@ fn split_cube_layout(picture: &ImageData) -> Result<[ImageData; 6], ImageError> 
     if size == 0 {
         return Err(ImageError::Invalid("the picture has no pixels".to_string()));
     }
-    let pixels = picture.as_bytes();
+    let pixels = picture.rgba8();
     Ok(cells.map(|(column, row, upside_down)| {
         let mut face = Vec::with_capacity(size as usize * size as usize * 4);
         for y in 0..size {

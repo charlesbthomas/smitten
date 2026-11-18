@@ -19,6 +19,7 @@ mod image_data;
 mod layered;
 mod mesh;
 mod particles;
+mod pixels;
 mod screen;
 mod shader;
 mod shapes;
