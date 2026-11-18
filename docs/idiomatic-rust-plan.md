@@ -51,7 +51,7 @@ These numbers come from `crates/smitten/src` unless noted.
   `((f32, f32), (f32, f32))`.
 - **One type, many kinds, runtime panics.** `physics::Joint` is one type
   for eleven joint kinds; its ~60 methods panic when called on the wrong
-  kind. `physics::Shape` is the same (`radius` panics unless it is a
+  kind. `physics::Shape` is the same (`with_radius` panics unless it is a
   circle). `audio::Source::queue` panics unless the source is queueable.
   `SpriteBatch::image()` returns `Option` because a batch might hold an
   `ArrayImage` instead.
@@ -69,7 +69,7 @@ These numbers come from `crates/smitten/src` unless noted.
 - **Trait coverage is thin.** Handles like `Image` derive only `Clone`
   (no `Debug`, `PartialEq`). Only 9 `Display` impls exist; `Key` and
   `PixelFormat` have `name`/`from_name` instead of `Display`/`FromStr`.
-  `#[non_exhaustive]` is used 4 times. Clippy's pedantic lints flag 38
+  `#[non_exhaustive]` is used once, on `GraphicsFeature`. Clippy's pedantic lints flag 38
   missing `# Errors` sections and 32 missing `#[must_use]` in
   `smitten-core` alone.
 - **`unsafe` is nearly contained.** The README says `smitten-sdl` is the
@@ -94,9 +94,8 @@ in `filesystem`, `File` implementing `Read`/`BufRead`/`Write`/`Seek`,
    module that keeps the old shapes; (c) keep LÖVE shapes and only tidy
    errors and traits. *Recommended: (a).* The crate is `publish = false`
    at 0.0.1, so there is no one to stay compatible with except the
-   examples, and `doc(alias)` keeps LÖVE users' search working
-   (rustdoc finds `draw_ex` searches under `draw`, and `newImage` under
-   `Image::load`). The free-function, global-context feel stays; only the
+   examples, and `doc(alias)` keeps LÖVE users' search working (a
+   rustdoc search for `newImage` finds `Image::load`). The free-function, global-context feel stays; only the
    argument shapes change.
 2. **Break freely or deprecate.** *Recommended: break freely, one
    workstream per PR, with every example updated in the same PR.*
@@ -266,8 +265,8 @@ value; `new_font_ex` and friends take a `FontSettings`.
   `Shader`, `Canvas`), as the physics handles already do; `Default` where
   there is an obvious default; `Copy` on small value types; `#[must_use]`
   on getters and builders.
-- `#[non_exhaustive]` on enums likely to grow: `Key`, `event::Event`,
-  `GraphicsFeature`, the error enums.
+- `#[non_exhaustive]` on enums likely to grow: `Key`, `event::Event` and
+  the error enums, as `GraphicsFeature` already is.
 - RAII guards for paired calls: `graphics::push()` returns a
   `#[must_use]` guard that pops on drop, alongside a closure form
   `graphics::scoped(|| ...)`. `set_canvas` gets the same closure form
@@ -327,7 +326,7 @@ them, and Pong and Topple should read noticeably shorter after C2.
 ```rust
 // Today
 let player = graphics::new_image("player.png");
-let font = graphics::try_new_font_ex("font.ttf", 24.0, Hinting::Light, 1.0)?;
+let font = graphics::try_new_font_ex("font.ttf", 24.0, Hinting::Light, Some(2.0))?;
 graphics::draw_quad_ex(&sheet, &frame, x, y, angle, 2.0, 2.0, 8.0, 8.0);
 graphics::print_ex("Score", 10.0, 10.0, 0.0, 2.0, 2.0, 0.0, 0.0);
 graphics::set_color_mask(true, true, true, false);
@@ -335,7 +334,7 @@ if let Some((x, y, w, h)) = graphics::scissor() { /* ... */ }
 
 // After
 let player = Image::load("player.png")?;
-let font = Font::load_with("font.ttf", 24.0, FontSettings { hinting: Hinting::Light, ..Default::default() })?;
+let font = Font::load_with("font.ttf", 24.0, FontSettings { hinting: Hinting::Light, dpi_scale: Some(2.0) })?;
 graphics::draw(&sheet.region(&frame), DrawParams::at(x, y).rotation(angle).scale(2.0).origin(8.0, 8.0));
 graphics::print("Score", DrawParams::at(10.0, 10.0).scale(2.0));
 graphics::set_color_mask(ColorMask { a: false, ..ColorMask::ALL });
