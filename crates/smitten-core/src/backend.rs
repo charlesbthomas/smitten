@@ -649,9 +649,14 @@ pub trait Backend {
     /// [`CompressedFormat::data_size`] long. It cannot be updated. With
     /// more than one level, its mipmaps start out blended as those of
     /// `create_mipmapped_texture` do.
+    ///
+    /// With `srgb`, the GPU decodes the colors from sRGB when it samples
+    /// them, for the formats that have an sRGB version (all but BC4 and
+    /// BC5).
     fn create_compressed_texture(
         &mut self,
         format: CompressedFormat,
+        srgb: bool,
         width: u32,
         height: u32,
         levels: &[&[u8]],
@@ -661,9 +666,12 @@ pub trait Backend {
     /// `create_texture` and all `width` by `height` pixels. A cube has six
     /// square layers, in the order +x, -x, +y, -y, +z, -z. A
     /// [`TextureKind::Flat`] texture has one layer.
+    ///
+    /// `format` is [`PixelFormat::Rgba8`] or [`PixelFormat::Srgba8`].
     fn create_layered_texture(
         &mut self,
         kind: TextureKind,
+        format: PixelFormat,
         width: u32,
         height: u32,
         layers: &[&[u8]],
@@ -790,6 +798,12 @@ pub trait Backend {
 
     /// What is doing the drawing.
     fn renderer_info(&self) -> RendererInfo;
+
+    /// Whether the screen is sRGB-encoded and colors are blended in
+    /// linear light, because [`Config::gamma_correct`](crate::Config) was
+    /// set and the display allows it. Vertex colors and clear colors are
+    /// then given in sRGB, as always, and converted by the backend.
+    fn is_gamma_correct(&self) -> bool;
 
     /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);

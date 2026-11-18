@@ -82,8 +82,14 @@ impl Game for Extras {
             }
         });
         let plain = Image::from_image_data(&checks).expect("the GPU took the image");
-        let mipmapped = Image::from_image_data_with(&checks, ImageSettings { mipmaps: true })
-            .expect("the GPU took the image");
+        let mipmapped = Image::from_image_data_with(
+            &checks,
+            ImageSettings {
+                mipmaps: true,
+                ..ImageSettings::default()
+            },
+        )
+        .expect("the GPU took the image");
 
         let red = Color::rgb(0.9, 0.25, 0.2);
         let green = Color::rgb(0.3, 0.8, 0.35);

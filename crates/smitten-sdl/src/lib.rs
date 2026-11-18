@@ -55,6 +55,9 @@ pub struct SdlBackend {
     next_image_cursor: u32,
     /// Whether presenting waits for the display's refresh.
     vsync: bool,
+    /// How the screen is encoded: sRGB with linear blending when the game
+    /// asked for gamma-correct rendering and the display allows it.
+    composition: SDL_GPUSwapchainComposition,
     /// Whether window sizes are multiplied by the display's scale.
     content_scaling: bool,
     /// Whether the window was last reported shown rather than hidden or
@@ -181,18 +184,35 @@ impl SdlBackend {
                 return Err(message);
             }
 
+            let mut composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+            if config.gamma_correct
+                && SDL_WindowSupportsGPUSwapchainComposition(
+                    device,
+                    window,
+                    SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR,
+                )
+                && SDL_SetGPUSwapchainParameters(
+                    device,
+                    window,
+                    SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR,
+                    SDL_GPU_PRESENTMODE_VSYNC,
+                )
+            {
+                composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+            }
             if !config.vsync
                 && SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE)
             {
                 vsync = !SDL_SetGPUSwapchainParameters(
                     device,
                     window,
-                    SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                    composition,
                     SDL_GPU_PRESENTMODE_IMMEDIATE,
                 );
             }
 
-            let renderer = match Renderer::new(device, window) {
+            let gamma_correct = composition == SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+            let renderer = match Renderer::new(device, window, gamma_correct) {
                 Ok(renderer) => renderer,
                 Err(message) => {
                     SDL_ReleaseWindowFromGPUDevice(device, window);
@@ -219,6 +239,7 @@ impl SdlBackend {
                 image_cursors: HashMap::new(),
                 next_image_cursor: 0,
                 vsync,
+                composition,
                 content_scaling: config.dpi_scaling,
                 visible: true,
                 vibrator: ptr::null_mut(),
@@ -672,12 +693,13 @@ impl Backend for SdlBackend {
     fn create_layered_texture(
         &mut self,
         kind: TextureKind,
+        format: PixelFormat,
         width: u32,
         height: u32,
         layers: &[&[u8]],
     ) -> Result<TextureId, String> {
         self.renderer
-            .create_layered_texture(kind, width, height, layers)
+            .create_layered_texture(kind, format, width, height, layers)
     }
 
     fn supports_compressed_format(&self, format: CompressedFormat) -> bool {
@@ -687,12 +709,13 @@ impl Backend for SdlBackend {
     fn create_compressed_texture(
         &mut self,
         format: CompressedFormat,
+        srgb: bool,
         width: u32,
         height: u32,
         levels: &[&[u8]],
     ) -> Result<TextureId, String> {
         self.renderer
-            .create_compressed_texture(format, width, height, levels)
+            .create_compressed_texture(format, srgb, width, height, levels)
     }
 
     fn create_texture_in(
@@ -770,6 +793,10 @@ impl Backend for SdlBackend {
 
     fn renderer_info(&self) -> RendererInfo {
         self.renderer.renderer_info()
+    }
+
+    fn is_gamma_correct(&self) -> bool {
+        self.composition == SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR
     }
 
     fn present(&mut self, frame: &Frame) {
@@ -887,12 +914,7 @@ impl Backend for SdlBackend {
             if !SDL_WindowSupportsGPUPresentMode(self.device, self.window, mode) {
                 return Err("this display cannot present that way".to_string());
             }
-            if !SDL_SetGPUSwapchainParameters(
-                self.device,
-                self.window,
-                SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
-                mode,
-            ) {
+            if !SDL_SetGPUSwapchainParameters(self.device, self.window, self.composition, mode) {
                 return Err(sdl_error());
             }
         }

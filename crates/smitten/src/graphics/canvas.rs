@@ -57,7 +57,7 @@ pub enum MipmapMode {
 /// # use smitten::graphics::{Canvas, CanvasSettings};
 /// # use smitten::PixelFormat;
 /// let hdr = Canvas::with_settings(320, 180, CanvasSettings {
-///     format: PixelFormat::Rgba16f,
+///     format: Some(PixelFormat::Rgba16f),
 ///     ..CanvasSettings::default()
 /// });
 /// ```
@@ -66,12 +66,13 @@ pub struct CanvasSettings {
     /// How many pixels the canvas holds for each unit in each direction.
     /// `None` makes it as sharp as the screen.
     pub dpi_scale: Option<f32>,
-    /// How the canvas stores its pixels. [`PixelFormat::Rgba8`] unless
-    /// changed. A floating-point format such as
+    /// How the canvas stores its pixels. `None` is LÖVE's `normal`:
+    /// [`PixelFormat::Rgba8`], or [`PixelFormat::Srgba8`] with
+    /// gamma-correct rendering. A floating-point format such as
     /// [`PixelFormat::Rgba16f`] holds colors brighter than white, for HDR
     /// effects. [`graphics::canvas_formats`](super::canvas_formats) lists
     /// what the GPU can draw to.
-    pub format: PixelFormat,
+    pub format: Option<PixelFormat>,
     /// Whether the canvas has mipmaps and when they are made.
     pub mipmaps: MipmapMode,
     /// How many samples each pixel holds; 0 or 1 for no multisampling.
@@ -87,7 +88,7 @@ impl Default for CanvasSettings {
     fn default() -> Self {
         Self {
             dpi_scale: None,
-            format: PixelFormat::Rgba8,
+            format: None,
             mipmaps: MipmapMode::None,
             msaa: 0,
             readable: None,
@@ -211,20 +212,22 @@ impl Canvas {
     ) -> Result<Canvas, String> {
         let scale = settings.dpi_scale.unwrap_or(1.0);
         let samples = settings.msaa.max(1);
+        let format = settings
+            .format
+            .unwrap_or_else(|| super::normal_format(backend));
         if samples > 1 && settings.mipmaps != MipmapMode::None {
             return Err("a multisampled canvas cannot have mipmaps".to_string());
         }
-        if settings.format.is_depth() {
+        if format.is_depth() {
             return Err(format!(
-                "{} canvases are not supported yet; only color formats are",
-                settings.format
+                "{format} canvases are not supported yet; only color formats are"
             ));
         }
         let pixels = Canvas::pixels_for(width, height, scale);
         let texture = backend.create_render_target_with(&RenderTargetDesc {
             width: pixels.0,
             height: pixels.1,
-            format: settings.format,
+            format,
             mipmaps: match settings.mipmaps {
                 MipmapMode::None => None,
                 MipmapMode::Auto => Some(true),
@@ -234,7 +237,7 @@ impl Canvas {
         })?;
         let msaa = backend.texture_msaa(texture);
         let image = Image::from_texture(texture, width, height, filter, Kind::Canvas);
-        image.set_storage(settings.format, settings.readable.unwrap_or(true));
+        image.set_storage(format, settings.readable.unwrap_or(true));
         if settings.mipmaps != MipmapMode::None {
             image.mark_mipmapped(32 - pixels.0.max(pixels.1).max(1).leading_zeros());
         }
