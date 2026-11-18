@@ -191,6 +191,30 @@ struct CustomShader {
     uniform_size: u32,
     /// The kinds of the textures it declares besides `image`.
     textures: Vec<TextureKind>,
+    /// Whether the game wrote a vertex shader, `position`, which is
+    /// compiled for each vertex layout it is drawn with.
+    has_vertex: bool,
+    /// Its vertex shader for each layout drawn with so far, and the index
+    /// into the layout's attributes each input location reads.
+    vertex_variants: HashMap<VertexLayoutId, (*mut SDL_GPUShader, Vec<usize>)>,
+}
+
+impl CustomShader {
+    /// Frees its GPU shaders.
+    ///
+    /// # Safety
+    ///
+    /// They must have come from `device`, which must be alive.
+    unsafe fn release(&self, device: *mut SDL_GPUDevice) {
+        // SAFETY: as the caller promises. SDL defers the free until no
+        // in-flight frame uses them.
+        unsafe {
+            SDL_ReleaseGPUShader(device, self.fragment);
+            for &(variant, _) in self.vertex_variants.values() {
+                SDL_ReleaseGPUShader(device, variant);
+            }
+        }
+    }
 }
 
 pub(crate) struct Renderer {
@@ -1160,21 +1184,37 @@ impl Renderer {
                 u32::from(compiled.uniform_size > 0),
             )?
         };
+        let mut custom = CustomShader {
+            fragment,
+            source: source.to_string(),
+            uniform_size: compiled.uniform_size,
+            textures: compiled
+                .textures
+                .iter()
+                .map(|texture| texture.kind)
+                .collect(),
+            has_vertex: compiled.has_vertex,
+            vertex_variants: HashMap::new(),
+        };
+        // The vertex shader for ordinary draws is made now, so a mistake
+        // in it is reported here rather than drawing nothing.
+        if custom.has_vertex {
+            match self.compile_vertex_variant(&custom, VertexLayoutId::STANDARD) {
+                Ok(variant) => {
+                    custom
+                        .vertex_variants
+                        .insert(VertexLayoutId::STANDARD, variant);
+                }
+                Err(error) => {
+                    // SAFETY: the fragment shader came from this device.
+                    unsafe { custom.release(self.device) };
+                    return Err(error);
+                }
+            }
+        }
         let id = self.next_shader_id;
         self.next_shader_id += 1;
-        self.shaders.insert(
-            id,
-            CustomShader {
-                fragment,
-                source: source.to_string(),
-                uniform_size: compiled.uniform_size,
-                textures: compiled
-                    .textures
-                    .iter()
-                    .map(|texture| texture.kind)
-                    .collect(),
-            },
-        );
+        self.shaders.insert(id, custom);
         Ok(ShaderInfo {
             id: ShaderId(id),
             uniform_size: compiled.uniform_size,
@@ -1196,7 +1236,7 @@ impl Renderer {
         });
         if let Some(shader) = self.shaders.remove(&shader.0) {
             // SAFETY: as above.
-            unsafe { SDL_ReleaseGPUShader(device, shader.fragment) };
+            unsafe { shader.release(device) };
         }
         let id = shader.0;
         self.fragment_variants
@@ -1227,7 +1267,14 @@ impl Renderer {
                     .fragment
             }
         };
-        let (vertex, input) = self.vertex_stage(key.layout)?;
+        let custom_vertex = key
+            .shader
+            .and_then(|id| self.shaders.get(&id))
+            .is_some_and(|shader| shader.has_vertex);
+        let (vertex, input) = match key.shader {
+            Some(id) if custom_vertex => self.custom_vertex_stage(id, key.layout)?,
+            _ => self.vertex_stage(key.layout)?,
+        };
         // SAFETY: the device and both shaders are alive.
         unsafe { create_pipeline(self.device, vertex, fragment, &input, key) }
     }
@@ -1309,6 +1356,66 @@ impl Renderer {
                 ))
             }
         }
+    }
+
+    /// The layout `layout` names: the one ordinary draws use, or a mesh's.
+    fn layout_desc(&self, layout: VertexLayoutId) -> Result<VertexLayout, String> {
+        match layout {
+            VertexLayoutId::STANDARD => Ok(shader::standard_layout()),
+            VertexLayoutId(id) => self
+                .mesh_layouts
+                .get(&id)
+                .map(|layout| layout.desc.clone())
+                .ok_or_else(|| format!("there is no vertex layout {id}")),
+        }
+    }
+
+    /// Compiles the game's vertex shader of `shader` for `layout`.
+    fn compile_vertex_variant(
+        &self,
+        shader: &CustomShader,
+        layout: VertexLayoutId,
+    ) -> Result<(*mut SDL_GPUShader, Vec<usize>), String> {
+        let desc = self.layout_desc(layout)?;
+        // Ordinary draws' colors were made linear on the CPU already.
+        let linearize = self.gamma_correct && layout != VertexLayoutId::STANDARD;
+        let compiled = shader::compile_vertex(&shader.source, &desc, linearize)?;
+        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let variant = unsafe {
+            create_shader(
+                self.device,
+                &compiled.spirv,
+                shader::MESH_VERTEX_ENTRY_POINT,
+                SDL_GPU_SHADERSTAGE_VERTEX,
+                1 + shader.textures.len() as u32,
+                1 + u32::from(shader.uniform_size > 0),
+            )?
+        };
+        Ok((variant, compiled.locations))
+    }
+
+    /// The game's vertex shader of custom shader `id` for `layout`, made
+    /// the first time it is needed, and the vertex input to go with it.
+    fn custom_vertex_stage(
+        &mut self,
+        id: u32,
+        layout: VertexLayoutId,
+    ) -> Result<(*mut SDL_GPUShader, VertexInput), String> {
+        let shader = self.shaders.get(&id).ok_or("the shader no longer exists")?;
+        let (variant, locations) = match shader.vertex_variants.get(&layout) {
+            Some((variant, locations)) => (*variant, locations.clone()),
+            None => {
+                let (variant, locations) = self.compile_vertex_variant(shader, layout)?;
+                if let Some(shader) = self.shaders.get_mut(&id) {
+                    shader
+                        .vertex_variants
+                        .insert(layout, (variant, locations.clone()));
+                }
+                (variant, locations)
+            }
+        };
+        let desc = self.layout_desc(layout)?;
+        Ok((variant, mesh_vertex_input(&desc, &locations)))
     }
 
     /// What a pass to `target`, or to the screen for `None`, draws to.
@@ -1946,6 +2053,11 @@ impl Renderer {
         // frame's vertices in pixels, or a mesh's own.
         let mut bound_mesh: Option<MeshDraw> = None;
         let mut screen_bound = false;
+        let mut bound_uniforms = VertexUniforms::Unknown;
+        let standard_uniforms = MeshUniforms {
+            transform_projection: projection,
+            tint: [1.0; 4],
+        };
 
         // SAFETY: every handle bound here is alive, and each draw is checked
         // to stay inside the uploaded vertices or its buffers.
@@ -2012,12 +2124,14 @@ impl Renderer {
                     continue;
                 };
                 let mut extra_bindings = Vec::new();
+                let mut custom_vertex = false;
                 if let Some(id) = call.shader {
                     // A shader that was freed while still queued, or whose
                     // data is missing, draws nothing.
                     let Some(shader) = self.shaders.get(&id.0) else {
                         continue;
                     };
+                    custom_vertex = shader.has_vertex;
                     if !shader.textures.is_empty() {
                         let start = call.texture_offset as usize;
                         let sent = start
@@ -2040,6 +2154,16 @@ impl Renderer {
                             data.as_ptr().cast::<c_void>(),
                             shader.uniform_size,
                         );
+                        // The game's vertex shader reads the same
+                        // `params`, after the framework's own uniforms.
+                        if custom_vertex {
+                            SDL_PushGPUVertexUniformData(
+                                commands,
+                                1,
+                                data.as_ptr().cast::<c_void>(),
+                                shader.uniform_size,
+                            );
+                        }
                     }
                 }
                 if key.layered {
@@ -2076,6 +2200,9 @@ impl Renderer {
                 let mut bindings = vec![SDL_GPUTextureSamplerBinding { texture, sampler }];
                 bindings.extend(extra_bindings);
                 SDL_BindGPUFragmentSamplers(pass, 0, bindings.as_ptr(), bindings.len() as u32);
+                if custom_vertex {
+                    SDL_BindGPUVertexSamplers(pass, 0, bindings.as_ptr(), bindings.len() as u32);
+                }
                 match mesh {
                     None => {
                         if !screen_bound {
@@ -2088,14 +2215,27 @@ impl Renderer {
                                 },
                                 1,
                             );
+                            screen_bound = true;
+                            bound_mesh = None;
+                        }
+                        // The built-in vertex shader takes pixels to clip
+                        // space itself; a game's is given the matrix.
+                        if custom_vertex && bound_uniforms != VertexUniforms::Standard {
+                            SDL_PushGPUVertexUniformData(
+                                commands,
+                                0,
+                                ptr::from_ref(&standard_uniforms).cast::<c_void>(),
+                                size_of::<MeshUniforms>() as u32,
+                            );
+                            bound_uniforms = VertexUniforms::Standard;
+                        } else if !custom_vertex && bound_uniforms != VertexUniforms::PixelToClip {
                             SDL_PushGPUVertexUniformData(
                                 commands,
                                 0,
                                 pixel_to_clip.as_ptr().cast::<c_void>(),
                                 size_of_val(&pixel_to_clip) as u32,
                             );
-                            screen_bound = true;
-                            bound_mesh = None;
+                            bound_uniforms = VertexUniforms::PixelToClip;
                         }
                         SDL_DrawGPUPrimitives(pass, call.vertex_count, 1, call.first_vertex, 0);
                     }
@@ -2122,6 +2262,10 @@ impl Renderer {
                                     IndexDataType::U32 => SDL_GPU_INDEXELEMENTSIZE_32BIT,
                                 },
                             );
+                            bound_mesh = Some(draw);
+                            screen_bound = false;
+                        }
+                        if bound_uniforms != VertexUniforms::Mesh(draw) {
                             let uniforms = MeshUniforms {
                                 transform_projection: multiply(&projection, &draw.transform),
                                 tint: if self.gamma_correct {
@@ -2136,8 +2280,7 @@ impl Renderer {
                                 ptr::from_ref(&uniforms).cast::<c_void>(),
                                 size_of::<MeshUniforms>() as u32,
                             );
-                            bound_mesh = Some(draw);
-                            screen_bound = false;
+                            bound_uniforms = VertexUniforms::Mesh(draw);
                         }
                         SDL_DrawGPUIndexedPrimitives(
                             pass,
@@ -2292,8 +2435,23 @@ fn vertex_element_format(data_type: VertexDataType, components: u8) -> SDL_GPUVe
     }
 }
 
-/// What the built-in mesh vertex shader reads for each draw, laid out as
-/// its uniform block.
+/// What a pass's vertex uniforms in slot 0 hold, so they are pushed again
+/// only when a draw needs something else.
+#[derive(Clone, Copy, PartialEq)]
+enum VertexUniforms {
+    Unknown,
+    /// The scale from pixels to clip space, for the built-in vertex shader
+    /// of ordinary draws.
+    PixelToClip,
+    /// [`MeshUniforms`] for ordinary draws with a game's vertex shader:
+    /// the pixel projection and no tint.
+    Standard,
+    /// [`MeshUniforms`] for a mesh draw.
+    Mesh(MeshDraw),
+}
+
+/// What every mesh vertex shader, and a game's, reads for each draw, laid
+/// out as `SmittenDraw`.
 #[repr(C)]
 struct MeshUniforms {
     transform_projection: [f32; 16],
@@ -2448,7 +2606,7 @@ impl Drop for Renderer {
                 SDL_ReleaseGPUGraphicsPipeline(self.device, pipeline);
             }
             for shader in self.shaders.values() {
-                SDL_ReleaseGPUShader(self.device, shader.fragment);
+                shader.release(self.device);
             }
             SDL_ReleaseGPUShader(self.device, self.vertex_shader);
             for layout in self.mesh_layouts.values() {

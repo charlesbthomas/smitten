@@ -10,9 +10,12 @@
 
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
+use std::mem::offset_of;
+
 use smitten_core::backend::{
     ShaderTexture, TextureKind, UniformArray, UniformField, UniformKind, VERTEX_COLOR,
-    VERTEX_POSITION, VERTEX_TEX_COORD, VertexDataType, VertexLayout,
+    VERTEX_POSITION, VERTEX_TEX_COORD, Vertex, VertexBufferLayout, VertexDataType, VertexLayout,
+    VertexLayoutAttribute, VertexStep,
 };
 
 /// The name of the entry point in the generated shader.
@@ -20,19 +23,63 @@ pub(crate) const ENTRY_POINT: &std::ffi::CStr = c"smitten_fragment";
 
 /// Appended after the game's source, so its line numbers stay the same in
 /// error messages. WGSL does not care about declaration order. `IMAGE` is
-/// replaced with the type of the texture being drawn.
-///
-/// SDL wants fragment shader textures in group 2 and uniforms in group 3.
+/// replaced with the type of the texture being drawn, and `GROUP` with
+/// the group SDL wants textures in: 2 for fragment shaders and 0 for
+/// vertex shaders.
 const WRAPPER: &str = "
-@group(2) @binding(0) var image: IMAGE;
-@group(2) @binding(1) var image_sampler: sampler;
+@group(GROUP) @binding(0) var image: IMAGE;
+@group(GROUP) @binding(1) var image_sampler: sampler;
+";
 
-struct SmittenFragmentInput {
+/// What a fragment shader is given, with the game's `Varyings` after the
+/// built-in values.
+fn fragment_input(varyings: &[Varying]) -> String {
+    format!(
+        "
+struct SmittenFragmentInput {{
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+{}}}
+",
+        varying_fields(varyings)
+    )
 }
-";
+
+/// The members carrying `varyings` between the stages, from location 2.
+fn varying_fields(varyings: &[Varying]) -> String {
+    varyings
+        .iter()
+        .enumerate()
+        .map(|(index, varying)| {
+            let flat = if varying.integer {
+                " @interpolate(flat)"
+            } else {
+                ""
+            };
+            format!(
+                "    @location({}){flat} smitten_varying{index}: {},\n",
+                index + 2,
+                varying.ty
+            )
+        })
+        .collect()
+}
+
+/// Copies what the vertex shader wrote into the fragment shader's
+/// `varyings`, before the game's `effect` reads them.
+fn varying_copies(varyings: &[Varying]) -> String {
+    varyings
+        .iter()
+        .enumerate()
+        .map(|(index, varying)| {
+            format!(
+                "    varyings.{} = input.smitten_varying{index};\n",
+                varying.name
+            )
+        })
+        .collect()
+}
 
 /// The built-in fragment shader, as a game would write it, for drawing
 /// to several canvases at once. Drawing to one uses the GLSL one beside
@@ -55,7 +102,7 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
 
 /// The entry point for a shader with one output, `effect`, drawing to
 /// `targets` canvases: each gets the same color.
-fn single_entry(targets: u32) -> String {
+fn single_entry(targets: u32, prologue: &str) -> String {
     let fields: String = (0..targets)
         .map(|index| format!("    @location({index}) out{index}: vec4<f32>,\n"))
         .collect();
@@ -69,7 +116,7 @@ struct SmittenFragmentOutput {{
 
 @fragment
 fn smitten_fragment(input: SmittenFragmentInput) -> SmittenFragmentOutput {{
-    let result = effect(input.color, input.uv, input.position.xy);
+{prologue}    let result = effect(input.color, input.uv, input.position.xy);
     var output: SmittenFragmentOutput;
 {copies}    return output;
 }}
@@ -80,7 +127,7 @@ fn smitten_fragment(input: SmittenFragmentInput) -> SmittenFragmentOutput {{
 /// The entry point for a shader with several outputs, `effects`, whose
 /// `Outputs` struct has the members `outputs`, drawing to `targets`
 /// canvases. A canvas past the last member gets transparent black.
-fn multiple_entry(outputs: &[String], targets: u32) -> String {
+fn multiple_entry(outputs: &[String], targets: u32, prologue: &str) -> String {
     let fields: String = (0..targets)
         .map(|index| format!("    @location({index}) out{index}: vec4<f32>,\n"))
         .collect();
@@ -97,7 +144,7 @@ struct SmittenFragmentOutput {{
 
 @fragment
 fn smitten_fragment(input: SmittenFragmentInput) -> SmittenFragmentOutput {{
-    let result: Outputs = effects(input.color, input.uv, input.position.xy);
+{prologue}    let result: Outputs = effects(input.color, input.uv, input.position.xy);
     var output: SmittenFragmentOutput;
 {copies}    return output;
 }}
@@ -114,18 +161,21 @@ pub(crate) const MESH_VERTEX_ENTRY_POINT: &std::ffi::CStr = c"smitten_vertex";
 /// outputs match what every fragment shader takes. SDL wants vertex shader
 /// uniforms in group 1.
 const MESH_VERTEX_COMMON: &str = "
+struct SmittenVertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+}
+";
+
+/// What every vertex shader reads for each draw.
+const DRAW_UNIFORMS: &str = "
 struct SmittenDraw {
     transform_projection: mat4x4<f32>,
     tint: vec4<f32>,
 }
 
 @group(1) @binding(0) var<uniform> smitten_draw: SmittenDraw;
-
-struct SmittenVertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-}
 ";
 
 /// A vertex shader made for one vertex layout.
@@ -173,7 +223,10 @@ fn widen(expr: &str, read: u8, components: u8, defaults: &[f32]) -> String {
             }
         })
         .collect();
-    format!("vec{}<f32>({})", defaults.len(), values.join(", "))
+    match values.as_slice() {
+        [value] => value.clone(),
+        _ => format!("vec{}<f32>({})", defaults.len(), values.join(", ")),
+    }
 }
 
 /// Turns a color given sRGB-encoded, as games give colors, into linear
@@ -195,29 +248,12 @@ pub(crate) fn mesh_vertex(
     gamma_correct: bool,
 ) -> Result<MeshVertexShader, String> {
     let mut source = String::from(MESH_VERTEX_COMMON);
+    source.push_str(DRAW_UNIFORMS);
     source.push_str(LINEAR_COLOR);
-    let mut parameters = Vec::new();
-    let mut locations = Vec::new();
-    let mut read = |name: &str, defaults: &[f32]| {
-        let found = layout
-            .attributes
-            .iter()
-            .enumerate()
-            .find(|(_, attribute)| attribute.name == name);
-        match found {
-            Some((index, attribute)) => {
-                let (ty, width) = attribute_shader_type(attribute.data_type, attribute.components);
-                let variable = format!("in_{}", locations.len());
-                parameters.push(format!("@location({}) {variable}: {ty}", locations.len()));
-                locations.push(index);
-                widen(&variable, width, attribute.components, defaults)
-            }
-            None => widen("", 0, 0, defaults),
-        }
-    };
-    let position = read(VERTEX_POSITION, &[0.0, 0.0, 0.0, 1.0]);
-    let uv = read(VERTEX_TEX_COORD, &[0.0, 0.0]);
-    let color = read(VERTEX_COLOR, &[1.0, 1.0, 1.0, 1.0]);
+    let mut inputs = Inputs::new(layout);
+    let position = inputs.read(VERTEX_POSITION, &[0.0, 0.0, 0.0, 1.0]);
+    let uv = inputs.read(VERTEX_TEX_COORD, &[0.0, 0.0]);
+    let color = inputs.read(VERTEX_COLOR, &[1.0, 1.0, 1.0, 1.0]);
     let color = if gamma_correct {
         format!("smitten_linear({color})")
     } else {
@@ -234,10 +270,65 @@ fn smitten_vertex({}) -> SmittenVertexOutput {{
     return output;
 }}
 ",
-        parameters.join(", ")
+        inputs.parameters.join(", ")
     ));
     let spirv = vertex_spirv(&source)?;
-    Ok(MeshVertexShader { spirv, locations })
+    Ok(MeshVertexShader {
+        spirv,
+        locations: inputs.locations,
+    })
+}
+
+/// The inputs of a vertex shader being written for a layout: one location
+/// for each of the layout's attributes it reads, however often.
+struct Inputs<'a> {
+    layout: &'a VertexLayout,
+    parameters: Vec<String>,
+    /// The index into the layout's attributes of each location.
+    locations: Vec<usize>,
+}
+
+impl<'a> Inputs<'a> {
+    fn new(layout: &'a VertexLayout) -> Inputs<'a> {
+        Inputs {
+            layout,
+            parameters: Vec::new(),
+            locations: Vec::new(),
+        }
+    }
+
+    /// WGSL for the attribute called `name`, with as many values as
+    /// `defaults` has: the attribute's own where it has them and
+    /// `defaults` for the rest, or all of `defaults` if the layout lacks
+    /// it.
+    fn read(&mut self, name: &str, defaults: &[f32]) -> String {
+        let found = self
+            .layout
+            .attributes
+            .iter()
+            .enumerate()
+            .find(|(_, attribute)| attribute.name == name);
+        let Some((index, attribute)) = found else {
+            return widen("", 0, 0, defaults);
+        };
+        let (ty, width) = attribute_shader_type(attribute.data_type, attribute.components);
+        let location = match self.locations.iter().position(|&known| known == index) {
+            Some(location) => location,
+            None => {
+                let location = self.locations.len();
+                self.parameters
+                    .push(format!("@location({location}) in_{location}: {ty}"));
+                self.locations.push(index);
+                location
+            }
+        };
+        widen(
+            &format!("in_{location}"),
+            width,
+            attribute.components,
+            defaults,
+        )
+    }
 }
 
 /// Translates a vertex shader the framework wrote to SPIR-V.
@@ -247,25 +338,44 @@ fn vertex_spirv(source: &str) -> Result<Vec<u8>, String> {
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .map_err(|error| error.emit_to_string_with_path(source, "mesh vertex shader"))?;
+    vertex_spirv_for(&module, &info, spv::Options::default())
+        .map_err(|error| format!("could not translate the mesh vertex shader: {error}"))
+}
+
+/// Translates a checked vertex shader to SPIR-V with `options`.
+fn vertex_spirv_for(
+    module: &naga::Module,
+    info: &naga::valid::ModuleInfo,
+    mut options: spv::Options,
+) -> Result<Vec<u8>, spv::Error> {
     let pipeline = spv::PipelineOptions {
         shader_stage: naga::ShaderStage::Vertex,
         entry_point: "smitten_vertex".to_string(),
     };
     // SDL's clip space already has y up, as WGSL's does, so naga must not
     // flip it the way it would for plain Vulkan.
-    let mut options = spv::Options::default();
     options
         .flags
         .remove(spv::WriterFlags::ADJUST_COORDINATE_SPACE);
-    let words = spv::write_vec(&module, &info, &options, Some(&pipeline))
-        .map_err(|error| format!("could not translate the mesh vertex shader: {error}"))?;
+    let words = spv::write_vec(module, info, &options, Some(&pipeline))?;
     Ok(words.iter().flat_map(|word| word.to_le_bytes()).collect())
 }
 
-/// Added only when the game declares `struct Params`.
+/// Added only when the game declares `struct Params`. SDL wants fragment
+/// shader uniforms in group 3.
 const PARAMS_BINDING: &str = "
 @group(3) @binding(0) var<uniform> params: Params;
 ";
+
+/// As [`PARAMS_BINDING`], for a game's vertex shader: SDL wants vertex
+/// shader uniforms in group 1, after the framework's own.
+const VERTEX_PARAMS_BINDING: &str = "
+@group(1) @binding(1) var<uniform> params: Params;
+";
+
+/// The most `Varyings` members a shader may have. Vulkan promises 16
+/// locations between the stages, and the built-in values take two.
+const MAX_VARYINGS: usize = 14;
 
 /// A fragment shader ready to hand to SDL.
 #[derive(Debug)]
@@ -276,6 +386,83 @@ pub(crate) struct Compiled {
     pub fields: Vec<UniformField>,
     /// The game's own textures, in the order of their slots after `image`.
     pub textures: Vec<ShaderTexture>,
+    /// Whether the game wrote a vertex shader, `position`, to go with it.
+    pub has_vertex: bool,
+}
+
+/// What a game's source declares that changes what is wrapped around it,
+/// found by name before it is parsed.
+struct Declared {
+    params: bool,
+    /// `effects` in place of `effect`.
+    multiple: bool,
+    effect: bool,
+    position: bool,
+    attributes: bool,
+    varyings: bool,
+    textures: Vec<String>,
+}
+
+impl Declared {
+    fn of(source: &str) -> Declared {
+        Declared {
+            params: declares_struct(source, "Params"),
+            multiple: defines_function(source, "effects"),
+            effect: defines_function(source, "effect"),
+            position: defines_function(source, "position"),
+            attributes: declares_struct(source, "Attributes"),
+            varyings: declares_struct(source, "Varyings"),
+            textures: declared_textures(source),
+        }
+    }
+
+    /// What both stages add after the game's source before anything
+    /// else: `image`, the samplers of its own textures, `params`, and the
+    /// `attributes` and `varyings` it reads and writes. A shader with
+    /// only `position` gets the built-in `effect`.
+    fn declarations(&self, group: u32, image: &str, params: &str) -> String {
+        let mut text = WRAPPER
+            .replace("GROUP", &group.to_string())
+            .replace("IMAGE", image);
+        for name in &self.textures {
+            text.push_str(&format!("var {name}_sampler: sampler;\n"));
+        }
+        if self.params {
+            text.push_str(params);
+        }
+        if self.attributes {
+            text.push_str("var<private> attributes: Attributes;\n");
+        }
+        if self.varyings {
+            text.push_str("var<private> varyings: Varyings;\n");
+        }
+        if self.position && !self.effect && !self.multiple {
+            text.push_str(BUILTIN);
+        }
+        text
+    }
+}
+
+/// One member of a game's `struct Varyings`.
+#[derive(Debug)]
+struct Varying {
+    name: String,
+    /// Its WGSL type.
+    ty: String,
+    /// Whether it holds integers, which cannot be blended between
+    /// vertices.
+    integer: bool,
+}
+
+/// Parses the game's source with what the framework appended, `full`.
+/// An error in the appended part means the game's functions do not fit
+/// it, which `wrong` explains; the framework's code is not the game's to
+/// read.
+fn parse(full: &str, user_lines: u32, wrong: fn(&str) -> String) -> Result<naga::Module, String> {
+    naga::front::wgsl::parse_str(full).map_err(|error| match error.location(full) {
+        Some(location) if location.line_number > user_lines => wrong(error.message()),
+        _ => error.emit_to_string_with_path(full, "shader"),
+    })
 }
 
 /// Compiles a game's shader to draw to one canvas.
@@ -283,56 +470,89 @@ pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
     compile_for(source, 1, false)
 }
 
+/// Checks a game's shader the way drawing with it would, both stages.
+pub(crate) fn check(source: &str) -> Result<(), String> {
+    let compiled = compile(source)?;
+    if compiled.has_vertex {
+        compile_vertex(source, &standard_layout(), false)?;
+    }
+    Ok(())
+}
+
+/// The layout of the vertices of ordinary draws, already placed in
+/// pixels, as `sprite.vert` reads them.
+pub(crate) fn standard_layout() -> VertexLayout {
+    let attribute = |name: &str, offset, components| VertexLayoutAttribute {
+        name: name.to_string(),
+        buffer: 0,
+        offset,
+        data_type: VertexDataType::Float,
+        components,
+    };
+    VertexLayout {
+        buffers: vec![VertexBufferLayout {
+            stride: size_of::<Vertex>() as u32,
+            step: VertexStep::PerVertex,
+        }],
+        attributes: vec![
+            attribute(VERTEX_POSITION, offset_of!(Vertex, position) as u32, 2),
+            attribute(VERTEX_TEX_COORD, offset_of!(Vertex, uv) as u32, 2),
+            attribute(VERTEX_COLOR, offset_of!(Vertex, color) as u32, 4),
+        ],
+    }
+}
+
 /// Compiles a game's shader, or one of the built-in ones, to draw to
 /// `targets` canvases at once. With `layered`, the texture drawn is an
 /// array texture.
 pub(crate) fn compile_for(source: &str, targets: u32, layered: bool) -> Result<Compiled, String> {
-    let has_params = declares_params(source);
-    let multiple = defines_function(source, "effects");
-    let texture_names = declared_textures(source);
+    let declared = Declared::of(source);
+    if declared.varyings && !declared.position {
+        return Err(wrong_position(
+            "`struct Varyings` is written by the vertex shader, so it needs one",
+        ));
+    }
+    let image = if layered {
+        "texture_2d_array<f32>"
+    } else {
+        "texture_2d<f32>"
+    };
     let mut full = String::from(source);
-    full.push_str(&WRAPPER.replace(
-        "IMAGE",
-        if layered {
-            "texture_2d_array<f32>"
-        } else {
-            "texture_2d<f32>"
-        },
-    ));
-    for name in &texture_names {
-        full.push_str(&format!("var {name}_sampler: sampler;\n"));
-    }
-    if has_params {
-        full.push_str(PARAMS_BINDING);
-    }
+    full.push_str(&declared.declarations(2, image, PARAMS_BINDING));
     let user_lines = source.lines().count() as u32;
-    let wrong = if multiple {
+    let wrong = if declared.multiple {
         wrong_effects
     } else {
         wrong_effect
     };
-    let parse = |full: &str| {
-        naga::front::wgsl::parse_str(full).map_err(|error| {
-            // An error placed in the wrapper means it did not fit the
-            // game's `effect`, which is the game's mistake to fix, not
-            // ours to show.
-            match error.location(full) {
-                Some(location) if location.line_number > user_lines => wrong(error.message()),
-                _ => error.emit_to_string_with_path(full, "shader"),
-            }
-        })
-    };
-    // The entry point copies the members of `Outputs`, so their names
-    // come from parsing the source without it first.
-    let entry = if multiple {
-        multiple_entry(&output_names(&parse(&full)?)?, targets)
-    } else {
-        single_entry(targets)
-    };
-    full.push_str(&entry);
 
-    let mut module = parse(&full)?;
-    let textures = bind_textures(&mut module, &texture_names)?;
+    // The entry point copies the members of `Outputs` and `Varyings`, so
+    // their names come from parsing the source without it first.
+    if declared.multiple || declared.varyings {
+        let module = parse(&full, user_lines, wrong)?;
+        let outputs = if declared.multiple {
+            Some(output_names(&module)?)
+        } else {
+            None
+        };
+        let varyings = if declared.varyings {
+            varyings(&module)?
+        } else {
+            Vec::new()
+        };
+        full.push_str(&fragment_input(&varyings));
+        let prologue = varying_copies(&varyings);
+        full.push_str(&match outputs {
+            Some(outputs) => multiple_entry(&outputs, targets, &prologue),
+            None => single_entry(targets, &prologue),
+        });
+    } else {
+        full.push_str(&fragment_input(&[]));
+        full.push_str(&single_entry(targets, ""));
+    }
+
+    let mut module = parse(&full, user_lines, wrong)?;
+    let textures = bind_textures(&mut module, &declared.textures, 2)?;
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .map_err(|error| {
@@ -344,38 +564,14 @@ pub(crate) fn compile_for(source: &str, targets: u32, layered: bool) -> Result<C
             }
         })?;
 
-    let (uniform_size, fields) = if has_params {
+    let (uniform_size, fields) = if declared.params {
         params_layout(&module)?
     } else {
         (0, Vec::new())
     };
 
-    // WGSL has a texture and a sampler as two things; SDL binds them as
-    // one. Vulkan lets both variables name the same combined binding.
     let mut options = spv::Options::default();
-    options.binding_map.insert(
-        naga::ResourceBinding {
-            group: 2,
-            binding: 1,
-        },
-        spv::BindingInfo {
-            descriptor_set: 2,
-            binding: 0,
-            binding_array_size: None,
-        },
-    );
-    for slot in 1..=textures.len() as u32 {
-        for binding in [slot * 2, slot * 2 + 1] {
-            options.binding_map.insert(
-                naga::ResourceBinding { group: 2, binding },
-                spv::BindingInfo {
-                    descriptor_set: 2,
-                    binding: slot,
-                    binding_array_size: None,
-                },
-            );
-        }
-    }
+    combine_samplers(&mut options, 2, textures.len());
     let pipeline = spv::PipelineOptions {
         shader_stage: naga::ShaderStage::Fragment,
         entry_point: "smitten_fragment".to_string(),
@@ -389,7 +585,232 @@ pub(crate) fn compile_for(source: &str, targets: u32, layered: bool) -> Result<C
         uniform_size,
         fields,
         textures,
+        has_vertex: declared.position,
     })
+}
+
+/// WGSL has a texture and a sampler as two things; SDL binds them as
+/// one. Vulkan lets both variables name the same combined binding, so
+/// `image` and the game's `textures` own textures in `group` each map
+/// their pair onto one slot.
+fn combine_samplers(options: &mut spv::Options, group: u32, textures: usize) {
+    options.binding_map.insert(
+        naga::ResourceBinding { group, binding: 1 },
+        spv::BindingInfo {
+            descriptor_set: group,
+            binding: 0,
+            binding_array_size: None,
+        },
+    );
+    for slot in 1..=textures as u32 {
+        for binding in [slot * 2, slot * 2 + 1] {
+            options.binding_map.insert(
+                naga::ResourceBinding { group, binding },
+                spv::BindingInfo {
+                    descriptor_set: group,
+                    binding: slot,
+                    binding_array_size: None,
+                },
+            );
+        }
+    }
+}
+
+/// Compiles the vertex shader of a game's shader, its `position`, to
+/// read vertices laid out as `layout`. The built-in values are read as
+/// [`mesh_vertex`] reads them, and with `linearize` the vertex color is
+/// turned into linear light. The game's `Attributes` are filled from the
+/// layout's attributes of the same names.
+pub(crate) fn compile_vertex(
+    source: &str,
+    layout: &VertexLayout,
+    linearize: bool,
+) -> Result<MeshVertexShader, String> {
+    let declared = Declared::of(source);
+    let mut full = String::from(source);
+    full.push_str(&declared.declarations(0, "texture_2d<f32>", VERTEX_PARAMS_BINDING));
+    full.push_str(DRAW_UNIFORMS);
+    full.push_str(LINEAR_COLOR);
+    let user_lines = source.lines().count() as u32;
+    let module = parse(&full, user_lines, wrong_position)?;
+    let varyings = if declared.varyings {
+        varyings(&module)?
+    } else {
+        Vec::new()
+    };
+    let attributes = if declared.attributes {
+        attribute_members(&module)?
+    } else {
+        Vec::new()
+    };
+
+    let mut inputs = Inputs::new(layout);
+    let mut body = String::new();
+    for (name, components) in &attributes {
+        let defaults = &default_value(name)[..usize::from(*components)];
+        body.push_str(&format!(
+            "    attributes.{name} = {};\n",
+            inputs.read(name, defaults)
+        ));
+    }
+    let position = inputs.read(VERTEX_POSITION, &[0.0, 0.0, 0.0, 1.0]);
+    let uv = inputs.read(VERTEX_TEX_COORD, &[0.0, 0.0]);
+    let mut color = inputs.read(VERTEX_COLOR, &[1.0, 1.0, 1.0, 1.0]);
+    if linearize {
+        color = format!("smitten_linear({color})");
+    }
+    let copies: String = varyings
+        .iter()
+        .enumerate()
+        .map(|(index, varying)| {
+            format!(
+                "    output.smitten_varying{index} = varyings.{};\n",
+                varying.name
+            )
+        })
+        .collect();
+    full.push_str(&format!(
+        "
+struct SmittenVertexOutput {{
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+{fields}}}
+
+@vertex
+fn smitten_vertex({parameters}) -> SmittenVertexOutput {{
+{body}    var output: SmittenVertexOutput;
+    output.uv = {uv};
+    output.color = {color} * smitten_draw.tint;
+    output.position = position(smitten_draw.transform_projection, {position});
+{copies}    return output;
+}}
+",
+        fields = varying_fields(&varyings),
+        parameters = inputs.parameters.join(", "),
+    ));
+
+    let mut module = parse(&full, user_lines, wrong_position)?;
+    bind_textures(&mut module, &declared.textures, 0)?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
+        .validate(&module)
+        .map_err(|error| {
+            let report = error.emit_to_string_with_path(&full, "shader");
+            if report.contains("smitten_vertex") {
+                wrong_position("its arguments or return type do not match")
+            } else {
+                report
+            }
+        })?;
+    let mut options = spv::Options::default();
+    combine_samplers(&mut options, 0, declared.textures.len());
+    let spirv = vertex_spirv_for(&module, &info, options)
+        .map_err(|error| format!("could not translate the shader: {error}"))?;
+    Ok(MeshVertexShader {
+        spirv,
+        locations: inputs.locations,
+    })
+}
+
+/// What an attribute a game's shader reads but the vertices lack reads
+/// as: white for the color, and (0, 0, 0, 1) for anything else, as in
+/// LÖVE.
+fn default_value(name: &str) -> [f32; 4] {
+    if name == VERTEX_COLOR {
+        [1.0; 4]
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    }
+}
+
+/// The members of the game's `struct Varyings`, which must be numbers or
+/// vectors of them.
+fn varyings(module: &naga::Module) -> Result<Vec<Varying>, String> {
+    let members = struct_members(module, "Varyings")
+        .ok_or_else(|| wrong_position("`Varyings` must be a struct"))?;
+    if members.len() > MAX_VARYINGS {
+        return Err(format!(
+            "`Varyings` has {} members, but at most {MAX_VARYINGS} can be passed to `effect`",
+            members.len()
+        ));
+    }
+    members
+        .into_iter()
+        .map(|(name, ty)| {
+            let (scalar, size) = match *ty {
+                naga::TypeInner::Scalar(scalar) => (scalar, 1),
+                naga::TypeInner::Vector { size, scalar } => (scalar, size as u8),
+                _ => (naga::Scalar::BOOL, 0),
+            };
+            let kind = match (scalar.kind, scalar.width) {
+                (naga::ScalarKind::Float, 4) => "f32",
+                (naga::ScalarKind::Sint, 4) => "i32",
+                (naga::ScalarKind::Uint, 4) => "u32",
+                _ => {
+                    return Err(format!(
+                        "`Varyings.{name}` must be an `f32`, `i32` or `u32`, \
+                         or a vector of two to four of them"
+                    ));
+                }
+            };
+            let ty = match size {
+                1 => kind.to_string(),
+                size => format!("vec{size}<{kind}>"),
+            };
+            Ok(Varying {
+                name,
+                ty,
+                integer: kind != "f32",
+            })
+        })
+        .collect()
+}
+
+/// The members of the game's `struct Attributes`, with how many values
+/// each has. They must be `f32` or vectors of it, as vertex attributes
+/// are read as floats.
+fn attribute_members(module: &naga::Module) -> Result<Vec<(String, u8)>, String> {
+    let members = struct_members(module, "Attributes")
+        .ok_or_else(|| wrong_position("`Attributes` must be a struct"))?;
+    members
+        .into_iter()
+        .map(|(name, ty)| match *ty {
+            naga::TypeInner::Scalar(naga::Scalar::F32) => Ok((name, 1)),
+            naga::TypeInner::Vector {
+                size,
+                scalar: naga::Scalar::F32,
+            } => Ok((name, size as u8)),
+            _ => Err(format!(
+                "`Attributes.{name}` must be an `f32`, `vec2<f32>`, `vec3<f32>` or `vec4<f32>`"
+            )),
+        })
+        .collect()
+}
+
+/// The names and types of the members of the struct called `name`.
+fn struct_members<'a>(
+    module: &'a naga::Module,
+    name: &str,
+) -> Option<Vec<(String, &'a naga::TypeInner)>> {
+    let found = module
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref() == Some(name))
+        .map(|(_, ty)| &ty.inner);
+    let Some(naga::TypeInner::Struct { members, .. }) = found else {
+        return None;
+    };
+    Some(
+        members
+            .iter()
+            .map(|member| {
+                (
+                    member.name.clone().unwrap_or_default(),
+                    &module.types[member.ty].inner,
+                )
+            })
+            .collect(),
+    )
 }
 
 /// The names of the textures `source` declares at the top level with no
@@ -418,6 +839,7 @@ fn declared_textures(source: &str) -> Vec<String> {
 fn bind_textures(
     module: &mut naga::Module,
     names: &[String],
+    group: u32,
 ) -> Result<Vec<ShaderTexture>, String> {
     let mut textures = Vec::new();
     for name in names {
@@ -449,7 +871,7 @@ fn bind_textures(
         };
         let slot = textures.len() as u32 + 1;
         module.global_variables.get_mut(handle).binding = Some(naga::ResourceBinding {
-            group: 2,
+            group,
             binding: slot * 2,
         });
         let sampler_name = format!("{name}_sampler");
@@ -460,7 +882,7 @@ fn bind_textures(
             .map(|(handle, _)| handle);
         if let Some(sampler) = sampler {
             module.global_variables.get_mut(sampler).binding = Some(naga::ResourceBinding {
-                group: 2,
+                group,
                 binding: slot * 2 + 1,
             });
         }
@@ -547,19 +969,27 @@ fn wrong_effect(detail: &str) -> String {
     )
 }
 
-/// Whether `source` contains `struct Params`, ignoring comments well
-/// enough for the purpose: a mention in a comment only costs an error
-/// message that says `Params` is not defined.
-fn declares_params(source: &str) -> bool {
+/// Whether `source` contains `struct` and `name` in a row, ignoring
+/// comments well enough for the purpose: a mention in a comment only
+/// costs an error message that says the struct is not defined.
+fn declares_struct(source: &str, name: &str) -> bool {
     let mut words = source
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty());
     let mut previous = "";
     words.any(|word| {
-        let found = previous == "struct" && word == "Params";
+        let found = previous == "struct" && word == name;
         previous = word;
         found
     })
+}
+
+fn wrong_position(detail: &str) -> String {
+    format!(
+        "the shader must define \
+         `fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32>`: \
+         {detail}"
+    )
 }
 
 /// Returns the size of `Params` and where each of its members lives.
@@ -953,5 +1383,130 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
         let error =
             compile("fn effect(color: vec4<f32>) -> vec4<f32> { return color; }").unwrap_err();
         assert!(error.contains("must define `fn effect("), "{error}");
+    }
+
+    const WAVE: &str = "
+struct Params { time: f32 }
+
+struct Attributes {
+    Offset: vec2<f32>,
+    Missing: f32,
+}
+
+struct Varyings {
+    height: f32,
+    tile: vec2<i32>,
+}
+
+fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+    varyings.height = vertex_position.y + attributes.Missing;
+    varyings.tile = vec2<i32>(attributes.Offset);
+    let moved = vertex_position + vec4<f32>(attributes.Offset, 0.0, 0.0);
+    return transform_projection * (moved + vec4<f32>(0.0, sin(params.time), 0.0, 0.0));
+}
+
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    return color * varyings.height + vec4<f32>(f32(varyings.tile.x));
+}
+";
+
+    fn offset_layout() -> VertexLayout {
+        let mut layout = standard_layout();
+        layout.buffers.push(VertexBufferLayout {
+            stride: 8,
+            step: VertexStep::PerInstance,
+        });
+        layout.attributes.push(VertexLayoutAttribute {
+            name: "Offset".to_string(),
+            buffer: 1,
+            offset: 0,
+            data_type: VertexDataType::Float,
+            components: 2,
+        });
+        layout
+    }
+
+    #[test]
+    fn a_vertex_shader_compiles_for_the_standard_layout_and_a_mesh_layout() {
+        let compiled = compile(WAVE).unwrap();
+        assert!(compiled.has_vertex);
+        assert_eq!(compiled.uniform_size, 4);
+        let standard = compile_vertex(WAVE, &standard_layout(), false).unwrap();
+        // Offset is missing from the standard layout, so it is not read.
+        assert_eq!(standard.locations, [0, 1, 2]);
+        let mesh = compile_vertex(WAVE, &offset_layout(), true).unwrap();
+        // Offset is read first, as the attributes are filled first.
+        assert_eq!(mesh.locations, [3, 0, 1, 2]);
+        check(WAVE).unwrap();
+    }
+
+    #[test]
+    fn a_shader_with_only_a_position_gets_the_built_in_effect() {
+        let source = "
+fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+    return transform_projection * vertex_position;
+}
+";
+        let compiled = compile(source).unwrap();
+        assert!(compiled.has_vertex);
+        compile_vertex(source, &standard_layout(), false).unwrap();
+        // It can be drawn to several canvases too.
+        compile_for(source, 3, false).unwrap();
+    }
+
+    #[test]
+    fn a_shader_without_a_position_has_no_vertex_stage() {
+        assert!(!compile(BUILTIN).unwrap().has_vertex);
+        check(BUILTIN).unwrap();
+    }
+
+    #[test]
+    fn varyings_without_a_position_are_explained() {
+        let error = compile(
+            "struct Varyings { height: f32 }
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    return color * varyings.height;
+}",
+        )
+        .unwrap_err();
+        assert!(error.contains("must define `fn position("), "{error}");
+    }
+
+    #[test]
+    fn a_position_with_the_wrong_arguments_is_explained() {
+        let error = check(
+            "fn position(vertex_position: vec4<f32>) -> vec4<f32> { return vertex_position; }",
+        )
+        .unwrap_err();
+        assert!(error.contains("must define `fn position("), "{error}");
+    }
+
+    #[test]
+    fn unusable_attributes_and_varyings_are_explained() {
+        let position = "
+fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+    return transform_projection * vertex_position;
+}
+";
+        let attributes = format!("struct Attributes {{ count: u32 }}\n{position}");
+        let error = check(&attributes).unwrap_err();
+        assert!(error.contains("`Attributes.count` must be"), "{error}");
+        let varyings = format!("struct Varyings {{ turn: mat2x2<f32> }}\n{position}");
+        let error = check(&varyings).unwrap_err();
+        assert!(error.contains("`Varyings.turn` must be"), "{error}");
+    }
+
+    #[test]
+    fn a_vertex_shader_can_sample_the_games_textures() {
+        let source = "
+var height_map: texture_2d<f32>;
+
+fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+    let height = textureSampleLevel(height_map, height_map_sampler, vertex_position.xy, 0.0).r;
+    return transform_projection * (vertex_position + vec4<f32>(0.0, height, 0.0, 0.0));
+}
+";
+        assert_eq!(compile(source).unwrap().textures.len(), 1);
+        check(source).unwrap();
     }
 }
