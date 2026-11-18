@@ -58,7 +58,7 @@ pub use particles::ParticleSystem;
 pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::CompressedFormat;
-pub use sprite_batch::SpriteBatch;
+pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
 pub use stats::Stats;
 pub use text::{Align, Font, FontError};
 pub use text_object::Text;
@@ -595,7 +595,8 @@ impl GraphicsState {
         let transform = self.device().then_inner(local);
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
-        mesh.write_vertices(&transform, self.color, &mut vertices);
+        let point_size = self.point_size * self.target_scale();
+        mesh.write_vertices(&transform, self.color, point_size, &mut vertices);
         match mesh.texture() {
             Some(image) => self
                 .batch
