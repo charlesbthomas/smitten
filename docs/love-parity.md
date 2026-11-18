@@ -1,32 +1,35 @@
 # LÖVE parity: what is left
 
-This is every part of the LÖVE 11.5 API that smitten does not have yet, as
-of `main` at commit 5998012 (after #52 to #70). It was made by matching the
+This compares the LÖVE 11.5 API with smitten's, as of `main` after #94.
+It was first made at commit 5998012 (after #52 to #70) by matching the
 function list in [love-api](https://github.com/love2d-community/love-api)
 (900 module functions and methods, plus callbacks, enums and `love.conf`
-fields) against smitten's public API by hand.
+fields) against smitten's public API by hand, and has been kept up to
+date as the gaps closed. [love-parity-plan.md](love-parity-plan.md) is
+the plan they were closed by.
 
 Names are LÖVE's, so each item can be looked up on the LÖVE wiki. Items
 covered by a differently shaped smitten API are counted as done and not
 listed. For example, `beginContact` is covered by `World::contacts`,
-`love.thread.newThread` by `std::thread::spawn`, and `newDataView` by
-slicing a `ByteData`.
+`love.thread.newThread` by `std::thread::spawn`, `newDataView` by
+slicing a `ByteData`, and `setCanvas{canvas, depthstencil = depth}` by
+`graphics::set_canvas_with_depth`.
 
 ## Summary
 
-About 17 of LÖVE's 900 functions and methods are still missing, plus 9
-that only make sense in Lua. That is about **97% of the full API**, and
-everything a typical 2D game uses. What is left is almost all lower-level
-GPU features, such as depth canvases.
+Every LÖVE function, method, callback and `love.conf` field that has a
+meaning in Rust on the desktop is covered. What is left is the table
+below: things left out on purpose, almost all because they only make
+sense in Lua or on platforms smitten doesn't run on.
 
 | Module | LÖVE functions and methods | Missing | Coverage |
 |---|---|---|---|
-| audio | 76 | 1 (on purpose) | 99% |
+| audio | 76 | 0 | 100% |
 | data | 11 | 0 | 100% |
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 16 | 94% |
+| graphics | 268 | 0 | 100% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -42,14 +45,18 @@ GPU features, such as depth canvases.
 | window | 36 | 0 | 100% |
 | callbacks | 35 | 0 | 100% |
 
-## graphics
+The last gaps were closed by #90 (depth canvases and
+`setDepthSampleMode`), #91 (`SpriteBatch:attachAttribute`), #92
+(bitmap-font glyph pages under gamma-correct rendering), #93
+(`t.window.depth`, `t.window.stencil` and `getBitDepth`) and #94 (BC6H,
+ASTC and KTX textures).
 
 ## Left out on purpose
 
 | Item | Why |
 |---|---|
 | ETC and PVRTC textures | SDL's GPU API has no ETC or PVRTC formats, so such DDS and KTX files are refused with that reason. KTX 2 files are refused too; KTX 1 files load. |
-| `drawLayer` with a custom shader | The array-texture pipeline has its own shader. |
+| `drawLayer` with a custom shader | A custom shader's `image` is a `texture_2d<f32>`. Send the `ArrayImage` to the shader with `Shader::send_texture` and pick the layer there instead. |
 | macOS and web | The renderer is Vulkan only. |
 | Lua-only filesystem functions | `load`, `getRequirePath`, `setRequirePath`, `getCRequirePath`, `setCRequirePath`, `init`, `setSource` and the like have no Rust meaning. |
 | `love.threaderror`, the `Thread` type | Rust threads report panics through `JoinHandle`. |
