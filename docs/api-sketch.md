@@ -100,7 +100,9 @@ fn main() {
 | `love.graphics.draw(psystem, x, y)` | `graphics::draw_particles(&system, x, y)` | |
 | `love.graphics.newShader(code)` | `graphics::new_shader(code)` | WGSL, not GLSL. Defines `fn effect(color, uv, pixel) -> vec4<f32>`. `Shader::from_file(path)` loads a file. |
 | `love.graphics.setShader(shader)` / `setShader()` | `graphics::set_shader(Some(&shader))` / `set_shader(None)` | |
-| `shader:send(name, value)` | `shader.send(name, value)` | Sets a member of the shader's `Params` struct. |
+| `shader:send(name, value)` | `shader.send(name, value)` | Sets a member of the shader's `Params` struct: numbers, vectors, matrices (as columns), a `bool` to a `u32`, or a `Transform`. |
+| `shader:send(name, v1, v2, ...)` | `shader.send_array(name, &values)` | For an `array<T, N>` member. |
+| `shader:send(name, "row", matrix)` | `shader.send_matrix(name, matrix, MatrixLayout::Rows)` | |
 | `love.audio.newSource(path, "static")` | `audio::new_source(path, SourceType::Static)` | `SourceType::Stream` for music. |
 | `source:play()` / `pause()` / `stop()` | `source.play()` / `pause()` / `stop()` | |
 | `source:setLooping(true)` / `setVolume(v)` / `setPitch(p)` | `source.set_looping(true)` / `set_volume(v)` / `set_pitch(p)` | |
