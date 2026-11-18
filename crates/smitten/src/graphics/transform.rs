@@ -212,6 +212,17 @@ impl Transform {
         *self = Transform { a, b, c, d, tx, ty };
     }
 
+    /// The transformation as a 4 by 4 matrix in column-major order, for
+    /// the GPU, leaving z as it is.
+    pub(crate) fn gpu_matrix(&self) -> [f32; 16] {
+        [
+            self.a, self.b, 0.0, 0.0, //
+            self.c, self.d, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            self.tx, self.ty, 0.0, 1.0,
+        ]
+    }
+
     /// Returns the transformation that applies `inner` first and then `self`.
     pub fn then_inner(&self, inner: &Transform) -> Transform {
         Transform {

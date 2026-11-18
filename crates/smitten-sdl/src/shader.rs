@@ -35,6 +35,63 @@ fn smitten_fragment(input: SmittenFragmentInput) -> @location(0) vec4<f32> {
 }
 ";
 
+/// The name of the entry point of the built-in mesh vertex shader.
+pub(crate) const MESH_VERTEX_ENTRY_POINT: &std::ffi::CStr = c"smitten_vertex";
+
+/// The vertex shader for geometry kept on the GPU: it places each vertex
+/// with the draw's matrix and tints its color, where ordinary draws are
+/// placed and tinted on the CPU. Its outputs match what every fragment
+/// shader takes. SDL wants vertex shader uniforms in group 1.
+const MESH_VERTEX: &str = "
+struct SmittenDraw {
+    transform_projection: mat4x4<f32>,
+    tint: vec4<f32>,
+}
+
+@group(1) @binding(0) var<uniform> smitten_draw: SmittenDraw;
+
+struct SmittenVertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+}
+
+@vertex
+fn smitten_vertex(
+    @location(0) position: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) color: vec4<f32>,
+) -> SmittenVertexOutput {
+    var output: SmittenVertexOutput;
+    output.position = smitten_draw.transform_projection * vec4<f32>(position, 0.0, 1.0);
+    output.uv = uv;
+    output.color = color * smitten_draw.tint;
+    return output;
+}
+";
+
+/// The built-in mesh vertex shader as SPIR-V.
+pub(crate) fn mesh_vertex() -> Result<Vec<u8>, String> {
+    let module = naga::front::wgsl::parse_str(MESH_VERTEX)
+        .map_err(|error| error.emit_to_string_with_path(MESH_VERTEX, "mesh vertex shader"))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
+        .validate(&module)
+        .map_err(|error| error.emit_to_string_with_path(MESH_VERTEX, "mesh vertex shader"))?;
+    let pipeline = spv::PipelineOptions {
+        shader_stage: naga::ShaderStage::Vertex,
+        entry_point: "smitten_vertex".to_string(),
+    };
+    // SDL's clip space already has y up, as WGSL's does, so naga must not
+    // flip it the way it would for plain Vulkan.
+    let mut options = spv::Options::default();
+    options
+        .flags
+        .remove(spv::WriterFlags::ADJUST_COORDINATE_SPACE);
+    let words = spv::write_vec(&module, &info, &options, Some(&pipeline))
+        .map_err(|error| format!("could not translate the mesh vertex shader: {error}"))?;
+    Ok(words.iter().flat_map(|word| word.to_le_bytes()).collect())
+}
+
 /// Added only when the game declares `struct Params`.
 const PARAMS_BINDING: &str = "
 @group(3) @binding(0) var<uniform> params: Params;
@@ -337,6 +394,12 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
     return textureSample(image, image_sampler, uv) * color;
 }
 ";
+
+    #[test]
+    fn the_mesh_vertex_shader_compiles_to_spirv() {
+        let spirv = mesh_vertex().unwrap();
+        assert_eq!(spirv[..4], 0x0723_0203u32.to_le_bytes());
+    }
 
     #[test]
     fn a_plain_effect_compiles_to_spirv() {

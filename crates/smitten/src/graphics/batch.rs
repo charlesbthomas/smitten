@@ -2,7 +2,7 @@
 //! the draw order allows.
 
 use smitten_core::backend::{
-    BoundTexture, ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex,
+    BoundTexture, ColorMask, DrawCall, MeshDraw, Pass, Scissor, ShaderId, TextureId, Vertex,
 };
 use smitten_core::{BlendAlphaMode, BlendMode, Color, Filter, StencilMode, VertexWinding};
 
@@ -14,6 +14,8 @@ pub(crate) type ShaderState<'a> = (ShaderId, &'a [u8], &'a [Option<BoundTexture>
 #[derive(Default)]
 pub(crate) struct Batch {
     pub vertices: Vec<Vertex>,
+    /// Geometry for the queued calls that draw from GPU buffers.
+    pub meshes: Vec<MeshDraw>,
     pub calls: Vec<DrawCall>,
     pub passes: Vec<Pass>,
     /// Where draws go: a canvas's texture, or `None` for the screen.
@@ -49,6 +51,7 @@ impl Batch {
     /// Forgets everything queued. The target, blend mode and scissor stay.
     pub fn clear(&mut self) {
         self.vertices.clear();
+        self.meshes.clear();
         self.calls.clear();
         self.passes.clear();
         self.uniforms.clear();
@@ -209,43 +212,17 @@ impl Batch {
             Filter::default()
         };
 
-        if self
-            .passes
-            .last()
-            .is_none_or(|pass| pass.target != self.target)
-        {
-            if !self.passes.is_empty() {
-                self.counts.canvas_switches += 1;
-            }
-            self.passes.push(Pass {
-                target: self.target,
-                clear: None,
-                clear_stencil: None,
-                first_call: self.calls.len() as u32,
-                call_count: 0,
-            });
-        }
-        let pass = self.passes.last_mut().expect("a pass was just ensured");
-
-        let (uniform_offset, texture_offset) = match (self.shader, self.shader_offset) {
-            (None, _) => (0, 0),
-            (Some(_), Some(offsets)) => offsets,
-            (Some(_), None) => {
-                let offsets = (self.uniforms.len() as u32, self.textures.len() as u32);
-                self.uniforms.extend_from_slice(&self.shader_data);
-                self.textures.extend_from_slice(&self.shader_textures);
-                self.shader_offset = Some(offsets);
-                offsets
-            }
-        };
-
+        self.ensure_pass();
+        let (uniform_offset, texture_offset) = self.shader_offsets();
         let first_vertex = self.vertices.len() as u32;
         let vertex_count = triangles.len() as u32;
         self.vertices.extend_from_slice(triangles);
 
+        let pass_has_calls = self.passes.last().is_some_and(|pass| pass.call_count > 0);
         match self.calls.last_mut() {
             Some(last)
-                if pass.call_count > 0
+                if pass_has_calls
+                    && last.mesh.is_none()
                     && last.texture == texture
                     && last.layer == layer
                     && last.filter == filter
@@ -264,37 +241,119 @@ impl Batch {
                 last.vertex_count += vertex_count;
                 self.counts.draw_calls_batched += 1;
             }
-            _ => {
-                self.counts.draw_calls += 1;
-                if self
-                    .counts
-                    .last_shader
-                    .is_some_and(|last| last != self.shader)
-                {
-                    self.counts.shader_switches += 1;
-                }
-                self.counts.last_shader = Some(self.shader);
-                self.calls.push(DrawCall {
-                    texture,
-                    layer,
-                    filter,
-                    blend: self.blend,
-                    blend_alpha: self.blend_alpha,
-                    scissor: self.scissor,
-                    stencil: self.stencil,
-                    stencil_value: self.stencil_value,
-                    color_mask: self.color_mask,
-                    wireframe: self.wireframe,
-                    cull: self.cull,
-                    shader: self.shader,
-                    uniform_offset,
-                    texture_offset,
-                    first_vertex,
-                    vertex_count,
-                });
-                pass.call_count += 1;
+            _ => self.push_call(DrawCall {
+                texture,
+                layer,
+                filter,
+                blend: self.blend,
+                blend_alpha: self.blend_alpha,
+                scissor: self.scissor,
+                stencil: self.stencil,
+                stencil_value: self.stencil_value,
+                color_mask: self.color_mask,
+                wireframe: self.wireframe,
+                cull: self.cull,
+                shader: self.shader,
+                uniform_offset,
+                texture_offset,
+                mesh: None,
+                first_vertex,
+                vertex_count,
+            }),
+        }
+    }
+
+    /// Queues geometry kept in GPU buffers, to draw on top of everything
+    /// queued so far in a draw call of its own.
+    pub fn push_mesh(&mut self, texture: Option<TextureId>, filter: Filter, draw: MeshDraw) {
+        if draw.index_count == 0 {
+            return;
+        }
+        assert!(
+            texture.is_none() || texture != self.target,
+            "a canvas cannot be drawn onto itself"
+        );
+        let filter = if texture.is_some() {
+            filter
+        } else {
+            Filter::default()
+        };
+        self.ensure_pass();
+        let (uniform_offset, texture_offset) = self.shader_offsets();
+        let mesh = self.meshes.len() as u32;
+        self.meshes.push(draw);
+        self.push_call(DrawCall {
+            texture,
+            layer: 0,
+            filter,
+            blend: self.blend,
+            blend_alpha: self.blend_alpha,
+            scissor: self.scissor,
+            stencil: self.stencil,
+            stencil_value: self.stencil_value,
+            color_mask: self.color_mask,
+            wireframe: self.wireframe,
+            cull: self.cull,
+            shader: self.shader,
+            uniform_offset,
+            texture_offset,
+            mesh: Some(mesh),
+            // Where a later clear would cut the vertices back to.
+            first_vertex: self.vertices.len() as u32,
+            vertex_count: 0,
+        });
+    }
+
+    /// Starts a pass for the current target unless the last one is for it.
+    fn ensure_pass(&mut self) {
+        if self
+            .passes
+            .last()
+            .is_none_or(|pass| pass.target != self.target)
+        {
+            if !self.passes.is_empty() {
+                self.counts.canvas_switches += 1;
+            }
+            self.passes.push(Pass {
+                target: self.target,
+                clear: None,
+                clear_stencil: None,
+                first_call: self.calls.len() as u32,
+                call_count: 0,
+            });
+        }
+    }
+
+    /// Where the active shader's uniform data and textures are in the
+    /// frame, copying them in the first time they are drawn with.
+    fn shader_offsets(&mut self) -> (u32, u32) {
+        match (self.shader, self.shader_offset) {
+            (None, _) => (0, 0),
+            (Some(_), Some(offsets)) => offsets,
+            (Some(_), None) => {
+                let offsets = (self.uniforms.len() as u32, self.textures.len() as u32);
+                self.uniforms.extend_from_slice(&self.shader_data);
+                self.textures.extend_from_slice(&self.shader_textures);
+                self.shader_offset = Some(offsets);
+                offsets
             }
         }
+    }
+
+    /// Adds a call to the last pass, which must be for the current target.
+    fn push_call(&mut self, call: DrawCall) {
+        self.counts.draw_calls += 1;
+        if self
+            .counts
+            .last_shader
+            .is_some_and(|last| last != self.shader)
+        {
+            self.counts.shader_switches += 1;
+        }
+        self.counts.last_shader = Some(self.shader);
+        self.calls.push(call);
+        let pass = self.passes.last_mut().expect("a pass was just ensured");
+        pass.call_count += 1;
     }
 }
 
@@ -334,6 +393,45 @@ mod tests {
             [Some(TextureId(1)), Some(TextureId(2)), Some(TextureId(1))]
         );
         assert_eq!(batch.calls[2].first_vertex, 6);
+    }
+
+    fn mesh_draw(index_count: u32) -> MeshDraw {
+        MeshDraw {
+            vertices: smitten_core::backend::BufferId(1),
+            indices: smitten_core::backend::BufferId(2),
+            first_index: 0,
+            index_count,
+            transform: [0.0; 16],
+            tint: [1.0; 4],
+        }
+    }
+
+    #[test]
+    fn a_mesh_draw_gets_a_call_of_its_own_that_later_draws_do_not_join() {
+        let mut batch = Batch::default();
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push_mesh(None, Filter::Linear, mesh_draw(6));
+        batch.push_mesh(None, Filter::Linear, mesh_draw(3));
+        batch.push(None, Filter::Linear, &TRIANGLE);
+
+        assert_eq!(batch.calls.len(), 4);
+        assert_eq!(batch.meshes.len(), 2);
+        assert_eq!(batch.calls[1].mesh, Some(0));
+        assert_eq!(batch.calls[2].mesh, Some(1));
+        assert_eq!(batch.calls[1].vertex_count, 0);
+        // It marks where the shared vertices had got to.
+        assert_eq!(batch.calls[1].first_vertex, 3);
+        assert_eq!(batch.calls[3].mesh, None);
+        assert_eq!(batch.counts.draw_calls, 4);
+        assert_eq!(batch.passes[0].call_count, 4);
+    }
+
+    #[test]
+    fn an_empty_mesh_draw_queues_nothing() {
+        let mut batch = Batch::default();
+        batch.push_mesh(None, Filter::Linear, mesh_draw(0));
+        assert!(batch.calls.is_empty());
+        assert!(batch.passes.is_empty());
     }
 
     #[test]

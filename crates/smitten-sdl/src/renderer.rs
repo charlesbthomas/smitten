@@ -12,8 +12,8 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, RenderTargetDesc, RendererInfo,
-    Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex,
+    BoundTexture, BufferId, BufferUsage, ColorMask, CompressedFormat, DrawCall, Frame, MeshDraw,
+    RenderTargetDesc, RendererInfo, Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex,
 };
 use smitten_core::{
     BlendAlphaMode, BlendMode, CompareMode, Filter, PixelFormat, StencilAction, StencilMode,
@@ -79,6 +79,18 @@ impl VertexLayoutId {
     /// One buffer of [`Vertex`], already in screen pixels, which is what
     /// every draw uses today.
     const STANDARD: Self = Self(0);
+    /// One buffer of [`Vertex`] in a mesh's own coordinates, placed and
+    /// tinted on the GPU by the built-in mesh vertex shader.
+    const MESH: Self = Self(1);
+}
+
+/// A buffer the game keeps on the GPU.
+#[derive(Clone, Copy)]
+struct GpuBuffer {
+    handle: *mut SDL_GPUBuffer,
+    usage: BufferUsage,
+    /// How many bytes it holds.
+    size: u32,
 }
 
 /// The vertex buffers and attributes a pipeline reads.
@@ -171,8 +183,12 @@ struct CustomShader {
 pub(crate) struct Renderer {
     device: *mut SDL_GPUDevice,
     screen_format: SDL_GPUTextureFormat,
-    /// The vertex shader every pipeline shares.
+    /// The vertex shader for vertices already in pixels.
     vertex_shader: *mut SDL_GPUShader,
+    /// The vertex shader for geometry kept in GPU buffers.
+    mesh_vertex_shader: *mut SDL_GPUShader,
+    buffers: HashMap<u32, GpuBuffer>,
+    next_buffer_id: u32,
     shaders: HashMap<u32, CustomShader>,
     next_shader_id: u32,
     /// The built-in fragment shader.
@@ -207,15 +223,26 @@ pub(crate) struct Renderer {
     transfer_buffer: *mut SDL_GPUTransferBuffer,
     /// How many vertices the two buffers above can hold.
     vertex_capacity: u32,
+    /// Whether the screen is sRGB-encoded, so vertex and clear colors,
+    /// which games give in sRGB, are converted to linear light.
+    gamma_correct: bool,
 }
 
 impl Renderer {
     /// Builds the pipeline for `window`, which `device` must already own.
-    pub fn new(device: *mut SDL_GPUDevice, window: *mut SDL_Window) -> Result<Self, String> {
+    /// With `gamma_correct`, the window's swapchain is sRGB-encoded.
+    pub fn new(
+        device: *mut SDL_GPUDevice,
+        window: *mut SDL_Window,
+        gamma_correct: bool,
+    ) -> Result<Self, String> {
         let mut renderer = Self {
             device,
             screen_format: SDL_GPU_TEXTUREFORMAT_INVALID,
             vertex_shader: ptr::null_mut(),
+            mesh_vertex_shader: ptr::null_mut(),
+            buffers: HashMap::new(),
+            next_buffer_id: 1,
             shaders: HashMap::new(),
             next_shader_id: 1,
             fragment_shader: ptr::null_mut(),
@@ -239,6 +266,7 @@ impl Renderer {
             vertex_buffer: ptr::null_mut(),
             transfer_buffer: ptr::null_mut(),
             vertex_capacity: 0,
+            gamma_correct,
         };
         // On failure `renderer` is dropped, which releases whatever was
         // created so far. SDL ignores null handles on release.
@@ -250,6 +278,14 @@ impl Renderer {
                 device,
                 VERTEX_SPIRV,
                 c"main",
+                SDL_GPU_SHADERSTAGE_VERTEX,
+                0,
+                1,
+            )?;
+            renderer.mesh_vertex_shader = create_shader(
+                device,
+                &shader::mesh_vertex()?,
+                shader::MESH_VERTEX_ENTRY_POINT,
                 SDL_GPU_SHADERSTAGE_VERTEX,
                 0,
                 1,
@@ -433,6 +469,7 @@ impl Renderer {
     pub fn create_compressed_texture(
         &mut self,
         format: CompressedFormat,
+        srgb: bool,
         width: u32,
         height: u32,
         levels: &[&[u8]],
@@ -460,7 +497,22 @@ impl Renderer {
             return Err(format!("this GPU cannot read {format:?} images"));
         }
         let level_count = levels.len() as u32;
-        let format = compressed_format(format);
+        // Fall back to the linear version where there is no sRGB one.
+        let format = srgb
+            .then(|| compressed_srgb_format(format))
+            .flatten()
+            .filter(|&format| {
+                // SAFETY: the device is alive.
+                unsafe {
+                    SDL_GPUTextureSupportsFormat(
+                        self.device,
+                        format,
+                        SDL_GPU_TEXTURETYPE_2D,
+                        SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                    )
+                }
+            })
+            .unwrap_or_else(|| compressed_format(format));
         let mipmaps = (level_count > 1).then_some(Mipmaps {
             filter: Filter::Linear,
             sharpness: 0f32.to_bits(),
@@ -532,6 +584,7 @@ impl Renderer {
     pub fn create_layered_texture(
         &mut self,
         kind: TextureKind,
+        pixel_format: PixelFormat,
         width: u32,
         height: u32,
         layers: &[&[u8]],
@@ -540,7 +593,7 @@ impl Renderer {
             let [layer] = layers else {
                 return Err("a flat texture has exactly one layer".to_string());
             };
-            return self.create_texture(PixelFormat::Rgba8, width, height, layer, false);
+            return self.create_texture(pixel_format, width, height, layer, false);
         }
         if width == 0 || height == 0 {
             return Err("an image must be at least 1x1 pixels".to_string());
@@ -552,11 +605,11 @@ impl Renderer {
             return Err("a cube needs six square faces".to_string());
         }
         for layer in layers {
-            check_pixel_count(width, height, layer, DEFAULT_TEXTURE_FORMAT)?;
+            check_pixel_count(width, height, layer, sdl_pixel_format(pixel_format))?;
         }
         // SAFETY: the device is alive and every layer was just checked to
         // cover the whole texture.
-        let format = DEFAULT_TEXTURE_FORMAT;
+        let format = sdl_pixel_format(pixel_format);
         let handle =
             unsafe { new_layered_texture(self.device, format, kind, width, height, layers)? };
         let id = self.next_texture_id;
@@ -939,6 +992,120 @@ impl Renderer {
         }
     }
 
+    pub fn create_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Result<BufferId, String> {
+        let size = u32::try_from(data.len()).map_err(|_| "the buffer is too large".to_string())?;
+        if size == 0 {
+            return Err("a buffer cannot be empty".to_string());
+        }
+        // SAFETY: the device is alive, and the buffer is released if
+        // filling it fails.
+        let handle = unsafe {
+            let handle = SDL_CreateGPUBuffer(
+                self.device,
+                &SDL_GPUBufferCreateInfo {
+                    usage: match usage {
+                        BufferUsage::Vertex => SDL_GPU_BUFFERUSAGE_VERTEX,
+                        BufferUsage::Index => SDL_GPU_BUFFERUSAGE_INDEX,
+                    },
+                    size,
+                    ..Default::default()
+                },
+            );
+            if handle.is_null() {
+                return Err(format!("could not create a buffer: {}", sdl_error()));
+            }
+            let data = self.linear_vertex_bytes(usage, 0, data);
+            if let Err(message) = upload_buffer(self.device, handle, 0, &data, false) {
+                SDL_ReleaseGPUBuffer(self.device, handle);
+                return Err(message);
+            }
+            handle
+        };
+        let id = self.next_buffer_id;
+        self.next_buffer_id += 1;
+        self.buffers.insert(
+            id,
+            GpuBuffer {
+                handle,
+                usage,
+                size,
+            },
+        );
+        Ok(BufferId(id))
+    }
+
+    pub fn update_buffer(
+        &mut self,
+        buffer: BufferId,
+        offset: u32,
+        data: &[u8],
+    ) -> Result<(), String> {
+        let Some(&entry) = self.buffers.get(&buffer.0) else {
+            return Err("the buffer no longer exists".to_string());
+        };
+        let fits = u32::try_from(data.len())
+            .ok()
+            .and_then(|length| offset.checked_add(length))
+            .is_some_and(|end| end <= entry.size);
+        if !fits {
+            return Err(format!(
+                "{} bytes at {offset} do not fit in a {}-byte buffer",
+                data.len(),
+                entry.size
+            ));
+        }
+        if data.is_empty() {
+            return Ok(());
+        }
+        // Replacing all of it can cycle, which gives fresh memory rather
+        // than waiting for frames still using the old. Part of it cannot,
+        // since a cycled buffer loses the rest of its bytes.
+        let whole = offset == 0 && data.len() == entry.size as usize;
+        let data = self.linear_vertex_bytes(entry.usage, offset, data);
+        // SAFETY: the buffer is alive and the bytes were checked to fit.
+        unsafe { upload_buffer(self.device, entry.handle, offset, &data, whole) }
+    }
+
+    /// `data` for a buffer, with the colors of whole vertices converted to
+    /// linear light when rendering is gamma-correct, as the colors in
+    /// [`Frame::vertices`] are.
+    fn linear_vertex_bytes<'a>(
+        &self,
+        usage: BufferUsage,
+        offset: u32,
+        data: &'a [u8],
+    ) -> std::borrow::Cow<'a, [u8]> {
+        let vertex = VERTEX_SIZE as usize;
+        if !self.gamma_correct
+            || usage != BufferUsage::Vertex
+            || !(offset as usize).is_multiple_of(vertex)
+            || !data.len().is_multiple_of(vertex)
+        {
+            return std::borrow::Cow::Borrowed(data);
+        }
+        let color_at = std::mem::offset_of!(Vertex, color);
+        let mut converted = data.to_vec();
+        for chunk in converted.chunks_exact_mut(vertex) {
+            let color = &mut chunk[color_at..color_at + 16];
+            let mut channels = [0f32; 4];
+            for (channel, bytes) in channels.iter_mut().zip(color.chunks_exact(4)) {
+                *channel = f32::from_ne_bytes(bytes.try_into().unwrap());
+            }
+            for (bytes, channel) in color.chunks_exact_mut(4).zip(linear_color(channels)) {
+                bytes.copy_from_slice(&channel.to_ne_bytes());
+            }
+        }
+        std::borrow::Cow::Owned(converted)
+    }
+
+    pub fn destroy_buffer(&mut self, buffer: BufferId) {
+        if let Some(entry) = self.buffers.remove(&buffer.0) {
+            // SAFETY: the buffer came from this device. SDL defers the
+            // free until no in-flight frame uses it.
+            unsafe { SDL_ReleaseGPUBuffer(self.device, entry.handle) };
+        }
+    }
+
     pub fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
         let compiled = shader::compile(source)?;
         // SAFETY: the device is alive and the SPIR-V outlives the call.
@@ -1014,6 +1181,7 @@ impl Renderer {
     ) -> Result<(*mut SDL_GPUShader, VertexInput), String> {
         match layout {
             VertexLayoutId::STANDARD => Ok((self.vertex_shader, standard_vertex_input())),
+            VertexLayoutId::MESH => Ok((self.mesh_vertex_shader, standard_vertex_input())),
             other => Err(format!("there is no vertex layout {other:?}")),
         }
     }
@@ -1081,7 +1249,11 @@ impl Renderer {
             shader: call.shader.map(|id| id.0),
             layered,
             target,
-            layout: VertexLayoutId::STANDARD,
+            layout: if call.mesh.is_some() {
+                VertexLayoutId::MESH
+            } else {
+                VertexLayoutId::STANDARD
+            },
             blend: call.blend,
             blend_alpha: call.blend_alpha,
             stencil: call.stencil,
@@ -1259,7 +1431,15 @@ impl Renderer {
             if mapped.is_null() {
                 return false;
             }
-            ptr::copy_nonoverlapping(vertices.as_ptr(), mapped.cast::<Vertex>(), vertices.len());
+            if self.gamma_correct {
+                linearize_colors(vertices, mapped.cast::<Vertex>());
+            } else {
+                ptr::copy_nonoverlapping(
+                    vertices.as_ptr(),
+                    mapped.cast::<Vertex>(),
+                    vertices.len(),
+                );
+            }
             SDL_UnmapGPUTransferBuffer(self.device, self.transfer_buffer);
 
             let pass = SDL_BeginGPUCopyPass(commands);
@@ -1380,9 +1560,15 @@ impl Renderer {
                 return;
             }
 
-            let have_geometry = !frame.calls.is_empty()
+            // Calls that draw from GPU buffers need none of these.
+            let uploaded = !frame.calls.is_empty()
                 && !frame.vertices.is_empty()
                 && self.upload_vertices(commands, frame.vertices);
+            let vertex_count = if uploaded {
+                frame.vertices.len() as u32
+            } else {
+                0
+            };
 
             let mut swapchain: *mut SDL_GPUTexture = ptr::null_mut();
             let (mut screen_width, mut screen_height) = (0u32, 0u32);
@@ -1459,12 +1645,12 @@ impl Renderer {
                 };
                 if let Some(color) = pass.clear {
                     info.load_op = SDL_GPU_LOADOP_CLEAR;
-                    info.clear_color = SDL_FColor {
-                        r: color.r,
-                        g: color.g,
-                        b: color.b,
-                        a: color.a,
+                    let [r, g, b, a] = if self.gamma_correct {
+                        linear_color([color.r, color.g, color.b, color.a])
+                    } else {
+                        [color.r, color.g, color.b, color.a]
                     };
+                    info.clear_color = SDL_FColor { r, g, b, a };
                 }
                 let stencil_info = SDL_GPUDepthStencilTargetInfo {
                     texture: stencil,
@@ -1487,15 +1673,14 @@ impl Renderer {
                 let calls = (pass.first_call as usize)
                     .checked_add(pass.call_count as usize)
                     .and_then(|end| frame.calls.get(pass.first_call as usize..end));
-                if let (true, Some(calls)) = (have_geometry, calls) {
+                if let Some(calls) = calls {
                     self.draw_calls(
                         commands,
                         render_pass,
                         calls,
-                        frame.uniforms,
-                        frame.textures,
+                        frame,
                         pass.target,
-                        frame.vertices.len() as u32,
+                        vertex_count,
                         width,
                         height,
                     );
@@ -1522,54 +1707,76 @@ impl Renderer {
     /// # Safety
     /// `pass` must be an open render pass on `commands` whose target is
     /// `width` by `height` pixels, and the vertex
-    /// buffer must already hold `vertex_count` vertices.
+    /// buffer must already hold `vertex_count` of the frame's vertices.
     #[allow(clippy::too_many_arguments)]
     unsafe fn draw_calls(
         &self,
         commands: *mut SDL_GPUCommandBuffer,
         pass: *mut SDL_GPURenderPass,
         calls: &[DrawCall],
-        uniforms: &[u8],
-        sent_textures: &[Option<BoundTexture>],
+        frame: &Frame,
         target: Option<TextureId>,
         vertex_count: u32,
         width: u32,
         height: u32,
     ) {
+        let uniforms = frame.uniforms;
+        let sent_textures = frame.textures;
         // Padded to 16 bytes, the size of the shader's uniform block.
         let pixel_to_clip = [2.0 / width as f32, 2.0 / height as f32, 0.0, 0.0];
+        let projection = pixel_projection(width, height);
         let mut bound_pipeline = ptr::null_mut();
         let mut bound_reference = None;
         let mut bound_scissor = None;
+        // What the vertex buffer slot and the vertex uniforms hold: the
+        // frame's vertices in pixels, or a mesh's own.
+        let mut bound_mesh: Option<MeshDraw> = None;
+        let mut screen_bound = false;
         let target_desc = self.target_desc(target);
 
         // SAFETY: every handle bound here is alive, and each draw is checked
-        // to stay inside the uploaded vertices.
+        // to stay inside the uploaded vertices or its buffers.
         unsafe {
-            SDL_BindGPUVertexBuffers(
-                pass,
-                0,
-                &SDL_GPUBufferBinding {
-                    buffer: self.vertex_buffer,
-                    offset: 0,
-                },
-                1,
-            );
-            SDL_PushGPUVertexUniformData(
-                commands,
-                0,
-                pixel_to_clip.as_ptr().cast::<c_void>(),
-                size_of_val(&pixel_to_clip) as u32,
-            );
-
             for call in calls {
-                let in_range = call
-                    .first_vertex
-                    .checked_add(call.vertex_count)
-                    .is_some_and(|end| end <= vertex_count);
-                if call.vertex_count == 0 || !in_range {
-                    continue;
-                }
+                // Each draw finds what it reads from first, and draws
+                // nothing if that is missing or too short.
+                let mesh = match call.mesh {
+                    None => {
+                        let in_range = call
+                            .first_vertex
+                            .checked_add(call.vertex_count)
+                            .is_some_and(|end| end <= vertex_count);
+                        if call.vertex_count == 0 || !in_range {
+                            continue;
+                        }
+                        None
+                    }
+                    Some(index) => {
+                        let Some(&draw) = frame.meshes.get(index as usize) else {
+                            continue;
+                        };
+                        let buffers = self
+                            .buffers
+                            .get(&draw.vertices.0)
+                            .zip(self.buffers.get(&draw.indices.0));
+                        let Some((vertices, indices)) = buffers else {
+                            continue;
+                        };
+                        let in_range = draw
+                            .first_index
+                            .checked_add(draw.index_count)
+                            .and_then(|end| end.checked_mul(4))
+                            .is_some_and(|end| end <= indices.size);
+                        if draw.index_count == 0
+                            || !in_range
+                            || vertices.usage != BufferUsage::Vertex
+                            || indices.usage != BufferUsage::Index
+                        {
+                            continue;
+                        }
+                        Some((draw, vertices.handle, indices.handle))
+                    }
+                };
                 // A target cannot be sampled while it is being drawn to.
                 if call.texture.is_some() && call.texture == target {
                     continue;
@@ -1672,10 +1879,121 @@ impl Renderer {
                 let mut bindings = vec![SDL_GPUTextureSamplerBinding { texture, sampler }];
                 bindings.extend(extra_bindings);
                 SDL_BindGPUFragmentSamplers(pass, 0, bindings.as_ptr(), bindings.len() as u32);
-                SDL_DrawGPUPrimitives(pass, call.vertex_count, 1, call.first_vertex, 0);
+                match mesh {
+                    None => {
+                        if !screen_bound {
+                            SDL_BindGPUVertexBuffers(
+                                pass,
+                                0,
+                                &SDL_GPUBufferBinding {
+                                    buffer: self.vertex_buffer,
+                                    offset: 0,
+                                },
+                                1,
+                            );
+                            SDL_PushGPUVertexUniformData(
+                                commands,
+                                0,
+                                pixel_to_clip.as_ptr().cast::<c_void>(),
+                                size_of_val(&pixel_to_clip) as u32,
+                            );
+                            screen_bound = true;
+                            bound_mesh = None;
+                        }
+                        SDL_DrawGPUPrimitives(pass, call.vertex_count, 1, call.first_vertex, 0);
+                    }
+                    Some((draw, vertices, indices)) => {
+                        if bound_mesh != Some(draw) {
+                            SDL_BindGPUVertexBuffers(
+                                pass,
+                                0,
+                                &SDL_GPUBufferBinding {
+                                    buffer: vertices,
+                                    offset: 0,
+                                },
+                                1,
+                            );
+                            SDL_BindGPUIndexBuffer(
+                                pass,
+                                &SDL_GPUBufferBinding {
+                                    buffer: indices,
+                                    offset: 0,
+                                },
+                                SDL_GPU_INDEXELEMENTSIZE_32BIT,
+                            );
+                            let uniforms = MeshUniforms {
+                                transform_projection: multiply(&projection, &draw.transform),
+                                tint: if self.gamma_correct {
+                                    linear_color(draw.tint)
+                                } else {
+                                    draw.tint
+                                },
+                            };
+                            SDL_PushGPUVertexUniformData(
+                                commands,
+                                0,
+                                ptr::from_ref(&uniforms).cast::<c_void>(),
+                                size_of::<MeshUniforms>() as u32,
+                            );
+                            bound_mesh = Some(draw);
+                            screen_bound = false;
+                        }
+                        SDL_DrawGPUIndexedPrimitives(
+                            pass,
+                            draw.index_count,
+                            1,
+                            draw.first_index,
+                            0,
+                            0,
+                        );
+                    }
+                }
             }
         }
     }
+}
+
+/// What the built-in mesh vertex shader reads for each draw, laid out as
+/// its uniform block.
+#[repr(C)]
+struct MeshUniforms {
+    transform_projection: [f32; 16],
+    tint: [f32; 4],
+}
+
+/// The column-major matrix that takes pixels of a `width` by `height`
+/// target, from its top-left with y down, to SDL's clip space, with y up.
+fn pixel_projection(width: u32, height: u32) -> [f32; 16] {
+    let (width, height) = (width as f32, height as f32);
+    [
+        2.0 / width,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -2.0 / height,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        -1.0,
+        1.0,
+        0.0,
+        1.0,
+    ]
+}
+
+/// `a * b` for column-major 4 by 4 matrices, so `b` applies first.
+fn multiply(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    let mut out = [0.0; 16];
+    for column in 0..4 {
+        for row in 0..4 {
+            out[column * 4 + row] = (0..4).map(|k| a[k * 4 + row] * b[column * 4 + k]).sum();
+        }
+    }
+    out
 }
 
 /// Returns the part of `scissor` inside a `width` by `height` target as
@@ -1779,6 +2097,9 @@ impl Drop for Renderer {
             SDL_ReleaseGPUTexture(self.device, self.white_volume);
             SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
             SDL_ReleaseGPUTransferBuffer(self.device, self.transfer_buffer);
+            for (_, buffer) in self.buffers.drain() {
+                SDL_ReleaseGPUBuffer(self.device, buffer.handle);
+            }
             SDL_ReleaseGPUSampler(self.device, self.linear);
             SDL_ReleaseGPUSampler(self.device, self.nearest);
             for &sampler in self.samplers.values() {
@@ -1791,6 +2112,7 @@ impl Drop for Renderer {
                 SDL_ReleaseGPUShader(self.device, shader.fragment);
             }
             SDL_ReleaseGPUShader(self.device, self.vertex_shader);
+            SDL_ReleaseGPUShader(self.device, self.mesh_vertex_shader);
             SDL_ReleaseGPUShader(self.device, self.fragment_shader);
             SDL_ReleaseGPUShader(self.device, self.array_fragment_shader);
         }
@@ -2219,6 +2541,52 @@ fn check_pixel_count(
     }
 }
 
+/// `color`, given sRGB-encoded as games give colors, in linear light.
+/// Alpha is left alone.
+fn linear_color([r, g, b, a]: [f32; 4]) -> [f32; 4] {
+    let linear = |component: f32| {
+        if component <= 0.04045 {
+            component / 12.92
+        } else {
+            ((component + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [linear(r), linear(g), linear(b), a]
+}
+
+/// Copies `vertices` to `out` with their colors in linear light.
+/// Neighboring vertices usually share a color, so the last conversion is
+/// reused.
+///
+/// # Safety
+/// `out` must have room for `vertices.len()` vertices.
+unsafe fn linearize_colors(vertices: &[Vertex], out: *mut Vertex) {
+    let mut last: Option<([f32; 4], [f32; 4])> = None;
+    for (index, vertex) in vertices.iter().enumerate() {
+        let color = match last {
+            Some((from, to)) if from == vertex.color => to,
+            _ => {
+                let to = linear_color(vertex.color);
+                last = Some((vertex.color, to));
+                to
+            }
+        };
+        // SAFETY: as the caller promised.
+        unsafe { out.add(index).write(Vertex { color, ..*vertex }) };
+    }
+}
+
+/// The sRGB version of a compressed format, if it has one.
+fn compressed_srgb_format(format: CompressedFormat) -> Option<SDL_GPUTextureFormat> {
+    match format {
+        CompressedFormat::Bc1 => Some(SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc2 => Some(SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc3 => Some(SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc7 => Some(SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB),
+        CompressedFormat::Bc4 | CompressedFormat::Bc5 => None,
+    }
+}
+
 /// The SDL format for a pixel format.
 fn sdl_pixel_format(format: PixelFormat) -> SDL_GPUTextureFormat {
     use PixelFormat::*;
@@ -2484,6 +2852,69 @@ unsafe fn upload(
                 d: 1,
             },
             false,
+        );
+        SDL_EndGPUCopyPass(pass);
+        SDL_SubmitGPUCommandBuffer(commands);
+        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        Ok(())
+    }
+}
+
+/// Copies `data` into `buffer` from `offset`, in a command buffer of its
+/// own that runs before any frame submitted after it.
+///
+/// # Safety
+/// `device` and `buffer` must be alive, and the bytes must fit in the
+/// buffer from `offset`.
+unsafe fn upload_buffer(
+    device: *mut SDL_GPUDevice,
+    buffer: *mut SDL_GPUBuffer,
+    offset: u32,
+    data: &[u8],
+    cycle: bool,
+) -> Result<(), String> {
+    let size = u32::try_from(data.len()).map_err(|_| "the buffer is too large".to_string())?;
+    // SAFETY: the transfer buffer is `size` bytes, exactly what is copied
+    // in, and it is released on every path.
+    unsafe {
+        let transfer = SDL_CreateGPUTransferBuffer(
+            device,
+            &SDL_GPUTransferBufferCreateInfo {
+                usage: SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+                size,
+                ..Default::default()
+            },
+        );
+        let mapped = if transfer.is_null() {
+            ptr::null_mut()
+        } else {
+            SDL_MapGPUTransferBuffer(device, transfer, false)
+        };
+        let commands = if mapped.is_null() {
+            ptr::null_mut()
+        } else {
+            ptr::copy_nonoverlapping(data.as_ptr(), mapped.cast::<u8>(), data.len());
+            SDL_UnmapGPUTransferBuffer(device, transfer);
+            SDL_AcquireGPUCommandBuffer(device)
+        };
+        if commands.is_null() {
+            let message = format!("could not upload a buffer: {}", sdl_error());
+            SDL_ReleaseGPUTransferBuffer(device, transfer);
+            return Err(message);
+        }
+        let pass = SDL_BeginGPUCopyPass(commands);
+        SDL_UploadToGPUBuffer(
+            pass,
+            &SDL_GPUTransferBufferLocation {
+                transfer_buffer: transfer,
+                offset: 0,
+            },
+            &SDL_GPUBufferRegion {
+                buffer,
+                offset,
+                size,
+            },
+            cycle,
         );
         SDL_EndGPUCopyPass(pass);
         SDL_SubmitGPUCommandBuffer(commands);

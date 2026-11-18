@@ -53,7 +53,13 @@ impl Inner {
         context::with(|ctx| {
             let texture = ctx
                 .backend
-                .create_layered_texture(kind, width, height, &pixels)
+                .create_layered_texture(
+                    kind,
+                    super::normal_format(&*ctx.backend),
+                    width,
+                    height,
+                    &pixels,
+                )
                 .map_err(ImageError::Upload)?;
             Ok(Inner {
                 texture,

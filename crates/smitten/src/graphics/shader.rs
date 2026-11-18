@@ -153,6 +153,36 @@ impl Shader {
             .unwrap_or_else(|error| panic!("{error}"));
     }
 
+    /// Sets the `vec4<f32>` member of `Params` called
+    /// `name` to `color`, the equivalent of `Shader:sendColor`. With
+    /// gamma-correct rendering, the color is converted from sRGB to linear
+    /// light first, as colors from `set_color` are; [`Shader::send`] sends
+    /// it unchanged.
+    ///
+    /// Panics if there is no such member or it has a different type. Use
+    /// [`Shader::try_send_color`] to handle the failure instead.
+    pub fn send_color(&self, name: &str, color: Color) {
+        self.try_send_color(name, color)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    /// As [`Shader::send_color`], returning an error if there is no such
+    /// member or it has a different type.
+    pub fn try_send_color(&self, name: &str, color: Color) -> Result<(), ShaderError> {
+        let color = if super::is_gamma_correct() {
+            use crate::math::gamma_to_linear;
+            Color::rgba(
+                gamma_to_linear(color.r),
+                gamma_to_linear(color.g),
+                gamma_to_linear(color.b),
+                color.a,
+            )
+        } else {
+            color
+        };
+        self.try_send(name, color)
+    }
+
     /// Sets the member of `Params` called `name`, returning an error if
     /// there is no such member or it has a different type.
     ///

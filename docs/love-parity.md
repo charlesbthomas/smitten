@@ -56,8 +56,6 @@ shaders and canvas formats.
   (`VertexAttributeStep` `perinstance`).
 - `setCanvas` with several canvases at once (multiple render targets), and
   with a layer, cube face or mipmap of a canvas as the target.
-- Gamma-correct rendering (`t.gammacorrect`). `is_gamma_correct` exists and
-  always answers `false`.
 
 ### Canvas and Texture
 
@@ -65,7 +63,6 @@ shaders and canvas formats.
   canvases). Color formats, `readable` and MSAA are done.
 - `Texture:getTextureType`, `getDepth`, `getDepthSampleMode`,
   `setDepthSampleMode`.
-- `Image:isFormatLinear`, and the `linear` setting in `newImage`.
 
 ### Mesh
 
@@ -94,8 +91,8 @@ shaders and canvas formats.
 
 ## Callbacks and `love.conf`
 
-- `love.conf` fields with no `Config` equivalent: `t.gammacorrect`,
-  `t.window.depth`, `t.window.stencil`.
+- `love.conf` fields with no `Config` equivalent: `t.window.depth`,
+  `t.window.stencil`.
 
 ## Left out on purpose
 

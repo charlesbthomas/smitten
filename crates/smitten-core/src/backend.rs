@@ -214,6 +214,40 @@ pub struct Vertex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
 
+/// A handle to a GPU buffer owned by a backend, holding vertices or
+/// indices that stay on the GPU between frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferId(pub u32);
+
+/// What a GPU buffer holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BufferUsage {
+    /// Vertices laid out as [`Vertex`].
+    Vertex,
+    /// `u32` indices into a vertex buffer.
+    Index,
+}
+
+/// A draw of geometry kept in GPU buffers, which the GPU places itself
+/// rather than taking it in pixels from [`Frame::vertices`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshDraw {
+    /// Vertices laid out as [`Vertex`], in the mesh's own coordinates,
+    /// with colors not yet tinted.
+    pub vertices: BufferId,
+    /// `u32` indices into `vertices`, three to a triangle.
+    pub indices: BufferId,
+    /// The first index to draw.
+    pub first_index: u32,
+    /// How many indices to draw, a multiple of three.
+    pub index_count: u32,
+    /// Places the mesh's coordinates in pixels of the target, as a 4 by 4
+    /// matrix in column-major order.
+    pub transform: [f32; 16],
+    /// Multiplied with every vertex color.
+    pub tint: [f32; 4],
+}
+
 /// A handle to a cursor made from an image, owned by a backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorId(pub u32);
@@ -490,7 +524,11 @@ pub struct DrawCall {
     /// in [`Frame::textures`]. There are as many as
     /// [`ShaderInfo::textures`] lists.
     pub texture_offset: u32,
-    /// Index into [`Frame::vertices`] of the first vertex.
+    /// Index into [`Frame::meshes`] of the geometry to draw, in place of
+    /// the vertices at `first_vertex`. `vertex_count` is 0 then.
+    pub mesh: Option<u32>,
+    /// Index into [`Frame::vertices`] of the first vertex. For a mesh
+    /// draw, where the next vertex would have gone.
     pub first_vertex: u32,
     /// A multiple of three, since every three vertices form a triangle.
     pub vertex_count: u32,
@@ -525,6 +563,8 @@ pub struct Frame<'a> {
     /// Textures for the calls whose custom shader declares its own. `None`
     /// is one the game has not sent, which reads as white.
     pub textures: &'a [Option<BoundTexture>],
+    /// Geometry for the calls that draw from GPU buffers.
+    pub meshes: &'a [MeshDraw],
     /// Run in order. A later pass may sample a target drawn by an
     /// earlier one.
     pub passes: &'a [Pass],
@@ -612,9 +652,14 @@ pub trait Backend {
     /// [`CompressedFormat::data_size`] long. It cannot be updated. With
     /// more than one level, its mipmaps start out blended as those of
     /// `create_mipmapped_texture` do.
+    ///
+    /// With `srgb`, the GPU decodes the colors from sRGB when it samples
+    /// them, for the formats that have an sRGB version (all but BC4 and
+    /// BC5).
     fn create_compressed_texture(
         &mut self,
         format: CompressedFormat,
+        srgb: bool,
         width: u32,
         height: u32,
         levels: &[&[u8]],
@@ -624,9 +669,12 @@ pub trait Backend {
     /// `create_texture` and all `width` by `height` pixels. A cube has six
     /// square layers, in the order +x, -x, +y, -y, +z, -z. A
     /// [`TextureKind::Flat`] texture has one layer.
+    ///
+    /// `format` is [`PixelFormat::Rgba8`] or [`PixelFormat::Srgba8`].
     fn create_layered_texture(
         &mut self,
         kind: TextureKind,
+        format: PixelFormat,
         width: u32,
         height: u32,
         layers: &[&[u8]],
@@ -719,6 +767,19 @@ pub trait Backend {
     /// destroyed take, in bytes.
     fn texture_memory(&self) -> u64;
 
+    /// Creates a GPU buffer holding `data`, which must not be empty. Its
+    /// size stays the size of `data`.
+    fn create_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Result<BufferId, String>;
+
+    /// Replaces the bytes of a buffer from `offset`. Draws already handed
+    /// to [`Backend::present`] or [`Backend::render_offscreen`] keep what
+    /// it held; draws still waiting in a frame see the new bytes.
+    fn update_buffer(&mut self, buffer: BufferId, offset: u32, data: &[u8]) -> Result<(), String>;
+
+    /// Frees a buffer. Its handle must not be used afterwards, and draws
+    /// still waiting that use it draw nothing.
+    fn destroy_buffer(&mut self, buffer: BufferId);
+
     /// Compiles a custom fragment shader written in WGSL.
     ///
     /// `source` must define
@@ -740,6 +801,12 @@ pub trait Backend {
 
     /// What is doing the drawing.
     fn renderer_info(&self) -> RendererInfo;
+
+    /// Whether the screen is sRGB-encoded and colors are blended in
+    /// linear light, because [`Config::gamma_correct`](crate::Config) was
+    /// set and the display allows it. Vertex colors and clear colors are
+    /// then given in sRGB, as always, and converted by the backend.
+    fn is_gamma_correct(&self) -> bool;
 
     /// Draws `frame` and shows the screen.
     fn present(&mut self, frame: &Frame);

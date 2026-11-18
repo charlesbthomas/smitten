@@ -1,7 +1,9 @@
-use smitten_core::backend::Vertex;
+use std::cell::RefCell;
+
+use smitten_core::backend::{Backend, BufferId, BufferUsage, Vertex};
 
 use super::{Image, Transform};
-use crate::Color;
+use crate::{Color, context};
 
 /// One corner of a [`Mesh`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,7 +86,7 @@ pub enum MeshDrawMode {
 /// );
 /// graphics::draw_mesh(&gradient, 50.0, 50.0);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Mesh {
     vertices: Vec<MeshVertex>,
     mode: MeshDrawMode,
@@ -93,6 +95,112 @@ pub struct Mesh {
     vertex_map: Option<Vec<u32>>,
     /// The part of the visiting order that is drawn, as start and count.
     draw_range: Option<(usize, usize)>,
+    /// The copy of the mesh kept on the GPU, brought up to date when it is
+    /// drawn.
+    gpu: RefCell<GpuMesh>,
+}
+
+impl Clone for Mesh {
+    /// The copy gets GPU buffers of its own the first time it is drawn.
+    fn clone(&self) -> Self {
+        Mesh {
+            vertices: self.vertices.clone(),
+            mode: self.mode,
+            texture: self.texture.clone(),
+            vertex_map: self.vertex_map.clone(),
+            draw_range: self.draw_range,
+            gpu: RefCell::default(),
+        }
+    }
+}
+
+/// A mesh's vertices and triangle indices in GPU buffers.
+#[derive(Debug)]
+struct GpuMesh {
+    vertices: GpuBuffer,
+    indices: GpuBuffer,
+    /// How many indices the index buffer holds for the current triangles.
+    index_count: u32,
+    /// Whether the vertices or the triangles changed since the last upload.
+    vertices_stale: bool,
+    indices_stale: bool,
+    /// The frame that last drew from the buffers. A buffer still waiting
+    /// to be drawn in this frame is replaced rather than written to, so
+    /// the earlier draw keeps what it was given.
+    drawn_in: Option<u64>,
+}
+
+impl Default for GpuMesh {
+    /// Nothing uploaded yet.
+    fn default() -> Self {
+        GpuMesh {
+            vertices: GpuBuffer::default(),
+            indices: GpuBuffer::default(),
+            index_count: 0,
+            vertices_stale: true,
+            indices_stale: true,
+            drawn_in: None,
+        }
+    }
+}
+
+/// One GPU buffer and how many bytes it has room for.
+#[derive(Debug, Default)]
+struct GpuBuffer {
+    id: Option<BufferId>,
+    capacity: usize,
+}
+
+impl GpuBuffer {
+    /// Puts `bytes` in the buffer, making a new one if it is missing, too
+    /// small or `busy`. A buffer it replaces goes in `retired`.
+    fn fill(
+        &mut self,
+        backend: &mut dyn Backend,
+        usage: BufferUsage,
+        bytes: &[u8],
+        busy: bool,
+        retired: &mut Vec<BufferId>,
+    ) -> Result<(), String> {
+        if let Some(id) = self.id
+            && !busy
+            && bytes.len() <= self.capacity
+        {
+            return backend.update_buffer(id, 0, bytes);
+        }
+        // Room to grow, so a mesh that keeps getting longer is not given a
+        // new buffer every time.
+        let capacity = bytes.len().next_power_of_two();
+        let mut padded = Vec::with_capacity(capacity);
+        padded.extend_from_slice(bytes);
+        padded.resize(capacity, 0);
+        let id = backend.create_buffer(usage, &padded)?;
+        retired.extend(self.id.replace(id));
+        self.capacity = capacity;
+        Ok(())
+    }
+}
+
+impl Drop for GpuMesh {
+    fn drop(&mut self) {
+        let ids: Vec<BufferId> = [self.vertices.id, self.indices.id]
+            .into_iter()
+            .flatten()
+            .collect();
+        if !ids.is_empty() {
+            // A frame may still be waiting to draw from them. If the game
+            // has already shut down, the backend freed everything.
+            context::try_with(|ctx| ctx.gfx.retire_buffers(&ids));
+        }
+    }
+}
+
+/// Where a mesh's geometry is on the GPU.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GpuGeometry {
+    pub vertices: BufferId,
+    pub indices: BufferId,
+    pub index_count: u32,
 }
 
 impl Mesh {
@@ -104,7 +212,20 @@ impl Mesh {
             texture: None,
             vertex_map: None,
             draw_range: None,
+            gpu: RefCell::default(),
         }
+    }
+
+    /// Notes that the vertices changed, and with them maybe the triangles.
+    fn vertices_changed(&mut self, count_changed: bool) {
+        let gpu = self.gpu.get_mut();
+        gpu.vertices_stale = true;
+        gpu.indices_stale |= count_changed;
+    }
+
+    /// Notes that which triangles are drawn changed.
+    fn triangles_changed(&mut self) {
+        self.gpu.get_mut().indices_stale = true;
     }
 
     /// How many vertices the mesh has.
@@ -120,6 +241,7 @@ impl Mesh {
     /// Replaces the vertex at `index`. Panics if there is none.
     pub fn set_vertex(&mut self, index: usize, vertex: MeshVertex) {
         self.vertices[index] = vertex;
+        self.vertices_changed(false);
     }
 
     /// All the vertices in order.
@@ -129,14 +251,28 @@ impl Mesh {
 
     /// Replaces all the vertices. The count may change.
     pub fn set_vertices(&mut self, vertices: &[MeshVertex]) {
+        let count_changed = self.vertices.len() != vertices.len();
         self.vertices.clear();
         self.vertices.extend_from_slice(vertices);
+        self.vertices_changed(count_changed);
     }
 
-    /// Does nothing: a mesh's vertices are read straight from it each time
-    /// it is drawn. LÖVE's `Mesh:flush` sends changed vertices to the GPU
-    /// early, so ported code can keep calling this.
-    pub fn flush(&self) {}
+    /// Sends changed vertices to the GPU now rather than when the mesh is
+    /// next drawn, as LÖVE's `Mesh:flush` does. Drawing does it anyway, so
+    /// this is only ever needed to choose when the work happens.
+    pub fn flush(&self) {
+        if self.mode == MeshDrawMode::Points {
+            return;
+        }
+        context::with(|ctx| {
+            let frame = ctx.gfx.frame_number();
+            let mut retired = Vec::new();
+            if let Err(message) = self.upload(&mut *ctx.backend, frame, &mut retired, false) {
+                eprintln!("smitten: could not send a mesh to the GPU: {message}");
+            }
+            ctx.gfx.retire_buffers(&retired);
+        });
+    }
 
     /// How the vertices are joined into triangles.
     pub fn draw_mode(&self) -> MeshDrawMode {
@@ -146,6 +282,7 @@ impl Mesh {
     /// Changes how the vertices are joined into triangles.
     pub fn set_draw_mode(&mut self, mode: MeshDrawMode) {
         self.mode = mode;
+        self.triangles_changed();
     }
 
     /// The image stretched over the mesh, if any.
@@ -171,6 +308,7 @@ impl Mesh {
     /// An index with no vertex is skipped when drawing.
     pub fn set_vertex_map(&mut self, map: Option<&[u32]>) {
         self.vertex_map = map.map(<[u32]>::to_vec);
+        self.triangles_changed();
     }
 
     /// The part of the mesh that is drawn, as `(start, count)`.
@@ -182,6 +320,103 @@ impl Mesh {
     /// map if there is one. `None` draws everything.
     pub fn set_draw_range(&mut self, range: Option<(usize, usize)>) {
         self.draw_range = range;
+        self.triangles_changed();
+    }
+
+    /// The indices of the vertices that are drawn, in visiting order:
+    /// through the vertex map if there is one, skipping indices with no
+    /// vertex, and limited to the draw range.
+    fn visited(&self) -> Vec<u32> {
+        let count = self.vertices.len() as u32;
+        let visited: Vec<u32> = match &self.vertex_map {
+            Some(map) => map.iter().copied().filter(|&index| index < count).collect(),
+            None => (0..count).collect(),
+        };
+        match self.draw_range {
+            Some((start, count)) => {
+                let start = start.min(visited.len());
+                let end = start.saturating_add(count).min(visited.len());
+                visited[start..end].to_vec()
+            }
+            None => visited,
+        }
+    }
+
+    /// The vertex indices of the triangles the mesh is made of, three
+    /// each. Empty for [`MeshDrawMode::Points`], which has none.
+    fn triangle_indices(&self) -> Vec<u32> {
+        let visited = self.visited();
+        match self.mode {
+            MeshDrawMode::Triangles => {
+                let whole = visited.len() - visited.len() % 3;
+                visited[..whole].to_vec()
+            }
+            MeshDrawMode::Fan => visited
+                .get(1..)
+                .unwrap_or_default()
+                .windows(2)
+                .flat_map(|pair| [visited[0], pair[0], pair[1]])
+                .collect(),
+            MeshDrawMode::Strip => visited.windows(3).flatten().copied().collect(),
+            MeshDrawMode::Points => Vec::new(),
+        }
+    }
+
+    /// Brings the GPU copy of the mesh up to date for a draw in `frame`,
+    /// or for later with `for_draw` off. Returns where it is, or `None`
+    /// if there are no triangles to draw. Buffers it replaces go in
+    /// `retired`.
+    pub(crate) fn upload(
+        &self,
+        backend: &mut dyn Backend,
+        frame: u64,
+        retired: &mut Vec<BufferId>,
+        for_draw: bool,
+    ) -> Result<Option<GpuGeometry>, String> {
+        let mut gpu = self.gpu.borrow_mut();
+        let gpu = &mut *gpu;
+        let busy = gpu.drawn_in == Some(frame);
+        if gpu.indices_stale {
+            let indices = self.triangle_indices();
+            if !indices.is_empty() {
+                let bytes: Vec<u8> = indices
+                    .iter()
+                    .flat_map(|index| index.to_le_bytes())
+                    .collect();
+                gpu.indices
+                    .fill(backend, BufferUsage::Index, &bytes, busy, retired)?;
+            }
+            gpu.index_count = indices.len() as u32;
+            gpu.indices_stale = false;
+        }
+        if gpu.vertices_stale && !self.vertices.is_empty() {
+            let bytes: Vec<u8> = self
+                .vertices
+                .iter()
+                .flat_map(|vertex| {
+                    let MeshVertex { x, y, u, v, color } = *vertex;
+                    [x, y, u, v, color.r, color.g, color.b, color.a]
+                })
+                .flat_map(f32::to_le_bytes)
+                .collect();
+            gpu.vertices
+                .fill(backend, BufferUsage::Vertex, &bytes, busy, retired)?;
+            gpu.vertices_stale = false;
+        }
+        let (Some(vertices), Some(indices)) = (gpu.vertices.id, gpu.indices.id) else {
+            return Ok(None);
+        };
+        if gpu.index_count == 0 {
+            return Ok(None);
+        }
+        if for_draw {
+            gpu.drawn_in = Some(frame);
+        }
+        Ok(Some(GpuGeometry {
+            vertices,
+            indices,
+            index_count: gpu.index_count,
+        }))
     }
 
     /// The mesh as a list of separate triangles, placed by `transform`
@@ -196,23 +431,6 @@ impl Mesh {
         point_size: f32,
         out: &mut Vec<Vertex>,
     ) {
-        // The vertices in visiting order.
-        let visited: Vec<MeshVertex> = match &self.vertex_map {
-            Some(map) => map
-                .iter()
-                .filter_map(|&index| self.vertices.get(index as usize).copied())
-                .collect(),
-            None => self.vertices.clone(),
-        };
-        let visited = match self.draw_range {
-            Some((start, count)) => {
-                let start = start.min(visited.len());
-                let end = start.saturating_add(count).min(visited.len());
-                &visited[start..end]
-            }
-            None => &visited[..],
-        };
-
         let place = |vertex: &MeshVertex| {
             let (x, y) = transform.apply(vertex.x, vertex.y);
             Vertex {
@@ -227,24 +445,17 @@ impl Mesh {
             }
         };
         match self.mode {
-            MeshDrawMode::Triangles => {
-                let whole = visited.len() - visited.len() % 3;
-                out.extend(visited[..whole].iter().map(place));
-            }
-            MeshDrawMode::Fan => {
-                for pair in visited.get(1..).unwrap_or_default().windows(2) {
-                    out.extend([&visited[0], &pair[0], &pair[1]].map(place));
-                }
-            }
-            MeshDrawMode::Strip => {
-                for triple in visited.windows(3) {
-                    out.extend(triple.iter().map(place));
-                }
+            MeshDrawMode::Triangles | MeshDrawMode::Fan | MeshDrawMode::Strip => {
+                out.extend(
+                    self.triangle_indices()
+                        .into_iter()
+                        .map(|index| place(&self.vertices[index as usize])),
+                );
             }
             MeshDrawMode::Points => {
                 let half = point_size / 2.0;
-                for vertex in visited {
-                    let center = place(vertex);
+                for index in self.visited() {
+                    let center = place(&self.vertices[index as usize]);
                     let [x, y] = center.position;
                     let corner = |dx: f32, dy: f32| Vertex {
                         position: [x + dx, y + dy],

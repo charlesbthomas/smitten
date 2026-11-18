@@ -34,7 +34,10 @@ mod video;
 
 use std::path::Path;
 
-use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId, Vertex};
+use smitten_core::backend::{
+    Backend, BufferId, ColorMask, Frame, MeshDraw, Pass, RenderTargetDesc, Scissor, TextureId,
+    Vertex,
+};
 
 use crate::context;
 use smitten_core::{PixelFormat, StencilMode};
@@ -123,6 +126,11 @@ pub(crate) struct GraphicsState {
     mesh_cull: CullMode,
     /// Which winding faces the viewer.
     front_face: VertexWinding,
+    /// Counts the frames handed to the backend.
+    frame_number: u64,
+    /// GPU buffers no longer wanted, freed once the frame that may still
+    /// draw from them has been handed to the backend.
+    retired_buffers: Vec<BufferId>,
 }
 
 /// Called with the finished frame by [`capture_screenshot`].
@@ -151,6 +159,8 @@ impl Default for GraphicsState {
             screenshots: Vec::new(),
             mesh_cull: CullMode::default(),
             front_face: VertexWinding::default(),
+            frame_number: 0,
+            retired_buffers: Vec::new(),
         }
     }
 }
@@ -340,11 +350,13 @@ impl GraphicsState {
     /// way the picture is the same whatever is covering the window.
     fn read_screen(&mut self, backend: &mut dyn Backend) -> Result<ImageData, String> {
         let (width, height) = backend.size_in_pixels();
-        // Multisampled as the screen is, so the picture matches it.
-        let target = match backend.screen_msaa() {
-            1 => backend.create_render_target(width, height)?,
-            samples => backend.create_msaa_render_target(width, height, samples)?,
-        };
+        // Multisampled and encoded as the screen is, so the picture
+        // matches it.
+        let target = backend.create_render_target_with(&RenderTargetDesc {
+            format: normal_format(backend),
+            samples: backend.screen_msaa(),
+            ..RenderTargetDesc::new(width, height)
+        })?;
         let passes: Vec<Pass> = self
             .batch
             .passes
@@ -372,9 +384,23 @@ impl GraphicsState {
     }
 
     /// Called once the frame has been handed to the backend.
-    pub(crate) fn end_frame(&mut self) {
+    pub(crate) fn end_frame(&mut self, backend: &mut dyn Backend) {
         self.batch.clear();
         self.set_canvas(None);
+        for buffer in self.retired_buffers.drain(..) {
+            backend.destroy_buffer(buffer);
+        }
+        self.frame_number += 1;
+    }
+
+    /// Which frame is being queued, counting from 0.
+    pub(crate) fn frame_number(&self) -> u64 {
+        self.frame_number
+    }
+
+    /// Frees GPU buffers once nothing queued can draw from them.
+    pub(crate) fn retire_buffers(&mut self, buffers: &[BufferId]) {
+        self.retired_buffers.extend_from_slice(buffers);
     }
 
     /// How units of the current target become its pixels.
@@ -439,6 +465,7 @@ impl GraphicsState {
     pub(crate) fn frame(&self) -> Frame<'_> {
         Frame {
             vertices: &self.batch.vertices,
+            meshes: &self.batch.meshes,
             calls: &self.batch.calls,
             uniforms: &self.batch.uniforms,
             textures: &self.batch.textures,
@@ -621,19 +648,48 @@ impl GraphicsState {
     }
 
     /// Queues the triangles of `mesh`, placed by `local`.
-    fn push_mesh(&mut self, mesh: &Mesh, local: &Transform) {
+    fn push_mesh(&mut self, backend: &mut dyn Backend, mesh: &Mesh, local: &Transform) {
         let transform = self.device().then_inner(local);
+        let (texture, filter) = match mesh.texture() {
+            Some(image) => (Some(image.texture()), image.filter()),
+            None => (None, Filter::default()),
+        };
+        // Points are squares that do not turn with the transform, which
+        // the GPU cannot draw from the mesh's own vertices, so they are
+        // made here like other shapes.
+        if mesh.draw_mode() != MeshDrawMode::Points {
+            let mut retired = Vec::new();
+            let uploaded = mesh.upload(backend, self.frame_number, &mut retired, true);
+            self.retired_buffers.extend(retired);
+            match uploaded {
+                Ok(Some(geometry)) => {
+                    self.batch.cull = self.mesh_cull.culled(self.front_face);
+                    self.batch.push_mesh(
+                        texture,
+                        filter,
+                        MeshDraw {
+                            vertices: geometry.vertices,
+                            indices: geometry.indices,
+                            first_index: 0,
+                            index_count: geometry.index_count,
+                            transform: transform.gpu_matrix(),
+                            tint: color_array(self.color),
+                        },
+                    );
+                    self.batch.cull = None;
+                    return;
+                }
+                Ok(None) => return,
+                // Drawn the slower way instead.
+                Err(message) => eprintln!("smitten: could not send a mesh to the GPU: {message}"),
+            }
+        }
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
         let point_size = self.point_size * self.target_scale();
         mesh.write_vertices(&transform, self.color, point_size, &mut vertices);
         self.batch.cull = self.mesh_cull.culled(self.front_face);
-        match mesh.texture() {
-            Some(image) => self
-                .batch
-                .push(Some(image.texture()), image.filter(), &vertices),
-            None => self.batch.push(None, Filter::default(), &vertices),
-        }
+        self.batch.push(texture, filter, &vertices);
         self.batch.cull = None;
         self.scratch = vertices;
     }
@@ -1288,7 +1344,7 @@ pub(crate) fn present_frame() {
         } else {
             ctx.backend.present(&ctx.gfx.frame());
         }
-        ctx.gfx.end_frame();
+        ctx.gfx.end_frame(&mut *ctx.backend);
         screenshots
     });
     for (callback, picture) in screenshots {
@@ -1310,11 +1366,22 @@ pub fn is_active() -> bool {
 /// draws in order without help, so there is nothing to flush early.
 pub fn flush_batch() {}
 
-/// Whether colors are blended in linear space, the equivalent of
-/// `love.graphics.isGammaCorrect`. Always `false`: smitten blends in sRGB
-/// space, as LÖVE does unless `t.gammacorrect` is set.
+/// Whether colors are blended in linear light, the equivalent of
+/// `love.graphics.isGammaCorrect`. True when
+/// [`Config::gamma_correct`](crate::Config::gamma_correct) was set and the
+/// display allows it.
 pub fn is_gamma_correct() -> bool {
-    false
+    context::with(|ctx| ctx.backend.is_gamma_correct())
+}
+
+/// The format of an ordinary image or canvas: sRGB-encoded with
+/// gamma-correct rendering, as LÖVE's `normal` format is.
+pub(crate) fn normal_format(backend: &dyn Backend) -> PixelFormat {
+    if backend.is_gamma_correct() {
+        PixelFormat::Srgba8
+    } else {
+        PixelFormat::Rgba8
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1801,7 +1868,7 @@ pub fn draw_mesh(mesh: &Mesh, x: f32, y: f32) {
 #[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
 pub fn draw_mesh_ex(mesh: &Mesh, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_mesh(mesh, &local));
+    context::with(|ctx| ctx.gfx.push_mesh(&mut *ctx.backend, mesh, &local));
 }
 
 // ---------------------------------------------------------------------------
