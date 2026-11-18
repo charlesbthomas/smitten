@@ -77,12 +77,13 @@ fn main() {
 | `love.graphics.push("all")` | `graphics::push_all()` | Saves every drawing setting, not only the transform. `push_ex(StackType)` takes the kind. `pop` restores either. |
 | `love.graphics.getStackDepth()` | `graphics::stack_depth()` | |
 | `love.graphics.reset()` | `graphics::reset()` | |
-| `love.graphics.newFont(path, size)` | `graphics::new_font(path, size)` | |
+| `love.graphics.newFont(path, size)` | `graphics::new_font(path, size)` | A `.fnt` path loads a BMFont. `new_font_ex` takes the hinting and DPI scale. |
 | `love.graphics.newFont(size)` | `graphics::new_default_font(size)` | The same built-in font as LÖVE. |
-| `love.graphics.newImageFont(path, glyphs)` | `graphics::new_image_font(path, glyphs)` | Same image layout as LÖVE. `Font::from_image` takes the extra spacing. |
+| `love.graphics.newImageFont(path, glyphs)` | `graphics::new_image_font(path, glyphs)` | Same image layout as LÖVE. `new_image_font_ex` takes the extra spacing. |
 | `love.graphics.print(text, x, y)` | `graphics::print(text, x, y)` | `print_ex` takes the rotation, scale and origin. |
 | `love.graphics.printf(text, x, y, limit, align)` | `graphics::printf(text, x, y, limit, Align)` | |
 | `font:getWidth(text)` / `font:getWrap(text, limit)` | `font.width(text)` / `font.wrap(text, limit)` | |
+| `font:setFallbacks(...)` / `font:hasGlyphs(text)` | `font.set_fallbacks(&[&other])` / `font.has_glyphs(text)` | |
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |

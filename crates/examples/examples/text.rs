@@ -49,8 +49,8 @@ impl Game for Text {
         graphics::printf("Hello, Smitten", 0.0, 30.0, width, Align::Center);
 
         graphics::set_font(&self.body);
-        let column = (width - 80.0) / 3.0;
-        for (index, align) in [Align::Left, Align::Center, Align::Right]
+        let column = (width - 100.0) / 4.0;
+        for (index, align) in [Align::Left, Align::Center, Align::Right, Align::Justify]
             .into_iter()
             .enumerate()
         {
