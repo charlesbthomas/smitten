@@ -95,6 +95,7 @@ fn main() {
 | `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
 | `love.graphics.newCanvas(w, h, {msaa = 4})` / `canvas:getMSAA()` | `Canvas::with_msaa(w, h, 4)` / `canvas.msaa()` | The GPU may give fewer samples. |
 | `t.window.msaa` / `setMode(w, h, {msaa = 4})` | `Config::msaa` / `window::set_msaa(4)` | `window::msaa()` reads it back. |
+| `t.window.depth` / `t.window.stencil` | `Config::depth` / `Config::stencil` | The screen's depth bits (16, 24 or 32) and stencil buffer. Smitten defaults to 24 bits of depth and a stencil buffer. |
 | `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
 | `love.graphics.setCanvas{canvas, depthstencil = depth}` | `graphics::set_canvas_with_depth(&[CanvasTarget::new(&canvas)], &depth)` | `depth` is a canvas made with a depth format such as `PixelFormat::Depth24Stencil8`. `graphics::depth_stencil_canvas()` returns it. |
 | `texture:setDepthSampleMode("lequal")` / `getDepthSampleMode()` | `depth.set_depth_sample_mode(Some(CompareMode::LessEqual))` / `depth.depth_sample_mode()` | For a readable depth canvas, read in a shader as a `texture_depth_2d` with `textureSampleCompare`. |

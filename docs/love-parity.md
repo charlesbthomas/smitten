@@ -44,19 +44,12 @@ GPU features, such as depth canvases.
 
 ## graphics
 
-## Callbacks and `love.conf`
-
-- `love.conf` fields with no `Config` equivalent: `t.window.depth` and
-  `t.window.stencil`. Smitten always gives the screen both, so there is
-  nothing to ask for.
-
 ## Left out on purpose
 
 | Item | Why |
 |---|---|
 | KTX, ASTC and ETC textures | Only DDS files load. BC6H and PVRTC are missing too (`CompressedFormat` has BC1 to BC5 and BC7). |
 | `drawLayer` with a custom shader | The array-texture pipeline has its own shader. |
-| `RecordingDevice:getBitDepth` | Recorded samples are floats. |
 | macOS and web | The renderer is Vulkan only. |
 | Lua-only filesystem functions | `load`, `getRequirePath`, `setRequirePath`, `getCRequirePath`, `setCRequirePath`, `init`, `setSource` and the like have no Rust meaning. |
 | `love.threaderror`, the `Thread` type | Rust threads report panics through `JoinHandle`. |

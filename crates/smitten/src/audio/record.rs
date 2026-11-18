@@ -164,6 +164,14 @@ impl RecordingDevice {
     pub fn channel_count(&self) -> u16 {
         lock(&self.capture).channels
     }
+
+    /// How many bits each recorded sample has, the equivalent of
+    /// `RecordingDevice:getBitDepth`. Always 32: samples are recorded as
+    /// `f32`, whatever LÖVE game code would have asked for, so nothing is
+    /// lost to 8 or 16 bits.
+    pub fn bit_depth(&self) -> u32 {
+        32
+    }
 }
 
 impl fmt::Debug for RecordingDevice {

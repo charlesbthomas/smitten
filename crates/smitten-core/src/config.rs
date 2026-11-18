@@ -77,6 +77,17 @@ pub struct Config {
     /// edges of shapes and images, as `t.window.msaa`. 0 or 1 is none; 2,
     /// 4 and 8 are common. The GPU may give fewer than asked for.
     pub msaa: u32,
+    /// How many bits the screen's depth buffer has, as `t.window.depth`:
+    /// 16, 24 or 32, the last floating-point. LÖVE's default of none is
+    /// `None`, which here gives the smallest the GPU allows. The default
+    /// is `Some(24)`, so 3D meshes drawn with depth testing work out of
+    /// the box. Canvases have depth buffers of their own, or a depth
+    /// canvas's.
+    pub depth: Option<u8>,
+    /// Whether the screen has a stencil buffer, as `t.window.stencil`. On
+    /// by default, as in LÖVE. Without one, stencil drawing and tests on
+    /// the screen do nothing.
+    pub stencil: bool,
     /// Whether colors are blended in linear light, as `t.gammacorrect`.
     /// Gradients, blending and lighting then come out physically right.
     /// Images and canvases are stored sRGB-encoded, and colors from
@@ -115,6 +126,8 @@ impl Default for Config {
             console: false,
             vsync: true,
             msaa: 0,
+            depth: Some(24),
+            stencil: true,
             gamma_correct: false,
             hot_reload: cfg!(debug_assertions),
         }
