@@ -59,7 +59,7 @@ pub use canvas::{Canvas, CanvasSettings, MipmapMode};
 pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::{ImageData, ImageFormat, is_compressed};
-pub use layered::{ArrayImage, CubeImage};
+pub use layered::{ArrayImage, CubeImage, VolumeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
 pub use shader::{MatrixLayout, Shader, ShaderError, Texture, UniformValue};
@@ -2315,6 +2315,16 @@ pub fn new_array_image(paths: &[impl AsRef<Path>]) -> ArrayImage {
 /// [`CubeImage::from_files`] to handle the failure instead.
 pub fn new_cube_image(paths: &[impl AsRef<Path>; 6]) -> CubeImage {
     CubeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads an image file for each slice of a [`VolumeImage`], front to
+/// back, the equivalent of `love.graphics.newVolumeImage`. They must all
+/// be the same size.
+///
+/// Panics with the reason if it cannot be made. Use
+/// [`VolumeImage::from_files`] to handle the failure instead.
+pub fn new_volume_image(paths: &[impl AsRef<Path>]) -> VolumeImage {
+    VolumeImage::from_files(paths).unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Loads a DDS file of compressed pixels, the equivalent of
