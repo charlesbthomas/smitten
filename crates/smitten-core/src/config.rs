@@ -37,6 +37,10 @@ pub struct Config {
     pub identity: Option<String>,
     /// Whether presentation waits for the display's vertical sync.
     pub vsync: bool,
+    /// How many samples each pixel of the screen holds, to smooth the
+    /// edges of shapes and images, as `t.window.msaa`. 0 or 1 is none; 2,
+    /// 4 and 8 are common. The GPU may give fewer than asked for.
+    pub msaa: u32,
     /// Whether images, shaders, fonts and sounds are loaded again when
     /// their files change on disk while the game runs. On by default in debug builds, so
     /// `cargo run` picks up edits, and off in release builds.
@@ -57,6 +61,7 @@ impl Default for Config {
             icon: None,
             identity: None,
             vsync: true,
+            msaa: 0,
             hot_reload: cfg!(debug_assertions),
         }
     }

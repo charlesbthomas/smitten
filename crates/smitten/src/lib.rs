@@ -257,6 +257,9 @@ pub fn run<G: Game>(config: Config) {
         ctx.gfx
             .screen
             .update(ctx.backend.size_in_pixels(), ctx.backend.dpi_scale());
+        if config.msaa > 1 {
+            ctx.backend.set_screen_msaa(config.msaa);
+        }
     });
     if let Some(icon) = &config.icon {
         window::set_icon(icon);

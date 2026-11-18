@@ -325,7 +325,11 @@ impl GraphicsState {
     /// way the picture is the same whatever is covering the window.
     fn read_screen(&mut self, backend: &mut dyn Backend) -> Result<ImageData, String> {
         let (width, height) = backend.size_in_pixels();
-        let target = backend.create_render_target(width, height)?;
+        // Multisampled as the screen is, so the picture matches it.
+        let target = match backend.screen_msaa() {
+            1 => backend.create_render_target(width, height)?,
+            samples => backend.create_msaa_render_target(width, height, samples)?,
+        };
         let passes: Vec<Pass> = self
             .batch
             .passes

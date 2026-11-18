@@ -320,3 +320,23 @@ pub fn to_pixels(units: f32) -> f32 {
 pub fn from_pixels(pixels: f32) -> f32 {
     pixels / dpi_scale()
 }
+
+/// How many samples each pixel of the screen holds, 1 for none: the
+/// `msaa` of `love.window.getMode`. It may be fewer than
+/// [`Config::msaa`](crate::Config::msaa) asked for, if the GPU cannot do
+/// that many.
+pub fn msaa() -> u32 {
+    context::with(|ctx| ctx.backend.screen_msaa())
+}
+
+/// Smooths the edges of what is drawn to the screen with `samples`
+/// samples per pixel, or stops for 0 or 1, the `msaa` flag of LÖVE's
+/// `setMode`. Returns how many samples the GPU gave, which may be fewer.
+///
+/// Canvases are not affected; see
+/// [`Canvas::with_msaa`](crate::graphics::Canvas::with_msaa). With a
+/// [`Scaling::PixelPerfect`](crate::Scaling::PixelPerfect) design size the
+/// game draws to a canvas first, so this does not smooth it.
+pub fn set_msaa(samples: u32) -> u32 {
+    context::with(|ctx| ctx.backend.set_screen_msaa(samples))
+}

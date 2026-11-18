@@ -628,7 +628,29 @@ impl Backend for SdlBackend {
     }
 
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
-        self.renderer.create_render_target(width, height, None)
+        self.renderer.create_render_target(width, height, None, 1)
+    }
+
+    fn create_msaa_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        samples: u32,
+    ) -> Result<TextureId, String> {
+        self.renderer
+            .create_render_target(width, height, None, samples)
+    }
+
+    fn texture_msaa(&self, texture: TextureId) -> u32 {
+        self.renderer.texture_msaa(texture)
+    }
+
+    fn set_screen_msaa(&mut self, samples: u32) -> u32 {
+        self.renderer.set_screen_msaa(samples)
+    }
+
+    fn screen_msaa(&self) -> u32 {
+        self.renderer.screen_msaa()
     }
 
     fn create_mipmapped_render_target(
@@ -638,7 +660,7 @@ impl Backend for SdlBackend {
         automatic: bool,
     ) -> Result<TextureId, String> {
         self.renderer
-            .create_render_target(width, height, Some(automatic))
+            .create_render_target(width, height, Some(automatic), 1)
     }
 
     fn generate_mipmaps(&mut self, texture: TextureId) -> Result<(), String> {

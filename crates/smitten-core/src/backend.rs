@@ -524,6 +524,28 @@ pub trait Backend {
     /// transparent, and keeps its contents between frames.
     fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String>;
 
+    /// Creates a render target as [`Backend::create_render_target`] does,
+    /// multisampled with as many samples per pixel as the GPU allows up
+    /// to `samples`. It is drawn and read like any other.
+    fn create_msaa_render_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        samples: u32,
+    ) -> Result<TextureId, String>;
+
+    /// How many samples each pixel of a render target holds, 1 if it is
+    /// not multisampled.
+    fn texture_msaa(&self, texture: TextureId) -> u32;
+
+    /// Multisamples the screen with as many samples per pixel as the GPU
+    /// allows up to `samples`, or stops multisampling it for 1 or less.
+    /// Returns how many samples are used.
+    fn set_screen_msaa(&mut self, samples: u32) -> u32;
+
+    /// How many samples each pixel of the screen holds, 1 for none.
+    fn screen_msaa(&self) -> u32;
+
     /// As `create_render_target`, with a full chain of mipmaps that start
     /// out blended as those of `create_mipmapped_texture` do. With
     /// `automatic`, the mipmaps are made again whenever a frame has drawn
