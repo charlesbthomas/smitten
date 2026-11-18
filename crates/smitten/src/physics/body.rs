@@ -4,7 +4,7 @@ use std::rc::Rc;
 use rapier2d::prelude::*;
 
 use super::world::{Inner, Shared};
-use super::{Fixture, Joint, Touch, World};
+use super::{Fixture, Joint, Shape, Touch, World};
 
 /// How a body takes part in the simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -665,37 +665,32 @@ impl Body {
         Fixture::new(&self.world, handle)
     }
 
+    /// Gives the body a copy of `shape` as a new fixture, LÖVE's
+    /// `newFixture`. The fixture's density starts at 1.0.
+    pub fn add_shape(&self, shape: &Shape) -> Fixture {
+        self.add(ColliderBuilder::new(shape.shape.clone()).position(shape.offset))
+    }
+
     /// Gives the body a circle centered on its origin.
     pub fn add_circle(&self, radius: f32) -> Fixture {
-        self.add_circle_at(0.0, 0.0, radius)
+        self.add_shape(&Shape::circle(radius))
     }
 
     /// Gives the body a circle centered `(x, y)` from its origin.
     pub fn add_circle_at(&self, x: f32, y: f32, radius: f32) -> Fixture {
-        assert!(
-            radius > 0.0,
-            "a circle needs a positive radius, got {radius}"
-        );
-        self.add(ColliderBuilder::ball(radius).translation(Vector::new(x, y)))
+        self.add_shape(&Shape::circle_at(x, y, radius))
     }
 
     /// Gives the body a rectangle of `width` by `height` centered on its
     /// origin.
     pub fn add_rectangle(&self, width: f32, height: f32) -> Fixture {
-        self.add_rectangle_at(0.0, 0.0, width, height, 0.0)
+        self.add_shape(&Shape::rectangle(width, height))
     }
 
     /// Gives the body a rectangle centered `(x, y)` from its origin and
     /// turned by `angle` radians.
     pub fn add_rectangle_at(&self, x: f32, y: f32, width: f32, height: f32, angle: f32) -> Fixture {
-        assert!(
-            width > 0.0 && height > 0.0,
-            "a rectangle needs a positive size, got {width} by {height}"
-        );
-        self.add(
-            ColliderBuilder::cuboid(width / 2.0, height / 2.0)
-                .position(Pose::new(Vector::new(x, y), angle)),
-        )
+        self.add_shape(&Shape::rectangle_at(x, y, width, height, angle))
     }
 
     /// Gives the body a polygon with these corners, measured from its
@@ -704,19 +699,13 @@ impl Body {
     ///
     /// Panics if the points do not span an area.
     pub fn add_polygon(&self, points: &[(f32, f32)]) -> Fixture {
-        let points: Vec<Vector> = points.iter().map(|&(x, y)| Vector::new(x, y)).collect();
-        let collider = ColliderBuilder::convex_hull(&points)
-            .expect("a polygon needs at least three corners that are not in a line");
-        self.add(collider)
+        self.add_shape(&Shape::polygon(points))
     }
 
     /// Gives the body a thin line from `(x1, y1)` to `(x2, y2)`, measured
     /// from its origin. Best on static bodies, as ground or walls.
     pub fn add_edge(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Fixture {
-        self.add(ColliderBuilder::segment(
-            Vector::new(x1, y1),
-            Vector::new(x2, y2),
-        ))
+        self.add_shape(&Shape::edge(x1, y1, x2, y2))
     }
 
     /// Gives the body a chain of lines through these points, measured
@@ -725,14 +714,7 @@ impl Body {
     ///
     /// Panics with fewer than two points.
     pub fn add_chain(&self, points: &[(f32, f32)], closed: bool) -> Fixture {
-        assert!(points.len() >= 2, "a chain needs at least two points");
-        let vertices: Vec<Vector> = points.iter().map(|&(x, y)| Vector::new(x, y)).collect();
-        let count = vertices.len() as u32;
-        let mut indices: Vec<[u32; 2]> = (0..count - 1).map(|index| [index, index + 1]).collect();
-        if closed && count > 2 {
-            indices.push([count - 1, 0]);
-        }
-        self.add(ColliderBuilder::polyline(vertices, Some(indices)))
+        self.add_shape(&Shape::chain(points, closed))
     }
 }
 

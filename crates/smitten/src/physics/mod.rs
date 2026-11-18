@@ -38,6 +38,7 @@
 mod body;
 mod fixture;
 mod joint;
+mod shape;
 mod world;
 
 #[cfg(test)]
@@ -46,4 +47,5 @@ mod tests;
 pub use body::{Body, BodyType};
 pub use fixture::Fixture;
 pub use joint::{Joint, JointType};
+pub use shape::{Shape, ShapeType};
 pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};

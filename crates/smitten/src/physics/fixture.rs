@@ -4,7 +4,7 @@ use std::rc::Rc;
 use rapier2d::prelude::*;
 
 use super::world::Shared;
-use super::{Body, RayHit};
+use super::{Body, RayHit, Shape};
 
 /// Box2D's defaults, which LÖVE games are tuned around.
 pub(super) const DEFAULT_DENSITY: f32 = 1.0;
@@ -214,6 +214,45 @@ impl Fixture {
             let aabb = collider.compute_aabb();
             (aabb.mins.x, aabb.mins.y, aabb.maxs.x, aabb.maxs.y)
         })
+    }
+
+    /// A copy of the fixture's shape, measured from its body's origin.
+    pub fn shape(&self) -> Shape {
+        self.read(|collider| {
+            Shape::new(
+                collider.shared_shape().clone(),
+                collider
+                    .position_wrt_parent()
+                    .copied()
+                    .unwrap_or(Pose::IDENTITY),
+            )
+        })
+    }
+
+    /// Gives the fixture a new shape, keeping everything else about it,
+    /// and updates its body's mass. This is how a circle grows or moves:
+    /// `fixture.set_shape(&fixture.shape().with_radius(20.0))`. LÖVE
+    /// changes a fixture's shape in place with methods such as
+    /// `CircleShape:setRadius`.
+    pub fn set_shape(&self, shape: &Shape) -> &Fixture {
+        let mut inner = self.world.borrow_mut();
+        let world = &mut inner.world;
+        let collider = world
+            .colliders
+            .get_mut(self.handle)
+            .expect("this fixture was destroyed");
+        collider.set_shape(shape.shape.clone());
+        collider.set_position_wrt_parent(shape.offset);
+        let parent = collider.parent();
+        if let Some(body) = parent.and_then(|parent| world.bodies.get_mut(parent)) {
+            body.recompute_mass_properties_from_colliders(&world.colliders);
+            body.wake_up(true);
+        }
+        world
+            .bodies
+            .propagate_modified_body_positions_to_colliders(&mut world.colliders);
+        drop(inner);
+        self
     }
 
     /// Where the line from `(x1, y1)` to `(x2, y2)` first runs into this

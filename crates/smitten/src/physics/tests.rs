@@ -1137,3 +1137,105 @@ fn joints_know_their_reference_angle_axis_and_each_limit() {
     assert_eq!((hinge.lower_limit(), hinge.upper_limit()), (-0.5, 1.0));
     assert_eq!(hinge.limits(), (-0.5, 1.0));
 }
+
+#[test]
+fn shapes_describe_themselves() {
+    let circle = Shape::circle_at(5.0, 0.0, 10.0);
+    assert_eq!(circle.kind(), ShapeType::Circle);
+    assert_eq!((circle.radius(), circle.point()), (10.0, (5.0, 0.0)));
+    assert_eq!(circle.child_count(), 1);
+    assert!(circle.points().is_empty());
+
+    let rectangle = Shape::rectangle_at(10.0, 0.0, 20.0, 10.0, 0.0);
+    assert_eq!(rectangle.kind(), ShapeType::Polygon);
+    assert_eq!(rectangle.radius(), 0.0);
+    let corners = rectangle.points();
+    assert_eq!(corners.len(), 4);
+    assert!(corners.iter().any(|&p| close(p, (0.0, -5.0))));
+    assert!(corners.iter().any(|&p| close(p, (20.0, 5.0))));
+
+    let triangle = Shape::polygon(&[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]);
+    assert_eq!(
+        (triangle.kind(), triangle.vertex_count()),
+        (ShapeType::Polygon, 3)
+    );
+
+    let edge = Shape::edge(0.0, 0.0, 10.0, 0.0);
+    assert_eq!(edge.kind(), ShapeType::Edge);
+    assert_eq!(edge.points(), vec![(0.0, 0.0), (10.0, 0.0)]);
+
+    let chain = Shape::chain(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], true);
+    assert_eq!(chain.kind(), ShapeType::Chain);
+    assert_eq!((chain.vertex_count(), chain.child_count()), (3, 3));
+    assert_eq!(chain.child_edge(2).points(), vec![(10.0, 10.0), (0.0, 0.0)]);
+    let open = Shape::chain(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false);
+    assert_eq!(open.child_count(), 2);
+}
+
+#[test]
+fn shapes_can_be_queried_where_a_body_would_put_them() {
+    let rectangle = Shape::rectangle(20.0, 10.0);
+    // Turned a quarter, on a body at (100, 100).
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (left, top, right, bottom) = rectangle.bounding_box(100.0, 100.0, quarter);
+    assert!((left - 95.0).abs() < 1e-3 && (right - 105.0).abs() < 1e-3);
+    assert!((top - 90.0).abs() < 1e-3 && (bottom - 110.0).abs() < 1e-3);
+    assert!(rectangle.test_point(100.0, 100.0, quarter, 100.0, 108.0));
+    assert!(!rectangle.test_point(100.0, 100.0, quarter, 108.0, 100.0));
+
+    let (nx, ny, fraction) = rectangle
+        .ray_cast(0.0, 100.0, 200.0, 100.0, 100.0, 100.0, quarter)
+        .expect("a hit");
+    assert!((nx + 1.0).abs() < 1e-3 && ny.abs() < 1e-3);
+    assert!((fraction - 95.0 / 200.0).abs() < 1e-3);
+    assert!(
+        rectangle
+            .ray_cast(0.0, 0.0, 200.0, 0.0, 100.0, 100.0, 0.0)
+            .is_none()
+    );
+
+    // Thirty units to a meter: a 30 by 60 rectangle is two square
+    // meters.
+    let (x, y, mass, inertia) =
+        Shape::rectangle_at(15.0, 0.0, 30.0, 60.0, 0.0).compute_mass(1.0, 30.0);
+    assert!(close((x, y), (15.0, 0.0)));
+    assert!((mass - 2.0).abs() < 1e-3 && inertia > 0.0);
+    assert_eq!(
+        Shape::edge(0.0, 0.0, 1.0, 0.0).compute_mass(1.0, 30.0).2,
+        0.0
+    );
+}
+
+#[test]
+fn fixtures_are_made_from_shapes_and_can_change_shape() {
+    let (world, _) = world_with_floor();
+    let ball = world.new_body(400.0, 300.0, BodyType::Dynamic);
+    let shape = Shape::circle(10.0);
+    let fixture = ball.add_shape(&shape);
+    assert_eq!(fixture.shape(), shape);
+    let small = ball.mass();
+
+    fixture.set_shape(&fixture.shape().with_radius(20.0));
+    assert_eq!(fixture.shape().radius(), 20.0);
+    assert!((ball.mass() / small - 4.0).abs() < 1e-3);
+    run(&world, 3.0);
+    assert!((ball.y() - 480.0).abs() < 2.0, "rests at {}", ball.y());
+
+    fixture.set_shape(&fixture.shape().with_point(0.0, -10.0));
+    assert_eq!(fixture.shape().point(), (0.0, -10.0));
+    run(&world, 3.0);
+    assert!((ball.y() - 490.0).abs() < 2.0, "rests at {}", ball.y());
+
+    let box_ = world.new_body(200.0, 300.0, BodyType::Dynamic);
+    let fixture = box_.add_rectangle_at(5.0, 0.0, 20.0, 10.0, 0.0);
+    assert_eq!(
+        fixture.shape(),
+        Shape::rectangle_at(5.0, 0.0, 20.0, 10.0, 0.0)
+    );
+}
+
+#[test]
+#[should_panic(expected = "only circles do")]
+fn asking_a_polygon_for_its_center_point_panics() {
+    Shape::rectangle(10.0, 10.0).point();
+}
