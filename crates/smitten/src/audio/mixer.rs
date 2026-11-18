@@ -294,7 +294,7 @@ impl Voice {
             * f64::from(self.pitch.max(0.0))
             * f64::from(pitch);
 
-        for output in out.chunks_exact_mut(2) {
+        for output in out.as_chunks_mut::<2>().0 {
             let mut index = self.position as u64;
             let mut found = self.data.frame(index);
             if found.is_none() {
@@ -328,7 +328,7 @@ impl Voice {
 /// `to` over the length of the buffer.
 fn apply_gains(samples: &mut [f32], from: [f32; 2], to: [f32; 2]) {
     let frames = (samples.len() / 2).max(1) as f32;
-    for (i, frame) in samples.chunks_exact_mut(2).enumerate() {
+    for (i, frame) in samples.as_chunks_mut::<2>().0.iter_mut().enumerate() {
         let through = (i + 1) as f32 / frames;
         for channel in 0..2 {
             frame[channel] *= from[channel] + (to[channel] - from[channel]) * through;
@@ -805,7 +805,11 @@ mod tests {
     fn left(mixer: &mut Mixer, frames: usize) -> Vec<f32> {
         let mut out = vec![0.0; frames * 2];
         mixer.mix(&mut out);
-        out.chunks_exact(2).map(|frame| frame[0]).collect()
+        out.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|frame| frame[0])
+            .collect()
     }
 
     #[test]

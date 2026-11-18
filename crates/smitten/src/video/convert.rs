@@ -21,7 +21,7 @@ pub(super) fn to_rgba(planes: &YCbCrRef<'_>, info: &Info, rgba: &mut [u8]) {
         let luma_row = plane_row(luma, y);
         let cb_row = plane_row(cb, y >> y_shift);
         let cr_row = plane_row(cr, y >> y_shift);
-        for (column, pixel) in out.chunks_exact_mut(4).enumerate() {
+        for (column, pixel) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let x = left + column;
             let c = 298 * (i32::from(luma_row[x]) - 16);
             let d = i32::from(cb_row[x >> x_shift]) - 128;

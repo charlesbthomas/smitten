@@ -534,7 +534,9 @@ impl SpriteBatch {
         if self.mesh.borrow().is_none() {
             let corners: Vec<MeshVertex> = self
                 .vertices
-                .chunks_exact(VERTICES_PER_SPRITE)
+                .as_chunks::<VERTICES_PER_SPRITE>()
+                .0
+                .iter()
                 // The six vertices are top-left, top-right, bottom-right,
                 // top-left, bottom-right, bottom-left.
                 .flat_map(|sprite| [sprite[0], sprite[5], sprite[1], sprite[2]])

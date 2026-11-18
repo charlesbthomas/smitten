@@ -135,7 +135,9 @@ impl GlyphData {
             GlyphFormat::Rgba8 => self.pixels.clone(),
             GlyphFormat::La8 => self
                 .pixels
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .flat_map(|pixel| [pixel[0], pixel[0], pixel[0], pixel[1]])
                 .collect(),
         };

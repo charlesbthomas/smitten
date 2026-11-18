@@ -409,7 +409,7 @@ impl GraphicsState {
         self.batch.forget_canvas_passes();
         let (width, height, mut pixels) = result?;
         // The window is opaque whatever was drawn to it.
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
         }
         Ok(ImageData::from_rgba(width, height, pixels))

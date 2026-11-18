@@ -4,4 +4,7 @@ ignore-interior-mutability = [
     "smitten::physics::Body",
     "smitten::physics::Fixture",
     "smitten::physics::Joint",
+    "smitten::physics::body::Body",
+    "smitten::physics::fixture::Fixture",
+    "smitten::physics::joint::Joint",
 ]

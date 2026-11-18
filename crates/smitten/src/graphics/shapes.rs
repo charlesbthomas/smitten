@@ -250,7 +250,7 @@ pub(crate) fn stroke(points: &[Point], closed: bool, stroke: &Stroke) -> Vec<Cov
     }
     // Flat triangles, from corners that needed no filling, draw nothing.
     let mut kept = Vec::with_capacity(triangles.len());
-    for triangle in triangles.chunks_exact(3) {
+    for triangle in triangles.as_chunks::<3>().0 {
         let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
         let doubled = (b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1);
         if doubled.abs() > 1e-9 {

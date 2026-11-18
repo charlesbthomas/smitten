@@ -600,11 +600,11 @@ impl Lantern {
     /// The room as it would look in full light.
     fn draw_room(&self) {
         graphics::clear(Color::rgb(0.2, 0.19, 0.2));
-        for row in 0..ROWS {
-            for column in 0..COLUMNS {
+        for (row, walls) in self.walls.iter().enumerate() {
+            for (column, &wall) in walls.iter().enumerate() {
                 let (x, y) = (column as f32 * TILE, row as f32 * TILE);
                 let grain = math::noise2(column as f32 * 0.73, row as f32 * 0.61);
-                if self.walls[row][column] {
+                if wall {
                     let shade = 0.5 + grain * 0.12;
                     graphics::set_color(Color::rgb(shade * 0.85, shade * 0.8, shade));
                     graphics::rectangle(DrawMode::Fill, x, y, TILE, TILE);

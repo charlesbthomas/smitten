@@ -15,7 +15,7 @@ fn color(stream: &VideoStream) -> [u8; 3] {
     let pixels = stream.pixels();
     let count = pixels.len() / 4;
     let mut sum = [0usize; 3];
-    for pixel in pixels.chunks_exact(4) {
+    for pixel in pixels.as_chunks::<4>().0.iter() {
         for channel in 0..3 {
             sum[channel] += usize::from(pixel[channel]);
         }
@@ -46,7 +46,14 @@ fn the_first_frame_is_ready_at_once() {
     let stream = open();
     assert_eq!(stream.frame(), 0);
     assert!(is_red(color(&stream)), "{:?}", color(&stream));
-    assert!(stream.pixels().chunks_exact(4).all(|pixel| pixel[3] == 255));
+    assert!(
+        stream
+            .pixels()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 255)
+    );
 }
 
 #[test]

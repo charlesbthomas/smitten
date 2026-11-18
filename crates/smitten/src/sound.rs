@@ -124,7 +124,9 @@ impl SoundData {
                 .map(|&byte| (f32::from(byte) - 128.0) / 128.0)
                 .collect(),
             16 => bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
                 .collect(),
             _ => panic!("PCM samples must be 8 or 16 bit, not {bit_depth}"),
@@ -202,7 +204,9 @@ impl SoundData {
                 .collect()
         } else {
             self.samples
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|frame| [frame[0], frame[1]])
                 .collect()
         };

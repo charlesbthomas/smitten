@@ -289,7 +289,9 @@ impl ImageData {
             // The encoder takes 16-bit channels in the machine's byte order.
             Cow::Owned(
                 self.pixels
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .flat_map(|pair| u16::from_le_bytes([pair[0], pair[1]]).to_ne_bytes())
                     .collect(),
             )

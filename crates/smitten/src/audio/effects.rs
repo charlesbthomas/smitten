@@ -6,6 +6,7 @@
 //! range are clamped to it rather than being an error.
 
 use std::f32::consts::{FRAC_1_SQRT_2, LN_2, PI, TAU};
+use std::iter::zip;
 
 use smitten_core::backend::AUDIO_SAMPLE_RATE;
 
@@ -132,7 +133,7 @@ impl FilterState {
     /// and high parts, and each is scaled by its gain, so a filter with
     /// every gain at 1.0 changes nothing.
     pub fn process(&mut self, filter: &Filter, samples: &mut [f32]) {
-        for frame in samples.chunks_exact_mut(2) {
+        for frame in samples.as_chunks_mut::<2>().0 {
             for (channel, sample) in frame.iter_mut().enumerate() {
                 let input = *sample;
                 let below_low = self.below_low[channel].next(input);
@@ -789,7 +790,7 @@ impl ReverbState {
                 .collect()
         });
 
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             let mono = (frame[0] + frame[1]) * 0.5 * settings.gain;
             let below = self.high_cut.next(mono, high_factor);
             self.delay
@@ -871,7 +872,7 @@ impl ModulatedDelay {
 
     fn process(&mut self, input: &[f32], out: &mut [f32]) {
         let step = self.rate / RATE;
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             let mono = (frame[0] + frame[1]) * 0.5;
             let lines = self.lines.iter_mut().zip(output.iter_mut());
             for (channel, (line, output)) in lines.enumerate() {
@@ -924,7 +925,7 @@ impl EchoState {
         // right.
         let near = (1.0 - settings.spread) / 2.0 * settings.volume;
         let far = (1.0 + settings.spread) / 2.0 * settings.volume;
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             let mono = (frame[0] + frame[1]) * 0.5;
             let tap1 = self.line.tap(first);
             let tap2 = self.line.tap(second);
@@ -978,7 +979,7 @@ impl DistortionState {
         let edge = (settings.edge * PI / 2.0).sin().min(0.99);
         let hardness = 2.0 * edge / (1.0 - edge);
         let level = settings.gain * settings.volume;
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             let mono = (frame[0] + frame[1]) * 0.5;
             // Overdrive the input so that even quiet sounds are clipped.
             let driven = self.low_cut.next(mono) * 4.0;
@@ -1027,7 +1028,7 @@ impl RingModulatorState {
     fn process(&mut self, input: &[f32], out: &mut [f32]) {
         let settings = self.settings;
         let step = settings.frequency / RATE;
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             let tone = settings.waveform.at(self.position) * settings.volume;
             for channel in 0..2 {
                 let input = if settings.high_cut < 1.0 {
@@ -1059,7 +1060,7 @@ impl CompressorState {
         let volume = self.settings.volume.clamp(0.0, 1.0);
         let attack = 1.0 - (-1.0 / (0.001 * RATE)).exp();
         let release = 1.0 - (-1.0 / (0.2 * RATE)).exp();
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             let gain = if self.settings.enable {
                 let peak = frame[0].abs().max(frame[1].abs());
                 let speed = if peak > self.envelope {
@@ -1146,7 +1147,7 @@ impl EqualizerState {
 
     fn process(&mut self, input: &[f32], out: &mut [f32]) {
         let volume = self.settings.volume;
-        for (frame, output) in input.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+        for (frame, output) in zip(input.as_chunks::<2>().0, out.as_chunks_mut::<2>().0) {
             for channel in 0..2 {
                 let shaped = self.bands[channel]
                     .iter_mut()
@@ -1267,7 +1268,12 @@ mod tests {
     /// The loudness of the second half of the left channel, after any
     /// filter has settled.
     fn loudness(samples: &[f32]) -> f32 {
-        let left: Vec<f32> = samples.chunks_exact(2).map(|frame| frame[0]).collect();
+        let left: Vec<f32> = samples
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|frame| frame[0])
+            .collect();
         let settled = &left[left.len() / 2..];
         (settled.iter().map(|s| s * s).sum::<f32>() / settled.len() as f32).sqrt()
     }
@@ -1351,7 +1357,9 @@ mod tests {
         assert!(out[first * 2] > 0.9 && out[first * 2 + 1].abs() < 1e-6);
         assert!(out[second * 2].abs() < 1e-6 && out[second * 2 + 1] > 0.4);
         let elsewhere: f32 = out
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .enumerate()
             .filter(|&(i, _)| i != first && i != second)
             .map(|(_, frame)| frame[0].abs() + frame[1].abs())
