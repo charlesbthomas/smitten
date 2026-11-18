@@ -44,6 +44,20 @@ impl TimerState {
     }
 }
 
+/// Measures the time since the last step and returns it in seconds, the
+/// equivalent of `love.timer.step`. [`delta`], [`fps`] and
+/// [`average_delta`] are worked out from these steps.
+///
+/// Smitten steps once a frame before [`crate::Game::update`]. Only a
+/// custom main loop made with [`crate::run_loop`] needs to call this, once
+/// a frame; calling it anywhere else makes the next `dt` shorter.
+pub fn step() -> f32 {
+    context::with(|ctx| {
+        let now = ctx.backend.ticks_ns();
+        ctx.timer.step(now)
+    })
+}
+
 /// Seconds between the last two frames, the same value passed to `update`.
 pub fn delta() -> f32 {
     context::with(|ctx| ctx.timer.delta)

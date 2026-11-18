@@ -1,6 +1,7 @@
 //! Smitten is a LÖVE-style 2D game framework for Rust.
 //!
-//! A game implements [`Game`] and hands it to [`run`]. While the game is
+//! A game implements [`Game`] and hands it to [`run`], or writes its own
+//! main loop with [`run_loop`]. While the game is
 //! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
 //! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
 //! the same way `love.graphics` and friends work in LÖVE. [`data`], [`math`] and [`thread`]
@@ -30,6 +31,7 @@ mod context;
 mod error;
 mod gamepad_mapping;
 mod input;
+mod main_loop;
 mod reload;
 
 pub mod audio;
@@ -55,6 +57,7 @@ pub mod window;
 
 pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
+pub use main_loop::{MainLoop, run_loop};
 pub use smitten_core::{
     BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor, DisplayOrientation,
     Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput,
@@ -264,35 +267,15 @@ pub trait Game: Sized + 'static {
 /// If the game panics, the window stays open and shows the message and
 /// where it came from until the player presses Escape, like LÖVE's error
 /// screen. The panic then continues as usual.
+///
+/// To write the loop yourself, as LÖVE allows by replacing `love.run`,
+/// use [`run_loop`] instead.
 pub fn run<G: Game>(config: Config) {
-    if config.console {
-        open_console();
-    }
-    let backend = match smitten_sdl::SdlBackend::new(&config) {
-        Ok(backend) => backend,
-        Err(message) => panic!("smitten: could not start: {message}"),
-    };
-    context::install(Box::new(backend), &config);
-    context::with(|ctx| {
-        // Fonts and canvases made in `load` need to know how sharp the
-        // screen is.
-        ctx.gfx.screen = graphics::Screen::new(&config);
-        ctx.gfx
-            .screen
-            .update(ctx.backend.size_in_pixels(), ctx.backend.dpi_scale());
-        if config.msaa > 1 {
-            ctx.backend.set_screen_msaa(config.msaa);
-        }
-    });
-    if let Some(icon) = &config.icon {
-        window::set_icon(icon);
-    }
-
-    let outcome = error::catch(|| {
+    main_loop::run_with(config, |_| {
         let mut game = G::load();
         context::with(|ctx| ctx.timer.reset(ctx.backend.ticks_ns()));
 
-        'running: loop {
+        loop {
             event::pump();
             while let Some(event) = context::with(|ctx| ctx.events.next_platform()) {
                 dispatch(&mut game, event);
@@ -302,43 +285,18 @@ pub fn run<G: Game>(config: Config) {
             }
 
             if context::with(|ctx| std::mem::take(&mut ctx.quit_requested)) && !game.quit() {
-                break 'running;
+                break;
             }
 
-            let dt = context::with(|ctx| {
-                let now = ctx.backend.ticks_ns();
-                ctx.timer.step(now)
-            });
+            let dt = timer::step();
             reload::check();
             game.update(dt);
 
             context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
             game.draw();
-            let screenshots = context::with(|ctx| {
-                ctx.gfx.finish_frame();
-                let screenshots = ctx.gfx.take_screenshots(&mut *ctx.backend);
-                if ctx.window_closed {
-                    ctx.backend.render_offscreen(&ctx.gfx.frame());
-                } else {
-                    ctx.backend.present(&ctx.gfx.frame());
-                }
-                ctx.gfx.end_frame();
-                screenshots
-            });
-            for (callback, picture) in screenshots {
-                callback(picture);
-            }
+            graphics::present_frame();
         }
     });
-
-    // A panic is shown in the window, as LÖVE shows its error screen, and
-    // then carries on to end the program the way it would have.
-    if let Err(panic) = outcome {
-        error::show(panic.as_ref());
-        context::uninstall();
-        std::panic::resume_unwind(panic);
-    }
-    context::uninstall();
 }
 
 /// Gives the game a console to print to, like `t.console`: the one it was

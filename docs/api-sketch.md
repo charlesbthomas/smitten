@@ -70,6 +70,7 @@ fn main() {
 | `love.keypressed(key, scancode, isrepeat)` | `Game::key_pressed(key, is_repeat)` | |
 | `love.quit()` | `Game::quit() -> bool` | Return `true` to keep running, as in LÖVE. |
 | `conf.lua` | `Config` passed to `run` | |
+| `love.run` | `smitten::run_loop(config, \|main\| …)` | `main` has `poll`, `step`, `clear`, `present` and `is_active`. Return from the closure to quit. |
 | `love.graphics.draw(img, x, y)` | `graphics::draw(&img, x, y)` | |
 | `love.graphics.draw(img, x, y, r, sx, sy, ox, oy)` | `graphics::draw_ex(&img, x, y, r, sx, sy, ox, oy)` | Same arguments in the same order. |
 | `love.graphics.draw(img, quad, x, y)` | `graphics::draw_quad(&img, &quad, x, y)` | |

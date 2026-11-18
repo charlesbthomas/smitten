@@ -14,7 +14,7 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 39 of LÖVE's 900 functions and methods are still missing, plus 9
+About 34 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **95% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
 GPU features: depth buffers, instancing, custom vertex formats, vertex
@@ -27,7 +27,7 @@ shaders, volume textures and canvas formats.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 28 | 90% |
+| graphics | 268 | 25 | 91% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -37,11 +37,11 @@ shaders, volume textures and canvas formats.
 | sound | 16 | 0 | 100% |
 | system | 8 | 0 | 100% |
 | thread | 16 | 0 (Rust threads plus `Channel`) | 100% |
-| timer | 6 | 1 | 83% |
+| timer | 6 | 0 | 100% |
 | touch | 3 | 0 | 100% |
 | video | 8 | 0 | 100% |
 | window | 36 | 0 | 100% |
-| callbacks | 35 | 1 | 97% |
+| callbacks | 35 | 0 | 100% |
 
 ## graphics
 
@@ -57,8 +57,6 @@ shaders, volume textures and canvas formats.
 - `newVolumeImage` (`TextureType` `volume`).
 - `setCanvas` with several canvases at once (multiple render targets), and
   with a layer, cube face or mipmap of a canvas as the target.
-- `present`, `isActive`, `flushBatch`. These only matter with a custom
-  `love.run`.
 - Gamma-correct rendering (`t.gammacorrect`). `is_gamma_correct` exists and
   always answers `false`.
 
@@ -95,14 +93,8 @@ shaders, volume textures and canvas formats.
   `getPreviousVertex`. These stop bodies catching on the joins between
   edges.
 
-## timer
-
-- `love.timer.step` as a public function. It only matters with a custom
-  run loop.
-
 ## Callbacks and `love.conf`
 
-- `love.run`: a custom main loop.
 - `love.conf` fields with no `Config` equivalent: `t.gammacorrect`,
   `t.window.depth`, `t.window.stencil`.
 
