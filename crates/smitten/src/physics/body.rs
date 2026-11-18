@@ -668,7 +668,9 @@ impl Body {
     /// Gives the body a copy of `shape` as a new fixture, LÖVE's
     /// `newFixture`. The fixture's density starts at 1.0.
     pub fn add_shape(&self, shape: &Shape) -> Fixture {
-        self.add(ColliderBuilder::new(shape.shape.clone()).position(shape.offset))
+        let fixture = self.add(ColliderBuilder::new(shape.shape.clone()).position(shape.offset));
+        fixture.set_ghosts(shape);
+        fixture
     }
 
     /// Gives the body a circle centered on its origin.
