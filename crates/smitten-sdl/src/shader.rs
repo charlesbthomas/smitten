@@ -5,7 +5,7 @@
 //! checks it, and translates it to SPIR-V with naga.
 //!
 //! A game may also declare textures of its own, such as
-//! `var sky: texture_cube<f32>;`, with no binding. Each gets a sampler
+//! `var sky: texture_cube<f32>;` or `var fog: texture_3d<f32>;`, with no binding. Each gets a sampler
 //! named after it, `sky_sampler`, and the next free texture slot.
 
 use naga::back::spv;
@@ -239,6 +239,7 @@ fn bind_textures(
                 (naga::ImageDimension::D2, false) => TextureKind::Flat,
                 (naga::ImageDimension::D2, true) => TextureKind::Array,
                 (naga::ImageDimension::Cube, false) => TextureKind::Cube,
+                (naga::ImageDimension::D3, false) => TextureKind::Volume,
                 _ => return Err(unsupported_texture(name)),
             },
             _ => return Err(unsupported_texture(name)),
@@ -270,7 +271,8 @@ fn bind_textures(
 
 fn unsupported_texture(name: &str) -> String {
     format!(
-        "texture `{name}` must be a `texture_2d<f32>`, `texture_2d_array<f32>` or `texture_cube<f32>`"
+        "texture `{name}` must be a `texture_2d<f32>`, `texture_2d_array<f32>`, \
+         `texture_cube<f32>` or `texture_3d<f32>`"
     )
 }
 
@@ -456,12 +458,14 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
 var sky: texture_cube<f32>;
 var tiles: texture_2d_array<f32>;
 var noise: texture_2d<f32>;
+var fog: texture_3d<f32>;
 
 fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
     let a = textureSample(sky, sky_sampler, vec3<f32>(uv, 1.0));
     let b = textureSample(tiles, tiles_sampler, uv, 2);
     let c = textureSample(noise, noise_sampler, uv);
-    return a * b * c * color;
+    let d = textureSample(fog, fog_sampler, vec3<f32>(uv, 0.5));
+    return a * b * c * d * color;
 }
 ",
         )
@@ -477,6 +481,7 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
                 ("sky", TextureKind::Cube),
                 ("tiles", TextureKind::Array),
                 ("noise", TextureKind::Flat),
+                ("fog", TextureKind::Volume),
             ]
         );
         assert!(compile(PLAIN).unwrap().textures.is_empty());
@@ -486,14 +491,14 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
     fn a_texture_of_another_type_is_explained() {
         let error = compile(
             "
-var depth: texture_3d<f32>;
+var line: texture_1d<f32>;
 fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
-    return textureSample(depth, depth_sampler, vec3<f32>(uv, 0.0)) * color;
+    return textureSample(line, line_sampler, uv.x) * color;
 }
 ",
         )
         .unwrap_err();
-        assert!(error.contains("texture `depth` must be"), "{error}");
+        assert!(error.contains("texture `line` must be"), "{error}");
     }
 
     #[test]
