@@ -215,6 +215,8 @@ pub(crate) struct Voice {
     /// The filter on what the source sends straight to the speakers.
     filter: Option<Filter>,
     filter_state: FilterState,
+    /// The muffling of air absorption, on everything the source sends.
+    air_state: FilterState,
     /// The effects the source is sent through.
     sends: Vec<EffectSend>,
     /// The speaker volumes used last time, which the next buffer fades
@@ -262,6 +264,7 @@ impl Voice {
             placement: Placement::default(),
             filter: None,
             filter_state: FilterState::default(),
+            air_state: FilterState::default(),
             sends: Vec::new(),
             last_gains: None,
         }
@@ -279,6 +282,7 @@ impl Voice {
             Heard {
                 gains: [gain, gain],
                 pitch: 1.0,
+                high_gain: 1.0,
             }
         }
     }
@@ -382,6 +386,11 @@ impl Mixer {
             voice.render(buffer, heard.pitch);
             apply_gains(buffer, voice.last_gains.unwrap_or(heard.gains), heard.gains);
             voice.last_gains = Some(heard.gains);
+            if heard.high_gain < 1.0 {
+                voice
+                    .air_state
+                    .process(&Filter::low_pass(heard.high_gain), buffer);
+            }
 
             for send in &mut voice.sends {
                 let Some(slot) = self.effects.get_mut(&send.effect) else {
@@ -621,6 +630,29 @@ impl Mixer {
         }
     }
 
+    /// Moves playback to `frame`, counted in the sound's own sample frames.
+    pub fn seek_frame(&mut self, id: u64, frame: u64) {
+        if let Some(voice) = self.voices.get_mut(&id) {
+            if matches!(voice.data, Data::Queue(_)) {
+                return;
+            }
+            voice.position = frame as f64;
+            voice.data.seek(frame);
+        }
+    }
+
+    /// The playback position in the sound's own sample frames.
+    pub fn tell_frame(&self, id: u64) -> u64 {
+        self.voices
+            .get(&id)
+            .map_or(0, |voice| voice.position.floor() as u64)
+    }
+
+    /// The sound's length in its own sample frames, if it is known.
+    pub fn frame_count(&self, id: u64) -> Option<u64> {
+        self.voices.get(&id)?.data.len()
+    }
+
     /// The playback position in seconds from the start.
     pub fn tell(&self, id: u64) -> f64 {
         self.voices
@@ -684,6 +716,14 @@ impl Mixer {
         if let Some(voice) = self.voices.get_mut(&id) {
             voice.sends.retain(|send| send.effect != effect);
         }
+    }
+
+    /// The filter on a voice's send to `effect`: `None` if the voice is not
+    /// sent there, `Some(None)` if it is sent unfiltered.
+    pub fn send_filter(&self, id: u64, effect: &str) -> Option<Option<Filter>> {
+        let voice = self.voices.get(&id)?;
+        let send = voice.sends.iter().find(|send| send.effect == effect)?;
+        Some(send.filter)
     }
 
     pub fn sends(&self, id: u64) -> Vec<String> {
@@ -925,6 +965,29 @@ mod tests {
         mixer.seek(id, 0.5);
         assert_eq!(mixer.tell(id), 0.5);
         assert_eq!(mixer.duration(id), Some(1.0));
+    }
+
+    #[test]
+    fn seek_and_tell_work_in_sample_frames() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(constant(RATE as usize, 0.5)));
+        mixer.seek_frame(id, 1234);
+        assert_eq!(mixer.tell_frame(id), 1234);
+        assert_eq!(mixer.tell(id), 1234.0 / f64::from(RATE));
+        assert_eq!(mixer.frame_count(id), Some(u64::from(RATE)));
+    }
+
+    #[test]
+    fn a_send_reports_its_filter() {
+        let mut mixer = Mixer::default();
+        let id = mixer.add(Voice::new(constant(4, 0.5)));
+        mixer.set_effect("room", super::super::Reverb::default().into());
+        assert_eq!(mixer.send_filter(id, "room"), None);
+        mixer.set_send(id, "room", None);
+        assert_eq!(mixer.send_filter(id, "room"), Some(None));
+        let muffled = Filter::low_pass(0.25);
+        mixer.set_send(id, "room", Some(muffled));
+        assert_eq!(mixer.send_filter(id, "room"), Some(Some(muffled)));
     }
 
     #[test]

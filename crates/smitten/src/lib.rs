@@ -52,9 +52,9 @@ pub mod window;
 pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
 pub use smitten_core::{
-    BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter, GamepadAxis,
-    GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton,
-    Scaling, StencilAction, TouchId, Wrap,
+    BlendAlphaMode, BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter,
+    GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind,
+    MouseButton, Scaling, StencilAction, TouchId, Wrap,
 };
 
 use std::path::Path;
