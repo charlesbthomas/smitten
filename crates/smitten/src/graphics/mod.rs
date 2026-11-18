@@ -52,7 +52,7 @@ pub(crate) mod reloading {
 pub use canvas::{Canvas, MipmapMode};
 pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
-pub use image_data::ImageData;
+pub use image_data::{ImageData, ImageFormat, is_compressed};
 pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
 pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
