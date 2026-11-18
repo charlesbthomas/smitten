@@ -1265,6 +1265,51 @@ pub fn validate_shader(source: &str) -> Result<(), ShaderError> {
     context::with(|ctx| ctx.backend.validate_shader(source)).map_err(ShaderError::Compile)
 }
 
+/// Shows what has been drawn since the last present, the equivalent of
+/// `love.graphics.present`, then starts the next frame: the screen is
+/// cleared to [`background_color`] and the transform is reset.
+///
+/// A custom main loop made with [`crate::run_loop`] calls this once a
+/// frame. With [`crate::Game`], Smitten presents after `draw` by itself,
+/// so calling it there shows a half-drawn frame, as in LÖVE.
+pub fn present() {
+    present_frame();
+    context::with(|ctx| ctx.gfx.begin_frame(&mut *ctx.backend));
+}
+
+/// Hands the frame to the window, or draws it offscreen while the window
+/// is closed, and runs the screenshot callbacks it asked for.
+pub(crate) fn present_frame() {
+    let screenshots = context::with(|ctx| {
+        ctx.gfx.finish_frame();
+        let screenshots = ctx.gfx.take_screenshots(&mut *ctx.backend);
+        if ctx.window_closed {
+            ctx.backend.render_offscreen(&ctx.gfx.frame());
+        } else {
+            ctx.backend.present(&ctx.gfx.frame());
+        }
+        ctx.gfx.end_frame();
+        screenshots
+    });
+    for (callback, picture) in screenshots {
+        callback(picture);
+    }
+}
+
+/// Whether drawing reaches the screen, the equivalent of
+/// `love.graphics.isActive`. It is `false` while the window is closed with
+/// [`crate::window::close`]; drawing still works then, but only canvases
+/// are worth drawing to. A custom main loop can skip drawing the screen
+/// while it is `false`.
+pub fn is_active() -> bool {
+    context::with(|ctx| !ctx.window_closed)
+}
+
+/// Does nothing, the equivalent of `love.graphics.flushBatch`. Smitten
+/// sends a whole frame to the GPU at once when it is presented, and keeps
+/// draws in order without help, so there is nothing to flush early.
+pub fn flush_batch() {}
+
 /// Whether colors are blended in linear space, the equivalent of
 /// `love.graphics.isGammaCorrect`. Always `false`: smitten blends in sRGB
 /// space, as LÖVE does unless `t.gammacorrect` is set.
