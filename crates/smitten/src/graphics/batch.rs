@@ -461,6 +461,7 @@ mod tests {
             index_type: smitten_core::backend::IndexDataType::U32,
             first_index: 0,
             index_count,
+            instance_count: 1,
             transform: [0.0; 16],
             tint: [1.0; 4],
         }

@@ -128,6 +128,11 @@ use crate::{Color, context};
 /// and must be `f32` or `vec2<f32>` to `vec4<f32>`. One that the vertices
 /// lack reads as (0, 0, 0, 1), as in LÖVE.
 ///
+/// When copies of a mesh are drawn with
+/// [`draw_instanced`](super::draw_instanced), `instance_index` in
+/// `position` is the `u32` number of the copy being drawn, from 0, as
+/// LÖVE's `love_InstanceID`. It is 0 in `effect` and for other draws.
+///
 /// To pass values from `position` to `effect`, declare a struct named
 /// `Varyings`, write it through `varyings` in `position` and read it in
 /// `effect`. Members may be `f32`, `i32` or `u32`, or vectors of them, at

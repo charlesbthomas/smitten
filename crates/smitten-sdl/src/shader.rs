@@ -400,6 +400,8 @@ struct Declared {
     position: bool,
     attributes: bool,
     varyings: bool,
+    /// Whether it reads `instance_index`.
+    instance_index: bool,
     textures: Vec<String>,
 }
 
@@ -412,6 +414,7 @@ impl Declared {
             position: defines_function(source, "position"),
             attributes: declares_struct(source, "Attributes"),
             varyings: declares_struct(source, "Varyings"),
+            instance_index: mentions(source, "instance_index"),
             textures: declared_textures(source),
         }
     }
@@ -435,6 +438,9 @@ impl Declared {
         }
         if self.varyings {
             text.push_str("var<private> varyings: Varyings;\n");
+        }
+        if self.instance_index {
+            text.push_str("var<private> instance_index: u32;\n");
         }
         if self.position && !self.effect && !self.multiple {
             text.push_str(BUILTIN);
@@ -658,6 +664,12 @@ pub(crate) fn compile_vertex(
     let mut color = inputs.read(VERTEX_COLOR, &[1.0, 1.0, 1.0, 1.0]);
     if linearize {
         color = format!("smitten_linear({color})");
+    }
+    if declared.instance_index {
+        inputs
+            .parameters
+            .push("@builtin(instance_index) smitten_instance: u32".to_string());
+        body.push_str("    instance_index = smitten_instance;\n");
     }
     let copies: String = varyings
         .iter()
@@ -982,6 +994,13 @@ fn declares_struct(source: &str, name: &str) -> bool {
         previous = word;
         found
     })
+}
+
+/// Whether `source` has the word `name` anywhere.
+fn mentions(source: &str, name: &str) -> bool {
+    source
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| word == name)
 }
 
 fn wrong_position(detail: &str) -> String {
@@ -1508,5 +1527,19 @@ fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> ve
 ";
         assert_eq!(compile(source).unwrap().textures.len(), 1);
         check(source).unwrap();
+    }
+
+    #[test]
+    fn instance_index_counts_the_copies_drawn() {
+        let source = "
+fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+    let step = vec4<f32>(f32(instance_index) * 20.0, 0.0, 0.0, 0.0);
+    return transform_projection * (vertex_position + step);
+}
+";
+        check(source).unwrap();
+        let compiled = compile_vertex(source, &offset_layout(), false).unwrap();
+        // The built-in index is not a vertex attribute.
+        assert_eq!(compiled.locations, [0, 1, 2]);
     }
 }
