@@ -90,6 +90,8 @@ fn main() {
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
 | `love.graphics.newCanvas(w, h)` | `graphics::new_canvas(w, h)` | A `Canvas` can be passed wherever an `&Image` is expected. |
 | `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
+| `love.graphics.newCanvas(w, h, {msaa = 4})` / `canvas:getMSAA()` | `Canvas::with_msaa(w, h, 4)` / `canvas.msaa()` | The GPU may give fewer samples. |
+| `t.window.msaa` / `setMode(w, h, {msaa = 4})` | `Config::msaa` / `window::set_msaa(4)` | `window::msaa()` reads it back. |
 | `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
 | `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`, `Screen`, `Lighten`, `Darken`. |
 | `love.graphics.setBlendMode("add", "premultiplied")` | `graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied)` | `blend_mode_ex()` returns both, as `getBlendMode`. |

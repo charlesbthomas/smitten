@@ -268,6 +268,10 @@ pub struct WindowMode {
     /// [`WindowMode::display`]. When `None`, [`WindowMode::centered`]
     /// decides.
     pub position: Option<(i32, i32)>,
+    /// How many samples each pixel of the screen holds, 0 or 1 for none.
+    /// The GPU may give fewer; [`mode`] reports how many it gave. See
+    /// [`set_msaa`].
+    pub msaa: u32,
 }
 
 impl Default for WindowMode {
@@ -283,6 +287,7 @@ impl Default for WindowMode {
             min_width: 1,
             min_height: 1,
             position: None,
+            msaa: 0,
         }
     }
 }
@@ -310,6 +315,7 @@ pub fn mode() -> (u32, u32, WindowMode) {
             min_width,
             min_height,
             position: Some((x, y)),
+            msaa: ctx.backend.screen_msaa(),
         };
         (width, height, mode)
     })
@@ -413,6 +419,9 @@ fn apply_mode(ctx: &mut context::Context, width: u32, height: u32, mode: &Window
     {
         eprintln!("smitten: could not change vsync: {message}");
         applied = false;
+    }
+    if mode.msaa.max(1) != ctx.backend.screen_msaa() {
+        ctx.backend.set_screen_msaa(mode.msaa);
     }
     measure(ctx);
     applied
@@ -641,4 +650,24 @@ pub fn to_pixels(units: f32) -> f32 {
 /// `love.window.fromPixels`: it divides by [`dpi_scale`].
 pub fn from_pixels(pixels: f32) -> f32 {
     pixels / dpi_scale()
+}
+
+/// How many samples each pixel of the screen holds, 1 for none: the
+/// `msaa` of `love.window.getMode`. It may be fewer than
+/// [`Config::msaa`](crate::Config::msaa) asked for, if the GPU cannot do
+/// that many.
+pub fn msaa() -> u32 {
+    context::with(|ctx| ctx.backend.screen_msaa())
+}
+
+/// Smooths the edges of what is drawn to the screen with `samples`
+/// samples per pixel, or stops for 0 or 1, the `msaa` flag of LÖVE's
+/// `setMode`. Returns how many samples the GPU gave, which may be fewer.
+///
+/// Canvases are not affected; see
+/// [`Canvas::with_msaa`](crate::graphics::Canvas::with_msaa). With a
+/// [`Scaling::PixelPerfect`](crate::Scaling::PixelPerfect) design size the
+/// game draws to a canvas first, so this does not smooth it.
+pub fn set_msaa(samples: u32) -> u32 {
+    context::with(|ctx| ctx.backend.set_screen_msaa(samples))
 }
