@@ -19,8 +19,8 @@ pub(super) const DEFAULT_FRICTION: f32 = 0.2;
 /// [`Fixture::body`].
 #[derive(Clone)]
 pub struct Fixture {
-    world: Shared,
-    handle: ColliderHandle,
+    pub(super) world: Shared,
+    pub(super) handle: ColliderHandle,
 }
 
 impl PartialEq for Fixture {

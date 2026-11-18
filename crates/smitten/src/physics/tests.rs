@@ -1413,3 +1413,26 @@ fn a_pulley_comes_to_rest_when_one_side_lands() {
     assert!(light.linear_velocity().1.abs() < 5.0);
     assert!((pulley.length_a() + pulley.length_b() - 500.0).abs() < 1.0);
 }
+
+#[test]
+fn the_distance_between_fixtures_and_their_closest_points() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(0.0, 0.0, BodyType::Static).add_circle(10.0);
+    let b = world
+        .new_body(50.0, 0.0, BodyType::Dynamic)
+        .add_rectangle(20.0, 20.0);
+    let (gap, one, two) = super::distance(&a, &b);
+    assert!((gap - 30.0).abs() < 1e-3, "{gap}");
+    assert!(
+        close(one, (10.0, 0.0)) && close(two, (40.0, 0.0)),
+        "{one:?} {two:?}"
+    );
+
+    let c = world
+        .new_body(15.0, 0.0, BodyType::Dynamic)
+        .add_circle(10.0);
+    let (gap, one, two) = super::distance(&a, &c);
+    assert_eq!(gap, 0.0);
+    assert_eq!(one, two);
+    assert!(one.0 > 4.0 && one.0 < 11.0, "{one:?}");
+}

@@ -50,3 +50,40 @@ pub use fixture::Fixture;
 pub use joint::{Joint, JointType};
 pub use shape::{Shape, ShapeType};
 pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};
+
+/// How far apart two fixtures are, and the closest points of each, as
+/// `(distance, (x1, y1), (x2, y2))` in world coordinates. Fixtures that
+/// overlap are 0 apart, and both points are then a point where they
+/// touch. LÖVE's `love.physics.getDistance`.
+///
+/// Panics if the two belong to different worlds or either was destroyed.
+pub fn distance(a: &Fixture, b: &Fixture) -> (f32, (f32, f32), (f32, f32)) {
+    use rapier2d::parry::query::{self, ClosestPoints};
+    use rapier2d::prelude::*;
+
+    assert!(
+        std::rc::Rc::ptr_eq(&a.world, &b.world),
+        "the fixtures must belong to the same world"
+    );
+    let inner = a.world.borrow();
+    let collider = |fixture: &Fixture| {
+        inner
+            .world
+            .colliders
+            .get(fixture.handle)
+            .expect("this fixture was destroyed")
+    };
+    let (one, two) = (collider(a), collider(b));
+    let (pose_one, pose_two) = (*one.position(), *two.position());
+    match query::closest_points(&pose_one, one.shape(), &pose_two, two.shape(), f32::MAX) {
+        Ok(ClosestPoints::WithinMargin(p, q)) => ((q - p).length(), (p.x, p.y), (q.x, q.y)),
+        _ => {
+            // Overlapping: report where they touch.
+            let point = query::contact(&pose_one, one.shape(), &pose_two, two.shape(), 0.0)
+                .ok()
+                .flatten()
+                .map_or_else(|| pose_one.translation, |contact| contact.point1);
+            (0.0, (point.x, point.y), (point.x, point.y))
+        }
+    }
+}
