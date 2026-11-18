@@ -22,6 +22,7 @@ use std::collections::VecDeque;
 use std::f32::consts::{PI, TAU};
 
 use smitten::audio::{self, Filter, Reverb, Source};
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Align, Canvas, DrawMode, Font, Image, Shader};
 use smitten::sound::SoundData;
 use smitten::{
@@ -823,15 +824,9 @@ impl Lantern {
         for heart in 0..HEARTS {
             let alpha = if heart < self.hearts { 1.0 } else { 0.18 };
             graphics::set_color(Color::WHITE.with_alpha(alpha));
-            graphics::draw_ex(
+            graphics::draw(
                 &self.heart,
-                WIDTH - 36.0 - heart as f32 * 30.0,
-                6.0,
-                0.0,
-                1.7,
-                1.7,
-                0.0,
-                0.0,
+                DrawParams::at((WIDTH - 36.0 - heart as f32 * 30.0, 6.0)).scale(1.7),
             );
         }
 

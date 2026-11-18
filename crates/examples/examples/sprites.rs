@@ -3,6 +3,7 @@
 //! Shows image loading, tinting, rotation around a sprite's center, shapes,
 //! and the transform stack. Press Space to add hearts and Escape to quit.
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{DrawMode, Image};
 use smitten::{Color, Config, Filter, Game, Key, event, graphics, timer, window};
 
@@ -123,15 +124,12 @@ impl Game for Sprites {
         );
         for heart in &self.hearts {
             graphics::set_color(heart.tint);
-            graphics::draw_ex(
+            graphics::draw(
                 &self.image,
-                heart.x,
-                heart.y,
-                heart.angle,
-                HEART_SCALE,
-                HEART_SCALE,
-                center_x,
-                center_y,
+                DrawParams::at((heart.x, heart.y))
+                    .rotation(heart.angle)
+                    .scale(HEART_SCALE)
+                    .origin((center_x, center_y)),
             );
         }
         graphics::set_color(Color::WHITE);

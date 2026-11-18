@@ -5,14 +5,16 @@ use std::ops::Range;
 use smitten_core::Filter;
 use smitten_core::backend::{TextureId, Vertex};
 
-use super::{ArrayImage, GraphicsError, Image, Mesh, MeshDrawMode, MeshVertex, Quad, Transform};
+use super::{
+    ArrayImage, DrawParams, GraphicsError, Image, Mesh, MeshDrawMode, MeshVertex, Quad, Transform,
+};
 use crate::Color;
 
 /// Many copies of one image, or of parts of it, kept ready to draw in one
 /// go. The equivalent of LÖVE's `SpriteBatch`.
 ///
 /// Add sprites once, then draw them all every frame with
-/// [`crate::graphics::draw_sprite_batch`]. This is the fast way to draw
+/// [`graphics::draw`](crate::graphics::draw). This is the fast way to draw
 /// things that rarely change, such as a tile map: the work of placing each
 /// sprite is done when it is added instead of on every frame.
 ///
@@ -25,7 +27,7 @@ use crate::Color;
 ///     map.add_quad(&grass, (column as f32 * 16.0, 0.0));
 /// }
 /// // Every frame, in `draw`:
-/// graphics::draw_sprite_batch(&map, (0.0, 0.0));
+/// graphics::draw(&map, (0.0, 0.0));
 /// # Ok::<(), smitten::Error>(())
 /// ```
 ///
@@ -152,98 +154,40 @@ impl SpriteBatch {
     /// the GPU early, so ported code can keep calling this.
     pub fn flush(&self) {}
 
-    /// Adds the whole image with its top-left corner at `(x, y)` and
-    /// returns the sprite's index, for use with the `set` methods.
-    pub fn add(&mut self, position: impl Into<Vec2>) -> usize {
-        let Vec2 { x, y } = position.into();
-        self.add_ex(x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
-    }
-
-    /// Adds the whole image with the full set of LÖVE's `draw` arguments.
-    /// See [`crate::graphics::draw_ex`] for what they mean.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:add.
-    pub fn add_ex(&mut self, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) -> usize {
+    /// Adds the whole image placed by `params` and returns the sprite's
+    /// index, for use with the `set` methods. A position is enough for
+    /// `params`; see [`DrawParams`] for the rest.
+    pub fn add(&mut self, params: impl Into<DrawParams>) -> usize {
         let quad = self.whole();
-        self.add_quad_ex(&quad, x, y, r, sx, sy, ox, oy)
+        self.add_quad(&quad, params)
     }
 
-    /// Adds the part of the image described by `quad` at `(x, y)`.
-    pub fn add_quad(&mut self, quad: &Quad, position: impl Into<Vec2>) -> usize {
-        let Vec2 { x, y } = position.into();
-        self.add_quad_ex(quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
+    /// Adds the part of the image described by `quad`, placed by `params`.
+    pub fn add_quad(&mut self, quad: &Quad, params: impl Into<DrawParams>) -> usize {
+        self.push_sprite(0, quad, &params.into().to_transform())
     }
 
-    /// Adds part of the image with the full set of LÖVE's `draw`
-    /// arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:add.
-    pub fn add_quad_ex(
-        &mut self,
-        quad: &Quad,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-    ) -> usize {
-        self.push_sprite(0, quad, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy))
-    }
-
-    /// Adds the whole of layer `layer` of the batch's [`ArrayImage`] at
-    /// `(x, y)` and returns the sprite's index, the equivalent of
-    /// `SpriteBatch:addLayer`.
+    /// Adds the whole of layer `layer` of the batch's [`ArrayImage`],
+    /// placed by `params`, and returns the sprite's index, the equivalent
+    /// of `SpriteBatch:addLayer`.
     ///
     /// Panics if the batch draws a plain [`Image`], or the layer does not
     /// exist.
-    pub fn add_layer(&mut self, layer: u32, position: impl Into<Vec2>) -> usize {
-        let Vec2 { x, y } = position.into();
-        self.add_layer_ex(layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
-    }
-
-    /// Adds a whole layer with the full set of LÖVE's `draw` arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:addLayer.
-    pub fn add_layer_ex(
-        &mut self,
-        layer: u32,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-    ) -> usize {
+    pub fn add_layer(&mut self, layer: u32, params: impl Into<DrawParams>) -> usize {
         let quad = self.whole();
-        self.add_layer_quad_ex(layer, &quad, x, y, r, sx, sy, ox, oy)
+        self.add_layer_quad(layer, &quad, params)
     }
 
-    /// Adds the part of layer `layer` described by `quad` at `(x, y)`.
-    pub fn add_layer_quad(&mut self, layer: u32, quad: &Quad, position: impl Into<Vec2>) -> usize {
-        let Vec2 { x, y } = position.into();
-        self.add_layer_quad_ex(layer, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
-    }
-
-    /// Adds part of a layer with the full set of LÖVE's `draw` arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:addLayer.
-    pub fn add_layer_quad_ex(
+    /// Adds the part of layer `layer` described by `quad`, placed by
+    /// `params`.
+    pub fn add_layer_quad(
         &mut self,
         layer: u32,
         quad: &Quad,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
+        params: impl Into<DrawParams>,
     ) -> usize {
         self.check_layer(layer);
-        self.push_sprite(
-            layer,
-            quad,
-            &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
-        )
+        self.push_sprite(layer, quad, &params.into().to_transform())
     }
 
     fn push_sprite(&mut self, layer: u32, quad: &Quad, transform: &Transform) -> usize {
@@ -255,128 +199,42 @@ impl SpriteBatch {
         index
     }
 
-    /// Moves the sprite at `index` so it shows the whole image at
-    /// `(x, y)`. Its tint becomes the batch's current color.
+    /// Replaces the sprite at `index` with the whole image placed by
+    /// `params`. Its tint becomes the batch's current color.
     ///
     /// Panics if no sprite has that index.
-    pub fn set(&mut self, index: usize, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.set_ex(index, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-    }
-
-    /// Replaces the sprite at `index`, with the full set of LÖVE's `draw`
-    /// arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:set.
-    pub fn set_ex(
-        &mut self,
-        index: usize,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-    ) {
+    pub fn set(&mut self, index: usize, params: impl Into<DrawParams>) {
         let quad = self.whole();
-        self.set_quad_ex(index, &quad, x, y, r, sx, sy, ox, oy);
+        self.set_quad(index, &quad, params);
     }
 
     /// Replaces the sprite at `index` with the part of the image described
-    /// by `quad`, at `(x, y)`.
-    pub fn set_quad(&mut self, index: usize, quad: &Quad, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.set_quad_ex(index, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    /// by `quad`, placed by `params`.
+    pub fn set_quad(&mut self, index: usize, quad: &Quad, params: impl Into<DrawParams>) {
+        self.replace_sprite(index, 0, quad, &params.into().to_transform());
     }
 
-    /// Replaces the sprite at `index` with part of the image, with the
-    /// full set of LÖVE's `draw` arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:set.
-    pub fn set_quad_ex(
-        &mut self,
-        index: usize,
-        quad: &Quad,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-    ) {
-        self.replace_sprite(
-            index,
-            0,
-            quad,
-            &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
-        );
-    }
-
-    /// Replaces the sprite at `index` with the whole of layer `layer` at
-    /// `(x, y)`, the equivalent of `SpriteBatch:setLayer`.
+    /// Replaces the sprite at `index` with the whole of layer `layer`,
+    /// placed by `params`, the equivalent of `SpriteBatch:setLayer`.
     ///
     /// Panics if no sprite has that index, the batch draws a plain
     /// [`Image`], or the layer does not exist.
-    pub fn set_layer(&mut self, index: usize, layer: u32, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.set_layer_ex(index, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-    }
-
-    /// Replaces the sprite at `index` with a whole layer, with the full
-    /// set of LÖVE's `draw` arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:setLayer.
-    pub fn set_layer_ex(
-        &mut self,
-        index: usize,
-        layer: u32,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-    ) {
+    pub fn set_layer(&mut self, index: usize, layer: u32, params: impl Into<DrawParams>) {
         let quad = self.whole();
-        self.set_layer_quad_ex(index, layer, &quad, x, y, r, sx, sy, ox, oy);
+        self.set_layer_quad(index, layer, &quad, params);
     }
 
     /// Replaces the sprite at `index` with the part of layer `layer`
-    /// described by `quad`, at `(x, y)`.
+    /// described by `quad`, placed by `params`.
     pub fn set_layer_quad(
         &mut self,
         index: usize,
         layer: u32,
         quad: &Quad,
-        position: impl Into<Vec2>,
-    ) {
-        let Vec2 { x, y } = position.into();
-        self.set_layer_quad_ex(index, layer, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-    }
-
-    /// Replaces the sprite at `index` with part of a layer, with the full
-    /// set of LÖVE's `draw` arguments.
-    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:setLayer.
-    pub fn set_layer_quad_ex(
-        &mut self,
-        index: usize,
-        layer: u32,
-        quad: &Quad,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
+        params: impl Into<DrawParams>,
     ) {
         self.check_layer(layer);
-        self.replace_sprite(
-            index,
-            layer,
-            quad,
-            &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
-        );
+        self.replace_sprite(index, layer, quad, &params.into().to_transform());
     }
 
     /// The layer the sprite at `index` shows. Always 0 in a batch of a

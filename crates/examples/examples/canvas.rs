@@ -10,6 +10,7 @@
 //! - The stripes are cut off by a scissor rectangle.
 //! - Escape quits.
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Canvas, CanvasSettings, DrawMode};
 use smitten::{BlendMode, Color, Config, Filter, Game, Key, event, graphics, mouse, timer};
 
@@ -97,15 +98,9 @@ impl Game for Canvases {
         self.draw_scene();
 
         graphics::set_color(Color::WHITE);
-        graphics::draw_ex(
+        graphics::draw(
             &self.scene,
-            MARGIN,
-            MARGIN,
-            0.0,
-            SCENE_SCALE,
-            SCENE_SCALE,
-            0.0,
-            0.0,
+            DrawParams::at((MARGIN, MARGIN)).scale(SCENE_SCALE),
         );
 
         // The panel: stripes limited by a scissor, with the paint on top.

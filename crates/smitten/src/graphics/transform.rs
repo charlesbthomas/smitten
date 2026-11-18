@@ -1,21 +1,24 @@
 use glam::Vec2;
+
+use super::DrawParams;
+
 /// A 2D affine transformation: any mix of moving, rotating, scaling and
 /// shearing, the equivalent of LÖVE's `Transform`.
 ///
 /// Maps a point `(x, y)` to `(a*x + c*y + tx, b*x + d*y + ty)`.
 ///
-/// Make one with [`Transform::from_transformation`] or
+/// Make one from [`DrawParams`] with `Transform::from`, or start from
 /// [`Transform::new`], change it with the same methods as the graphics
 /// transform stack, and use it with
-/// [`graphics::apply_transform`](crate::graphics::apply_transform) or
-/// [`graphics::draw_with`](crate::graphics::draw_with). Multiplying two
+/// [`graphics::apply_transform`](crate::graphics::apply_transform) or as
+/// the [`DrawParams`] given to [`graphics::draw`](crate::graphics::draw). Multiplying two
 /// transforms, `outer * inner`, applies `inner` first.
 ///
 /// ```
 /// use smitten::Vec2;
-/// use smitten::graphics::Transform;
+/// use smitten::graphics::{DrawParams, Transform};
 ///
-/// let mut transform = Transform::from_transformation(100.0, 50.0, 0.0, 2.0, 2.0, 0.0, 0.0, 0.0, 0.0);
+/// let mut transform = Transform::from(DrawParams::at((100.0, 50.0)).scale(2.0));
 /// assert_eq!(transform.transform_point((1.0, 1.0)), Vec2::new(102.0, 52.0));
 /// assert_eq!(transform.inverse_transform_point((102.0, 52.0)), Vec2::new(1.0, 1.0));
 /// transform.translate((10.0, 0.0));
@@ -53,47 +56,11 @@ impl Transform {
         Self::IDENTITY
     }
 
-    /// Builds the transformation LÖVE's `newTransform` arguments describe:
-    /// move the origin by `(-ox, -oy)`, shear by `(kx, ky)`, scale by
-    /// `(sx, sy)`, rotate by `angle` radians, then place it at `(x, y)`.
-    #[allow(clippy::too_many_arguments)] // Mirrors love.math.newTransform.
-    pub fn from_transformation(
-        x: f32,
-        y: f32,
-        angle: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-        kx: f32,
-        ky: f32,
-    ) -> Self {
-        let mut transform = Self::IDENTITY;
-        transform.set_transformation(x, y, angle, sx, sy, ox, oy, kx, ky);
-        transform
-    }
-
-    /// Replaces this transformation with the one
-    /// [`from_transformation`](Self::from_transformation) builds.
-    #[allow(clippy::too_many_arguments)] // Mirrors transform:setTransformation.
-    pub fn set_transformation(
-        &mut self,
-        x: f32,
-        y: f32,
-        angle: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
-        kx: f32,
-        ky: f32,
-    ) {
-        *self = Self::IDENTITY;
-        self.translate((x, y));
-        self.rotate(angle);
-        self.scale(sx, sy);
-        self.shear((kx, ky));
-        self.translate((-ox, -oy));
+    /// Replaces this transformation with the one `params` describe, the
+    /// equivalent of `transform:setTransformation`. `Transform::from`
+    /// builds a new one from [`DrawParams`] the same way.
+    pub fn set_transformation(&mut self, params: impl Into<DrawParams>) {
+        *self = params.into().to_transform();
     }
 
     /// Puts this back to the identity.
@@ -103,7 +70,15 @@ impl Transform {
 
     /// Builds the transformation LÖVE's `draw` arguments describe: scale and
     /// rotate around the origin offset `(ox, oy)`, then place it at `(x, y)`.
-    pub fn from_draw_args(x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) -> Self {
+    pub(crate) fn from_draw_args(
+        x: f32,
+        y: f32,
+        r: f32,
+        sx: f32,
+        sy: f32,
+        ox: f32,
+        oy: f32,
+    ) -> Self {
         let mut transform = Self::IDENTITY;
         transform.translate((x, y));
         transform.rotate(r);
@@ -349,7 +324,13 @@ mod tests {
 
     #[test]
     fn full_transformation_matches_the_steps_in_loves_order() {
-        let built = Transform::from_transformation(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0, 0.2, 0.1);
+        let built = Transform::from(
+            DrawParams::at((30.0, 40.0))
+                .rotation(0.7)
+                .scale_xy((2.0, 3.0))
+                .origin((5.0, 6.0))
+                .shear((0.2, 0.1)),
+        );
         let mut by_hand = Transform::IDENTITY;
         by_hand.translate((30.0, 40.0));
         by_hand.rotate(0.7);
@@ -358,15 +339,25 @@ mod tests {
         by_hand.translate((-5.0, -6.0));
         assert_close(built.apply((1.5, -2.0)), by_hand.apply((1.5, -2.0)));
         // Without a shear it is what the draw arguments describe.
-        let plain = Transform::from_transformation(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0, 0.0, 0.0);
+        let plain = Transform::from(
+            DrawParams::at((30.0, 40.0))
+                .rotation(0.7)
+                .scale_xy((2.0, 3.0))
+                .origin((5.0, 6.0)),
+        );
         let draw = Transform::from_draw_args(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0);
         assert_close(plain.apply((9.0, 1.0)), draw.apply((9.0, 1.0)));
     }
 
     #[test]
     fn inverse_undoes_the_transformation() {
-        let transform =
-            Transform::from_transformation(30.0, 40.0, 0.7, 2.0, 3.0, 5.0, 6.0, 0.2, 0.1);
+        let transform = Transform::from(
+            DrawParams::at((30.0, 40.0))
+                .rotation(0.7)
+                .scale_xy((2.0, 3.0))
+                .origin((5.0, 6.0))
+                .shear((0.2, 0.1)),
+        );
         let Vec2 { x, y } = transform.apply((7.0, -3.0));
         assert_close(transform.inverse_transform_point((x, y)), (7.0, -3.0));
         let round_trip = transform * transform.inverse().unwrap();
@@ -397,7 +388,12 @@ mod tests {
 
     #[test]
     fn matrix_round_trips_and_reset_restores_the_identity() {
-        let transform = Transform::from_transformation(1.0, 2.0, 0.3, 4.0, 5.0, 0.0, 0.0, 0.1, 0.0);
+        let transform = Transform::from(
+            DrawParams::at((1.0, 2.0))
+                .rotation(0.3)
+                .scale_xy((4.0, 5.0))
+                .shear((0.1, 0.0)),
+        );
         let matrix = transform.matrix();
         assert_eq!(matrix[2], [0.0, 0.0, 1.0]);
         assert_eq!(matrix[0][2], 1.0);

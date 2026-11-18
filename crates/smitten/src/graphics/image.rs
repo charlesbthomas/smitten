@@ -189,6 +189,13 @@ impl Image {
         (self.inner.width.get(), self.inner.height.get())
     }
 
+    /// Size in pixels as a vector, handy for placing and centering:
+    /// `DrawParams::at(position).origin(image.size() / 2.0)` spins an image
+    /// around its center.
+    pub fn size(&self) -> Vec2 {
+        Vec2::new(self.width() as f32, self.height() as f32)
+    }
+
     /// Whether the pixels came from compressed data, such as a DDS file,
     /// the equivalent of `Image:isCompressed`. A compressed image cannot
     /// have its pixels replaced.
@@ -644,8 +651,9 @@ fn replace_texture(
 
 /// A rectangular part of an image, the equivalent of LÖVE's `Quad`.
 ///
-/// Use it with [`crate::graphics::draw_quad`] to draw one sprite out of a
-/// sprite sheet.
+/// Use it with [`Image::region`] to draw one sprite out of a sprite sheet,
+/// or with the `_quad` methods of a
+/// [`SpriteBatch`](crate::graphics::SpriteBatch).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quad {
     pub(crate) x: f32,

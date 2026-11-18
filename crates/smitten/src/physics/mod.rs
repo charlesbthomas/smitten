@@ -25,7 +25,8 @@
 //!
 //! Positions are in the same units `graphics` draws in, with y pointing
 //! down, and angles are in radians, clockwise on screen, so a body's
-//! position and angle can be passed straight to `graphics::draw_ex`.
+//! position and angle can be passed straight to
+//! [`DrawParams`](crate::graphics::DrawParams).
 //!
 //! Like LÖVE, the simulation is tuned by saying how many units make a
 //! meter ([`World::set_meter`], 30 by default): bodies behave best when

@@ -443,7 +443,8 @@ pub enum MeshDrawMode {
 ///
 /// Use it for what images and shapes cannot do: gradients, a texture
 /// stretched over an arbitrary shape, trails, or terrain. Draw it with
-/// [`crate::graphics::draw_mesh`].
+/// [`graphics::draw`](crate::graphics::draw), or many copies at once
+/// with [`graphics::draw_instanced`](crate::graphics::draw_instanced).
 ///
 /// A mesh lives on the GPU: its vertices are sent when they change, not
 /// every frame, and the GPU moves them into place. Its vertices can have
@@ -462,7 +463,7 @@ pub enum MeshDrawMode {
 ///         MeshVertex::colored((100.0, 100.0), blue),
 ///         MeshVertex::colored((0.0, 100.0), red),
 ///     ], MeshDrawMode::Fan);
-/// graphics::draw_mesh(&gradient, (50.0, 50.0));
+/// graphics::draw(&gradient, (50.0, 50.0));
 /// ```
 pub struct Mesh {
     /// Shared with meshes that attach attributes from this one.

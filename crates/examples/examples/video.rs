@@ -9,6 +9,7 @@
 //! `sine` sources.
 
 use smitten::audio::Source;
+use smitten::graphics::DrawParams;
 use smitten::graphics::{DrawMode, Video};
 use smitten::sound::SoundData;
 use smitten::{Color, Config, Game, Key, event, graphics};
@@ -66,7 +67,7 @@ impl Game for Player {
         let scale = ((screen_w - 80.0) / video_w as f32).min((screen_h - 160.0) / video_h as f32);
         let x = (screen_w - video_w as f32 * scale) / 2.0;
         graphics::set_color(Color::WHITE);
-        graphics::draw_video_ex(&self.video, x, 40.0, 0.0, scale, scale, 0.0, 0.0);
+        graphics::draw(&self.video, DrawParams::at((x, 40.0)).scale(scale));
 
         // How far through the video is.
         let bar_y = 40.0 + video_h as f32 * scale + 20.0;

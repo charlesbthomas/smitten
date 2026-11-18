@@ -124,14 +124,14 @@ impl Game for Particles {
     fn draw(&mut self) {
         let smitten::Vec2 { x, y } = mouse::position();
         graphics::set_color(Color::WHITE);
-        graphics::draw_particles(&self.smoke, (x, y));
+        graphics::draw(&self.smoke, (x, y));
 
         // Adding the particles together makes the middle of the fire and
         // the sparks glow where they overlap.
         graphics::set_blend_mode(BlendMode::Add);
-        graphics::draw_particles(&self.fire, (x, y));
-        graphics::draw_particles(&self.sparks, (0.0, 0.0));
-        graphics::draw_particles(&self.swirl, (0.0, 0.0));
+        graphics::draw(&self.fire, (x, y));
+        graphics::draw(&self.sparks, (0.0, 0.0));
+        graphics::draw(&self.swirl, (0.0, 0.0));
         graphics::set_blend_mode(BlendMode::Alpha);
 
         let count =

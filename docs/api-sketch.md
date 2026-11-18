@@ -72,8 +72,8 @@ fn main() {
 | `conf.lua` | `Config` passed to `run` | |
 | `love.run` | `smitten::run_loop(config, \|main\| …)` | `main` has `poll`, `step`, `clear`, `present` and `is_active`. Return from the closure to quit. |
 | `love.graphics.draw(img, x, y)` | `graphics::draw(&img, x, y)` | |
-| `love.graphics.draw(img, x, y, r, sx, sy, ox, oy)` | `graphics::draw_ex(&img, x, y, r, sx, sy, ox, oy)` | Same arguments in the same order. |
-| `love.graphics.draw(img, quad, x, y)` | `graphics::draw_quad(&img, &quad, x, y)` | |
+| `love.graphics.draw(img, x, y, r, sx, sy, ox, oy)` | `graphics::draw(&img, DrawParams::at((x, y)).rotation(r).scale_xy((sx, sy)).origin((ox, oy)))` | Same arguments in the same order. |
+| `love.graphics.draw(img, quad, x, y)` | `graphics::draw(&img.region(&quad), x)` | |
 | `love.graphics.push()` / `pop()` | `graphics::push()` / `graphics::pop()` | |
 | `love.graphics.push("all")` | `graphics::push_all()` | Saves every drawing setting, not only the transform. `push_ex(StackType)` takes the kind. `pop` restores either. |
 | `love.graphics.getStackDepth()` | `graphics::stack_depth()` | |
@@ -112,10 +112,10 @@ fn main() {
 | `batch:setDrawRange(start, count)` / `getBufferSize()` | `batch.set_draw_range(Some((start, count)))` / `buffer_size()` | Start counts from 0. `SpriteBatch::with_usage` takes the usage hint. |
 | `quad:getViewport()` / `setViewport(x, y, w, h)` | `quad.viewport()` / `quad.set_viewport(x, y, w, h)` | `texture_dimensions()` and `set_texture_dimensions(w, h)` for the image size. |
 | `batch:set(id, x, y)` / `batch:setColor(r, g, b, a)` / `batch:clear()` | `batch.set(index, x, y)` / `batch.set_color(color)` / `batch.clear()` | Indexes start at 0. |
-| `love.graphics.draw(batch, x, y)` | `graphics::draw_sprite_batch(&batch, x, y)` | |
+| `love.graphics.draw(batch, x, y)` | `graphics::draw(&batch, x, y)` | |
 | `love.graphics.newParticleSystem(image, max)` | `graphics::new_particle_system(&image, max)` | Setters take the same values as LÖVE's, such as `set_emission_rate`, `set_speed`, `set_sizes`, `set_colors`. |
 | `psystem:update(dt)` / `psystem:emit(n)` | `system.update(dt)` / `system.emit(n)` | |
-| `love.graphics.draw(psystem, x, y)` | `graphics::draw_particles(&system, x, y)` | |
+| `love.graphics.draw(psystem, x, y)` | `graphics::draw(&system, x, y)` | |
 | `love.graphics.validateShader(code)` | `graphics::validate_shader(code)` | Returns the compile error, if any. |
 | `love.graphics.getRendererInfo()` | `graphics::renderer_info()` | A `RendererInfo` with `name`, `version`, `vendor` and `device`. |
 | `love.graphics.setMeshCullMode(mode)` / `setFrontFaceWinding(w)` | `graphics::set_mesh_cull_mode(CullMode)` / `set_front_face_winding(VertexWinding)` | Meshes only, as in LÖVE. |
@@ -189,7 +189,7 @@ fn main() {
 | `image:setWrap("repeat", "repeat")` | `image.set_wrap(Wrap::Repeat, Wrap::Repeat)` | `Clamp`, `Repeat` or `MirroredRepeat`. A quad larger than the image then tiles it. |
 | `love.graphics.newMesh(vertices, "fan")` | `graphics::new_mesh(&vertices, MeshDrawMode::Fan)` | Vertices are `MeshVertex { x, y, u, v, color }`. `Fan`, `Strip` or `Triangles`. |
 | `mesh:setTexture(image)` / `setVertexMap` / `setDrawRange` | `mesh.set_texture(Some(&image))` / `set_vertex_map` / `set_draw_range` | |
-| `love.graphics.draw(mesh, x, y)` | `graphics::draw_mesh(&mesh, x, y)` | |
+| `love.graphics.draw(mesh, x, y)` | `graphics::draw(&mesh, x, y)` | |
 | `canvas:newImageData()` | `canvas.new_image_data()` | Returns a `Result`. Slow, since it waits for the GPU. |
 | `love.graphics.captureScreenshot(callback)` | `graphics::capture_screenshot(\|picture\| ...)` | The callback gets an `ImageData` at the end of the frame. |
 | `love.graphics.captureScreenshot("shot.png")` | `graphics::save_screenshot("shot.png")` | Written to the save directory. |
@@ -233,18 +233,18 @@ fn main() {
 | `love.sound.newDecoder(path, bufferSize)` / `decoder:decode()` / `seek(s)` / `clone()` | `sound::new_decoder(path, samples)` / `decoder.decode()` / `decoder.seek(s)` / `decoder.clone()` | The buffer size counts samples per channel, not bytes. `decode` gives `Option<SoundData>`. |
 | `love.audio.newSource(decoder, "stream")` | `Source::from_decoder(&decoder, SourceType::Stream)` | Plays the decoder's file from its start. |
 | `love.audio.getRecordingDevices()` / `device:start(samples, rate, bits, channels)` / `getData()` / `stop()` | `audio::recording_devices()` / `device.start(samples, rate, channels)` / `device.data()` / `device.stop()` | No bit depth. A full buffer drops its oldest samples. `start` returns a `Result`. |
-| `love.graphics.newVideo(path)` / `love.graphics.draw(video, x, y)` | `graphics::new_video(path)` / `graphics::draw_video(&video, x, y)` | Ogg Theora, with an Ogg Vorbis sound track if there is one. `video.image()` gives the current picture for quads and shaders. |
+| `love.graphics.newVideo(path)` / `love.graphics.draw(video, x, y)` | `graphics::new_video(path)` / `graphics::draw(&video, x, y)` | Ogg Theora, with an Ogg Vorbis sound track if there is one. `video.image()` gives the current picture for quads and shaders. |
 | `video:play()` / `pause()` / `seek(s)` / `tell()` / `rewind()` / `getSource()` | `video.play()` / `pause()` / `seek(s)` / `tell()` / `rewind()` / `source()` | The picture follows the sound when there is some. It stops on the last frame. |
 | `love.video.newVideoStream(path)` | `video::new_video_stream(path)` | A decoder only: `seek(s)` decodes the frame at that time and `pixels()` reads it as RGBA. The `Video` keeps time. |
 | `love.math.newTransform(x, y, r, sx, sy, ox, oy, kx, ky)` | `math::new_transform(x, y, r, sx, sy, ox, oy, kx, ky)` | Or `Transform::new()`. `translate`, `rotate`, `scale`, `shear`, `set_transformation`, `reset`, `inverse`, `transform_point`, `inverse_transform_point` keep their names. `transform:apply(other)` is `apply_transform(&other)`, or `outer * inner`. |
 | `transform:getMatrix()` / `setMatrix(...)` | `transform.matrix()` / `transform.set_matrix(rows)` | A 3 by 3 matrix in rows, since the transform is 2D. |
 | `love.graphics.applyTransform(t)` / `replaceTransform(t)` / `shear(kx, ky)` | `graphics::apply_transform(&t)` / `replace_transform(&t)` / `shear(kx, ky)` | `graphics::transform()` returns the current one. |
 | `love.graphics.transformPoint(x, y)` / `inverseTransformPoint(x, y)` | `graphics::transform_point(x, y)` / `inverse_transform_point(x, y)` | In units, under the current transform. |
-| `love.graphics.draw(image, transform)` / `print(text, transform)` | `graphics::draw_with(&image, &transform)` / `print_with(text, &transform)` | Also `draw_quad_with` and `printf_with`. |
+| `love.graphics.draw(image, transform)` / `print(text, transform)` | `graphics::draw(&image, &transform)` / `print_with(text, &transform)` | Also `draw_quad_with` and `printf_with`. |
 | `love.graphics.newText(font, text)` | `graphics::new_text(&font, text)` | Laid out once, the first time it is drawn after a change. |
 | `text:set(s)` / `setf(s, limit, align)` / `add(s, x, y)` / `addf(s, limit, align, x, y)` / `clear()` | `text.set(s)` / `set_f(s, limit, align)` / `add(s, x, y)` / `add_f(s, limit, align, x, y)` / `clear()` | `add` returns the index from 0. `add_ex` takes the full `draw` arguments. |
 | `text:getDimensions()` / `getWidth()` / `getHeight()` / `setFont(font)` | `text.dimensions()` / `width()` / `height()` / `set_font(&font)` | `text.bounds(index)` gives one piece's box. |
-| `love.graphics.draw(text, x, y)` | `graphics::draw_text(&text, x, y)` | `draw_text_ex` and `draw_text_with` take the other forms. |
+| `love.graphics.draw(text, x, y)` | `graphics::draw(&text, x, y)` | `draw_text_ex` and `draw_text_with` take the other forms. |
 | `love.graphics.setColorMask(r, g, b, a)` / `getColorMask()` | `graphics::set_color_mask(r, g, b, a)` / `graphics::color_mask()` | Booleans. Clearing ignores the mask. |
 | `love.graphics.setWireframe(true)` / `isWireframe()` | `graphics::set_wireframe(true)` / `graphics::is_wireframe()` | Triangle edges, one pixel wide. |
 | `love.graphics.getStats()` | `graphics::stats()` | A `Stats` struct with LÖVE's fields in `snake_case`. Draw counts start from zero each frame. |
@@ -252,14 +252,14 @@ fn main() {
 | `love.graphics.newCanvas(w, h, {mipmaps = "auto"})` / `canvas:generateMipmaps()` | `Canvas::with_mipmaps(w, h, MipmapMode::Auto)` / `canvas.generate_mipmaps()` | `Auto` makes them again each frame the canvas is drawn to; `Manual` only when asked. |
 | `image:setMipmapFilter("linear", sharpness)` / `getMipmapFilter()` / `getMipmapCount()` | `image.set_mipmap_filter(Some(Filter::Linear), sharpness)` / `mipmap_filter()` / `mipmap_count()` | `None` turns them off. Starts out `Linear` with a sharpness of 0. |
 | `love.graphics.newArrayImage({path1, path2})` | `graphics::new_array_image(&[path1, path2])` | `ArrayImage::from_image_data` takes `ImageData` layers. Every layer must be the same size. |
-| `love.graphics.drawLayer(array, layer, x, y)` | `graphics::draw_layer(&array, layer, x, y)` | Layers count from 0. `draw_layer_ex` and `draw_layer_quad_with` take the other forms. Not with a custom shader active: send the array to the shader instead. |
+| `love.graphics.drawLayer(array, layer, x, y)` | `graphics::draw(&array.layer(layer), x)` | Layers count from 0. `draw_layer_ex` and `draw_layer_quad_with` take the other forms. Not with a custom shader active: send the array to the shader instead. |
 | `love.graphics.newCubeImage({px, nx, py, ny, pz, nz})` | `graphics::new_cube_image(&[px, nx, py, ny, pz, nz])` | Six square faces, in LÖVE's order. |
 | `love.graphics.newCubeImage(path)` | `graphics::new_cube_image_from_layout(path)` | One picture of all six faces: a 6 by 1 or 1 by 6 strip, or a 4 by 3 or 3 by 4 cross, as in LÖVE. `CubeImage::from_layout` takes an `ImageData`. |
 | `shader:send("sky", cubeimage)` | `shader.send_texture("sky", &cube)` | The shader declares `var sky: texture_cube<f32>;` with no binding and samples it with `sky_sampler`. Also `texture_2d<f32>` for an `Image` or `Canvas`, and `texture_2d_array<f32>` for an `ArrayImage`. One not sent reads as white. |
 | `spritebatch:attachAttribute(name, mesh)` | `batch.attach_attribute(name, &mesh)` | Sprite `i` takes the mesh's vertices `4i` to `4i + 3`, as in LÖVE. `batch.detach_attribute(name)` undoes it. |
 | `love.image.newCompressedData(path)` / `love.graphics.newImage(compresseddata)` | `graphics::new_compressed_data(path)` / `Image::from_compressed_data(&data)` | DDS files in the BC formats (DXT1, DXT3, DXT5, BC4 to BC7, BC6H for HDR), and KTX 1 files in the BC and ASTC formats, with their mipmaps. `new_image` loads a `.dds` or `.ktx` file too, and reloads it when it changes like any image. ETC and PVRTC have no equivalent in SDL's GPU API. |
 | `love.graphics.getImageFormats()` | `graphics::is_compressed_format_supported(CompressedFormat::Bc7)` | One format at a time. |
-| `love.graphics.print({color1, "a", color2, "b"}, x, y)` / `printf(coloredtext, ...)` | `graphics::print_colored(&[(color1, "a"), (color2, "b")], x, y)` / `printf_colored(...)` | Each part is tinted by its color and the current one. `Text` has `add_colored`, `add_f_colored`, `set_colored` and `set_f_colored`. |
+| `love.graphics.print({color1, "a", color2, "b"}, x, y)` / `printf(coloredtext, ...)` | `graphics::print(&[(color1, "a"), (color2, "b")], x, y)` / `printf_colored(...)` | Each part is tinted by its color and the current one. `Text` has `add_colored`, `add_f_colored`, `set_colored` and `set_f_colored`. |
 | `world:queryBoundingBox(x1, y1, x2, y2, callback)` | `world.fixtures_in_box(x1, y1, x2, y2)` | A list, by bounding box as in LÖVE. `fixture.bounding_box()` is `getBoundingBox`. |
 | `world:setCallbacks(nil, nil, preSolve)` | `world.set_pre_solve(\|contact\| ...)` | A closure. Set `contact.enabled = false` for a one-way platform, or change its `friction` and `restitution`. It must not call into the world. |
 | `world:setCallbacks(nil, nil, nil, postSolve)` / `world:getContacts()` | `world.touching()` after each update | Each `Touch` carries `normal_impulse` and `tangent_impulse`. |

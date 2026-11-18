@@ -4,7 +4,7 @@
 //! The title bar shows how many there are and how long a frame takes.
 //!
 //! Up adds 1000 hearts and Down removes 1000. Tab switches between drawing
-//! each heart with `graphics::draw_ex` and putting them all in a sprite
+//! each heart with `graphics::draw` and putting them all in a sprite
 //! batch that is rebuilt every frame. Escape quits.
 //!
 //! Run it in release mode, since debug builds are several times slower:
@@ -19,6 +19,7 @@
 
 use std::time::Instant;
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Image, SpriteBatch};
 use smitten::{Color, Config, Filter, Game, Key, event, graphics, timer, window};
 
@@ -168,22 +169,21 @@ impl Game for Benchmark {
             self.batch.clear();
             for heart in &self.hearts {
                 self.batch.set_color(heart.tint);
-                self.batch
-                    .add_ex(heart.x, heart.y, heart.angle, 1.0, 1.0, center_x, center_y);
+                self.batch.add(
+                    DrawParams::at((heart.x, heart.y))
+                        .rotation(heart.angle)
+                        .origin((center_x, center_y)),
+                );
             }
-            graphics::draw_sprite_batch(&self.batch, (0.0, 0.0));
+            graphics::draw(&self.batch, (0.0, 0.0));
         } else {
             for heart in &self.hearts {
                 graphics::set_color(heart.tint);
-                graphics::draw_ex(
+                graphics::draw(
                     &self.image,
-                    heart.x,
-                    heart.y,
-                    heart.angle,
-                    1.0,
-                    1.0,
-                    center_x,
-                    center_y,
+                    DrawParams::at((heart.x, heart.y))
+                        .rotation(heart.angle)
+                        .origin((center_x, center_y)),
                 );
             }
             graphics::set_color(Color::WHITE);

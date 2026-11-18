@@ -5,6 +5,7 @@
 //! placed by a `Transform`, and its inverse turns the mouse position into
 //! the square's own coordinates. Press W for wireframe and Escape to quit.
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::Font;
 use smitten::graphics::Transform;
 use smitten::graphics::{
@@ -61,13 +62,13 @@ impl Game for Extras {
         let small = Font::default_at(13.0);
         let mut labels = Text::new(&small, "");
         labels.add("Hover the square", (40.0, 250.0));
-        labels.add_f("Plain / mipmapped", 220.0, Align::Center, (260.0, 250.0));
+        labels.add_f("Plain / mipmapped", (260.0, 250.0), 220.0, Align::Center);
         labels.add("Array image layers", (540.0, 250.0));
         labels.add_f(
             "Cube image by direction, then array image by layer, read in a shader",
+            (40.0, 470.0),
             360.0,
             Align::Left,
-            (40.0, 470.0),
         );
         labels.add("Color mask: no red", (560.0, 380.0));
 
@@ -126,9 +127,11 @@ impl Game for Extras {
     fn update(&mut self, dt: f32) {
         self.angle += dt * 0.8;
         // Centered on (130, 160), turning, and leaning over with a shear.
-        self.square = Transform::from_transformation(
-            130.0, 160.0, self.angle, 1.0, 1.0, 40.0, 40.0, 0.3, 0.0,
-        );
+        self.square = DrawParams::at((130.0, 160.0))
+            .rotation(self.angle)
+            .origin((40.0, 40.0))
+            .shear((0.3, 0.0))
+            .to_transform();
     }
 
     fn key_pressed(&mut self, key: Key, _is_repeat: bool) {
@@ -141,9 +144,9 @@ impl Game for Extras {
 
     fn draw(&mut self) {
         graphics::set_color(Color::WHITE);
-        graphics::draw_text(&self.title, (40.0, 30.0));
+        graphics::draw(&self.title, (40.0, 30.0));
         graphics::set_color(Color::rgb(0.7, 0.72, 0.8));
-        graphics::draw_text(&self.labels, (0.0, 0.0));
+        graphics::draw(&self.labels, (0.0, 0.0));
 
         // The mouse in the square's own coordinates.
         let smitten::Vec2 { x: mx, y: my } = mouse::position();
@@ -160,12 +163,15 @@ impl Game for Extras {
         graphics::pop();
 
         graphics::set_color(Color::WHITE);
-        graphics::draw_ex(&self.plain, 300.0, 120.0, 0.0, 0.4, 0.4, 0.0, 0.0);
-        graphics::draw_ex(&self.mipmapped, 420.0, 120.0, 0.0, 0.4, 0.4, 0.0, 0.0);
+        graphics::draw(&self.plain, DrawParams::at((300.0, 120.0)).scale(0.4));
+        graphics::draw(&self.mipmapped, DrawParams::at((420.0, 120.0)).scale(0.4));
 
         for layer in 0..self.tiles.layer_count() {
             let x = 560.0 + layer as f32 * 60.0;
-            graphics::draw_layer_ex(&self.tiles, layer, x, 140.0, 0.0, 3.0, 3.0, 0.0, 0.0);
+            graphics::draw(
+                &self.tiles.layer(layer),
+                DrawParams::at((x, 140.0)).scale(3.0),
+            );
         }
 
         graphics::set_shader(Some(&self.shader));

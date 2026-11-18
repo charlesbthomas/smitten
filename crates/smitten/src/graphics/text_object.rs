@@ -7,13 +7,13 @@ use std::cell::RefCell;
 use smitten_core::backend::{Backend, TextureId, Vertex};
 
 use super::text::{GlyphColors, joined};
-use super::{Align, Font, Transform};
+use super::{Align, DrawParams, Font, TextSpans, Transform};
 use crate::Color;
 
 /// Text laid out ahead of time, so drawing it costs no more than drawing
 /// an image: the equivalent of LÖVE's `Text`, made with
 /// [`Text::new`](crate::graphics::Text::new) and drawn with
-/// [`graphics::draw_text`](crate::graphics::draw_text).
+/// [`graphics::draw`](crate::graphics::draw).
 ///
 /// [`graphics::print`](crate::graphics::print) works out where every glyph
 /// goes each time it is called. A `Text` does that once, the first time it
@@ -54,7 +54,7 @@ struct Cache {
 impl Text {
     /// Makes a `Text` in `font` holding `text` at its top-left corner. An
     /// empty string makes it start out empty.
-    pub fn new(font: &Font, text: &str) -> Text {
+    pub fn new<'a>(font: &Font, text: impl Into<TextSpans<'a>>) -> Text {
         let mut made = Text {
             font: font.clone(),
             entries: Vec::new(),
@@ -64,9 +64,11 @@ impl Text {
         made
     }
 
-    /// Replaces everything with `text` at the top-left corner.
-    pub fn set(&mut self, text: &str) {
+    /// Replaces everything with `text` at the top-left corner. The text
+    /// can be a string or colored parts, as [`TextSpans`] describes.
+    pub fn set<'a>(&mut self, text: impl Into<TextSpans<'a>>) {
         self.clear();
+        let text = text.into();
         if !text.is_empty() {
             self.add(text, (0.0, 0.0));
         }
@@ -75,113 +77,39 @@ impl Text {
     /// Replaces everything with `text` wrapped to `limit` units wide and
     /// aligned within that width, as
     /// [`graphics::printf`](crate::graphics::printf) draws it.
-    pub fn set_f(&mut self, text: &str, limit: f32, align: Align) {
+    pub fn set_f<'a>(&mut self, text: impl Into<TextSpans<'a>>, limit: f32, align: Align) {
         self.clear();
+        let text = text.into();
         if !text.is_empty() {
-            self.add_f(text, limit, align, (0.0, 0.0));
+            self.add_f(text, (0.0, 0.0), limit, align);
         }
     }
 
-    /// Adds `text` with its top-left corner at `(x, y)`, keeping what is
-    /// already there. Returns its index, counting from 0.
-    pub fn add(&mut self, text: &str, position: impl Into<Vec2>) -> usize {
-        let Vec2 { x, y } = position.into();
-        self.add_with(
-            text,
-            &Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0),
-        )
-    }
-
-    /// Adds `text` with the full set of LÖVE's `add` arguments, which mean
-    /// what they do for [`graphics::draw_ex`](crate::graphics::draw_ex).
-    #[allow(clippy::too_many_arguments)] // Mirrors Text:add.
-    pub fn add_ex(
+    /// Adds `text` placed by `params`, keeping what is already there.
+    /// Returns its index, counting from 0.
+    pub fn add<'a>(
         &mut self,
-        text: &str,
-        x: f32,
-        y: f32,
-        r: f32,
-        sx: f32,
-        sy: f32,
-        ox: f32,
-        oy: f32,
+        text: impl Into<TextSpans<'a>>,
+        params: impl Into<DrawParams>,
     ) -> usize {
-        self.add_with(text, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy))
-    }
-
-    /// Adds `text` placed by `transform`.
-    pub fn add_with(&mut self, text: &str, transform: &Transform) -> usize {
-        self.push(text, None, transform)
+        let transform = params.into().to_transform();
+        text.into()
+            .with_segments(|segments| self.push_segments(segments, None, &transform))
     }
 
     /// Adds `text` wrapped to `limit` units and aligned within that width,
-    /// with its top-left corner at `(x, y)`.
-    pub fn add_f(
+    /// placed by `params`.
+    pub fn add_f<'a>(
         &mut self,
-        text: &str,
+        text: impl Into<TextSpans<'a>>,
+        params: impl Into<DrawParams>,
         limit: f32,
         align: Align,
-        position: impl Into<Vec2>,
     ) -> usize {
-        let Vec2 { x, y } = position.into();
-        let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-        self.add_f_with(text, limit, align, &transform)
-    }
-
-    /// Adds wrapped text placed by `transform`.
-    pub fn add_f_with(
-        &mut self,
-        text: &str,
-        limit: f32,
-        align: Align,
-        transform: &Transform,
-    ) -> usize {
-        self.push(text, Some((limit, align)), transform)
-    }
-
-    /// Replaces everything with text made of colored parts at the top-left
-    /// corner, the equivalent of `text:set(coloredtext)`. Each part is
-    /// tinted by its color as well as the one the text is drawn in.
-    pub fn set_colored(&mut self, segments: &[(Color, &str)]) {
-        self.clear();
-        self.add_colored(segments, (0.0, 0.0));
-    }
-
-    /// Replaces everything with colored text wrapped to `limit` units.
-    pub fn set_f_colored(&mut self, segments: &[(Color, &str)], limit: f32, align: Align) {
-        self.clear();
-        self.add_f_colored(segments, limit, align, (0.0, 0.0));
-    }
-
-    /// Adds text made of colored parts with its top-left corner at
-    /// `(x, y)`. Returns its index.
-    pub fn add_colored(&mut self, segments: &[(Color, &str)], position: impl Into<Vec2>) -> usize {
-        let Vec2 { x, y } = position.into();
-        let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-        self.add_colored_with(segments, &transform)
-    }
-
-    /// Adds colored text placed by `transform`.
-    pub fn add_colored_with(&mut self, segments: &[(Color, &str)], transform: &Transform) -> usize {
-        self.push_segments(segments, None, transform)
-    }
-
-    /// Adds colored text wrapped to `limit` units with its top-left corner
-    /// at `(x, y)`.
-    pub fn add_f_colored(
-        &mut self,
-        segments: &[(Color, &str)],
-        limit: f32,
-        align: Align,
-        position: impl Into<Vec2>,
-    ) -> usize {
-        let Vec2 { x, y } = position.into();
-        let transform = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-        self.push_segments(segments, Some((limit, align)), &transform)
-    }
-
-    fn push(&mut self, text: &str, wrap: Option<(f32, Align)>, transform: &Transform) -> usize {
-        self.push_segments(&[(Color::WHITE, text)], wrap, transform)
+        let transform = params.into().to_transform();
+        text.into().with_segments(|segments| {
+            self.push_segments(segments, Some((limit, align)), &transform)
+        })
     }
 
     fn push_segments(
@@ -369,7 +297,7 @@ mod tests {
         let mut text = Text::new(&font(), "score");
         assert_eq!(text.len(), 1);
         assert_eq!(text.add("lives", (0.0, 20.0)), 1);
-        assert_eq!(text.add_f("wrapped", 50.0, Align::Center, (0.0, 40.0)), 2);
+        assert_eq!(text.add_f("wrapped", (0.0, 40.0), 50.0, Align::Center), 2);
         text.set("only this");
         assert_eq!(text.len(), 1);
         text.set("");
@@ -393,7 +321,7 @@ mod tests {
     fn scaled_pieces_measure_larger() {
         let font = font();
         let mut text = Text::new(&font, "");
-        text.add_ex("hello", 0.0, 0.0, 0.0, 2.0, 3.0, 0.0, 0.0);
+        text.add("hello", DrawParams::new().scale_xy((2.0, 3.0)));
         let (width, height) = text.dimensions();
         assert!((width - 2.0 * font.width("hello")).abs() < 1e-3);
         assert!((height - 3.0 * font.height()).abs() < 1e-3);
@@ -402,7 +330,7 @@ mod tests {
     #[test]
     fn right_aligned_text_reaches_the_limit() {
         let mut text = Text::new(&font(), "");
-        text.add_f("hi", 200.0, Align::Right, (0.0, 0.0));
+        text.add_f("hi", (0.0, 0.0), 200.0, Align::Right);
         assert!((text.width() - 200.0).abs() < 1e-3);
         let [left, ..] = text.bounds(0).unwrap();
         assert_eq!(left, 0.0);

@@ -13,6 +13,7 @@
 //! cargo run --example design -- smooth
 //! ```
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{DrawMode, Image};
 use smitten::{Color, Config, Filter, Game, Key, Scaling, event, graphics, mouse, timer, window};
 
@@ -72,7 +73,10 @@ impl Game for Design {
         // The mouse is reported in design units, so this heart follows it
         // exactly at any window size.
         let smitten::Vec2 { x, y } = mouse::position();
-        graphics::draw_ex(&self.heart, x.round(), y.round(), 0.0, 1.0, 1.0, 8.0, 8.0);
+        graphics::draw(
+            &self.heart,
+            DrawParams::at((x.round(), y.round())).origin((8.0, 8.0)),
+        );
         graphics::print(&format!("mouse {:.0}, {:.0}", x, y), (8.0, 8.0));
     }
 

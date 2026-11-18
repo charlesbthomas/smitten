@@ -73,7 +73,7 @@ enum State {
 ///
 /// Set up how particles behave with the `set_` methods, call
 /// [`update`](ParticleSystem::update) every frame, and draw it with
-/// [`graphics::draw_particles`](super::draw_particles).
+/// [`graphics::draw`](super::draw).
 ///
 /// A new system emits nothing until it is given an emission rate or
 /// [`emit`](ParticleSystem::emit) is called. Particles are positioned

@@ -7,6 +7,7 @@
 //!   turns the picture gray by an amount sent from the game.
 //! - Space switches the full-screen effect on and off. Escape quits.
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Canvas, DrawMode, Image, Shader};
 use smitten::{BlendMode, Color, Config, Filter, Game, Key, event, graphics, timer};
 
@@ -57,15 +58,9 @@ impl Shaders {
         graphics::set_shader(Some(&self.gray));
         for step in 0..5 {
             self.gray.send("amount", step as f32 / 4.0);
-            graphics::draw_ex(
+            graphics::draw(
                 &self.heart,
-                330.0 + step as f32 * 72.0,
-                60.0,
-                0.0,
-                8.0,
-                8.0,
-                0.0,
-                0.0,
+                DrawParams::at((330.0 + step as f32 * 72.0, 60.0)).scale(8.0),
             );
         }
         graphics::set_shader(None);

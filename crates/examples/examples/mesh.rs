@@ -6,6 +6,7 @@
 
 use std::f32::consts::TAU;
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::Image;
 use smitten::graphics::{Align, Mesh, MeshDrawMode, MeshVertex};
 use smitten::{Color, Config, Filter, Game, Key, event, graphics, timer};
@@ -86,23 +87,17 @@ impl Game for Meshes {
 
     fn draw(&mut self) {
         graphics::set_color(Color::WHITE);
-        graphics::draw_mesh(&self.gradient, (50.0, 60.0));
-        graphics::draw_mesh_ex(
+        graphics::draw(&self.gradient, (50.0, 60.0));
+        graphics::draw(
             &self.wheel,
-            160.0,
-            400.0,
-            timer::time() as f32 * 0.3,
-            1.0,
-            1.0,
-            0.0,
-            0.0,
+            DrawParams::at((160.0, 400.0)).rotation(timer::time() as f32 * 0.3),
         );
 
         // The pole, then the flag.
         graphics::set_color(Color::rgb(0.6, 0.6, 0.65));
         graphics::rectangle(graphics::DrawMode::Fill, (392.0, 110.0), (8.0, 400.0));
         graphics::set_color(Color::WHITE);
-        graphics::draw_mesh(&self.flag, (400.0, 120.0));
+        graphics::draw(&self.flag, (400.0, 120.0));
 
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.7));
         graphics::printf(

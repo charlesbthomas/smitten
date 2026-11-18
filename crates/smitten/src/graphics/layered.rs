@@ -86,7 +86,8 @@ fn load_all(paths: &[impl AsRef<Path>]) -> Result<Vec<ImageData>, ImageError> {
 /// Several pictures of the same size in one texture, the equivalent of
 /// LÖVE's `ArrayImage`.
 ///
-/// Draw one layer with [`graphics::draw_layer`](super::draw_layer), or
+/// Draw one layer with [`graphics::draw`](super::draw) and
+/// [`ArrayImage::layer`], or
 /// send the whole array to a [`Shader`](super::Shader) that declares a
 /// `texture_2d_array<f32>`, where it can pick a layer per pixel, such as
 /// for tiles that blend into each other.

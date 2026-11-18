@@ -5,6 +5,7 @@
 //! directory so it survives restarts. Press Space to count and Escape to
 //! quit.
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Align, DrawMode, Font};
 use smitten::{Color, Config, Filter, Game, Key, event, filesystem, graphics, timer};
 
@@ -69,30 +70,21 @@ impl Game for Text {
 
         graphics::set_font(&self.pixel);
         graphics::set_color(Color::rgb(0.55, 0.8, 1.0));
-        graphics::print_ex(
+        graphics::print(
             "A BITMAP FONT, 5 PIXELS TALL: 0123456789!?",
-            20.0,
-            385.0,
-            0.0,
-            4.0,
-            4.0,
-            0.0,
-            0.0,
+            DrawParams::at((20.0, 385.0)).scale(4.0),
         );
         graphics::set_font(&self.body);
 
         // Spun around its own center.
         let spinning = "rotated text";
         graphics::set_color(Color::rgb(1.0, 0.8, 0.3));
-        graphics::print_ex(
+        graphics::print(
             spinning,
-            width / 2.0,
-            470.0,
-            timer::time() as f32,
-            1.5,
-            1.5,
-            self.body.width(spinning) / 2.0,
-            self.body.height() / 2.0,
+            DrawParams::at((width / 2.0, 470.0))
+                .rotation(timer::time() as f32)
+                .scale(1.5)
+                .origin((self.body.width(spinning) / 2.0, self.body.height() / 2.0)),
         );
 
         graphics::set_color(Color::rgba(1.0, 1.0, 1.0, 0.6));

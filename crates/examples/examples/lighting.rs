@@ -17,6 +17,7 @@
 
 use std::f32::consts::TAU;
 
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Canvas, DrawMode, Image, Shader};
 use smitten::{
     BlendMode, Color, CompareMode, Config, Game, Key, MouseButton, event, graphics, keyboard, math,
@@ -206,7 +207,10 @@ impl Lighting {
             (280.0, 400.0),
             (520.0, 160.0),
         ] {
-            graphics::draw_ex(&self.heart, x, y, 0.0, 3.0, 3.0, 8.0, 8.0);
+            graphics::draw(
+                &self.heart,
+                DrawParams::at((x, y)).scale(3.0).origin((8.0, 8.0)),
+            );
         }
 
         for block in blocks {

@@ -14,6 +14,7 @@
 mod batch;
 mod canvas;
 mod compressed;
+mod draw;
 mod error;
 pub(crate) mod image;
 mod image_data;
@@ -59,6 +60,7 @@ pub(crate) mod reloading {
 
 pub use canvas::{Canvas, CanvasSettings, MipmapMode};
 pub use compressed::CompressedImageData;
+pub use draw::{DrawParams, Drawable, ImageRegion, TextSpans};
 pub use error::GraphicsError;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::{ImageData, ImageFormat, is_compressed};
@@ -654,7 +656,7 @@ impl GraphicsState {
         assert!(
             image.texture_kind() == TextureKind::Flat,
             "a {:?} canvas cannot be drawn like an image; draw a layer with \
-             graphics::draw_layer or sample it in a shader",
+             Canvas::layer or sample it in a shader",
             image.texture_kind()
         );
         self.push_texture(image.texture(), 0, image.filter(), quad, local);
@@ -2220,183 +2222,106 @@ impl ImageData {
     }
 }
 
-/// Draws an image with its top-left corner at `(x, y)`.
-pub fn draw(image: &Image, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_ex(image, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws an image with the full set of LÖVE's `draw` arguments.
+/// Draws `item` placed by `params`, the equivalent of
+/// `love.graphics.draw`. A position is enough for `params`, and
+/// [`DrawParams`] adds rotation, scale, an origin, shear and a
+/// [`Transform`].
 ///
-/// The image is scaled by `(sx, sy)` and rotated by `r` radians around the
-/// point `(ox, oy)` inside it, and that point is placed at `(x, y)`. To spin
-/// a sprite around its center, pass half its size as `(ox, oy)`.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_ex(image: &Image, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
-    draw_quad_ex(image, &whole_image(image), x, y, r, sx, sy, ox, oy);
-}
-
-/// Draws a video's current picture at `(x, y)`, the equivalent of
-/// `love.graphics.draw(video, x, y)`. Drawing moves the picture on to
-/// the video's position.
-#[cfg(feature = "video")]
-pub fn draw_video(video: &Video, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_video_ex(video, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws a video with the full set of `draw` arguments, as [`draw_ex`]
-/// describes.
-#[cfg(feature = "video")]
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_video_ex(video: &Video, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
-    draw_ex(video.image(), x, y, r, sx, sy, ox, oy);
-}
-
-/// Draws an image placed by `transform` instead of a position, rotation
-/// and scale, the equivalent of `love.graphics.draw(image, transform)`.
-pub fn draw_with(image: &Image, transform: &Transform) {
-    let quad = whole_image(image);
-    context::with(|ctx| ctx.gfx.push_image(image, &quad, transform));
-}
-
-/// Draws part of an image placed by `transform`.
-pub fn draw_quad_with(image: &Image, quad: &Quad, transform: &Transform) {
-    context::with(|ctx| ctx.gfx.push_image(image, quad, transform));
-}
-
-/// Draws the part of an image described by `quad` at `(x, y)`.
-pub fn draw_quad(image: &Image, quad: &Quad, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_quad_ex(image, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws part of an image with the full set of LÖVE's `draw` arguments.
+/// `item` is any [`Drawable`]: an [`Image`] or [`Canvas`], part of one
+/// from [`Image::region`], a layer from [`ArrayImage::layer`], a
+/// [`SpriteBatch`], [`Mesh`], [`ParticleSystem`], [`Text`] or video.
 ///
-/// See [`draw_ex`] for what the arguments mean. The origin `(ox, oy)` is
-/// measured from the top-left corner of the quad.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_quad_ex(
-    image: &Image,
-    quad: &Quad,
-    x: f32,
-    y: f32,
-    r: f32,
-    sx: f32,
-    sy: f32,
-    ox: f32,
-    oy: f32,
-) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_image(image, quad, &local));
+/// ```no_run
+/// use smitten::graphics::{self, DrawParams, Image, Quad};
+///
+/// # fn demo(sheet: &Image) {
+/// graphics::draw(sheet, (10.0, 10.0));
+/// let frame = Quad::new((0.0, 0.0), (16.0, 16.0), (64.0, 64.0));
+/// graphics::draw(&sheet.region(&frame), DrawParams::at((40.0, 10.0)).scale(4.0));
+/// # }
+/// ```
+#[doc(alias = "drawLayer")]
+pub fn draw(item: &impl Drawable, params: impl Into<DrawParams>) {
+    item.draw_transformed(&params.into().to_transform());
 }
 
-// ---------------------------------------------------------------------------
-// Sprite batches
-
-/// Draws every sprite in a batch, with the batch's origin at `(x, y)`.
-pub fn draw_sprite_batch(sprites: &SpriteBatch, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_sprite_batch_ex(sprites, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+impl draw::sealed::Sealed for Image {
+    fn draw_transformed(&self, local: &Transform) {
+        let quad = whole_image(self);
+        context::with(|ctx| ctx.gfx.push_image(self, &quad, local));
+    }
 }
+impl Drawable for Image {}
 
-/// Draws a sprite batch with the full set of LÖVE's `draw` arguments,
-/// which move, turn and scale the batch as a whole. See [`draw_ex`].
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_sprite_batch_ex(
-    sprites: &SpriteBatch,
-    x: f32,
-    y: f32,
-    r: f32,
-    sx: f32,
-    sy: f32,
-    ox: f32,
-    oy: f32,
-) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| {
-        ctx.gfx
-            .push_sprite_batch(&mut *ctx.backend, sprites, &local)
-    });
+impl draw::sealed::Sealed for Canvas {
+    fn draw_transformed(&self, local: &Transform) {
+        let image: &Image = self;
+        draw::sealed::Sealed::draw_transformed(image, local);
+    }
 }
+impl Drawable for Canvas {}
 
-// ---------------------------------------------------------------------------
-// Meshes
-
-/// Draws a mesh with its origin at `(x, y)`, tinted by the current color.
-pub fn draw_mesh(mesh: &Mesh, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_mesh_ex(mesh, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+impl draw::sealed::Sealed for ImageRegion<'_> {
+    fn draw_transformed(&self, local: &Transform) {
+        context::with(|ctx| ctx.gfx.push_image(self.image, self.quad, local));
+    }
 }
+impl Drawable for ImageRegion<'_> {}
 
-/// Draws a mesh with the full set of LÖVE's `draw` arguments. See
-/// [`draw_ex`].
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_mesh_ex(mesh: &Mesh, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_mesh(&mut *ctx.backend, mesh, &local, 1));
+#[cfg(feature = "video")]
+impl draw::sealed::Sealed for Video {
+    /// Drawing moves the picture on to the video's position.
+    fn draw_transformed(&self, local: &Transform) {
+        draw::sealed::Sealed::draw_transformed(self.image(), local);
+    }
 }
+#[cfg(feature = "video")]
+impl Drawable for Video {}
 
-/// Draws `instances` copies of a mesh at once with its origin at
-/// `(x, y)`, as LÖVE's `drawInstanced`. Each copy is drawn in the same
-/// place, so give them something to tell them apart: attributes attached
-/// with [`VertexAttributeStep::PerInstance`] through
+impl draw::sealed::Sealed for SpriteBatch {
+    fn draw_transformed(&self, local: &Transform) {
+        context::with(|ctx| ctx.gfx.push_sprite_batch(&mut *ctx.backend, self, local));
+    }
+}
+impl Drawable for SpriteBatch {}
+
+impl draw::sealed::Sealed for Mesh {
+    fn draw_transformed(&self, local: &Transform) {
+        context::with(|ctx| ctx.gfx.push_mesh(&mut *ctx.backend, self, local, 1));
+    }
+}
+impl Drawable for Mesh {}
+
+impl draw::sealed::Sealed for ParticleSystem {
+    fn draw_transformed(&self, local: &Transform) {
+        context::with(|ctx| ctx.gfx.push_particles(self, local));
+    }
+}
+impl Drawable for ParticleSystem {}
+
+impl draw::sealed::Sealed for Text {
+    fn draw_transformed(&self, local: &Transform) {
+        context::with(|ctx| ctx.gfx.push_text_object(ctx.backend.as_mut(), self, local));
+    }
+}
+impl Drawable for Text {}
+
+/// Draws `instances` copies of a mesh at once, placed by `params`, as
+/// LÖVE's `drawInstanced`. Each copy is drawn in the same place, so give
+/// them something to tell them apart: attributes attached with
+/// [`VertexAttributeStep::PerInstance`] through
 /// [`Mesh::attach_attribute_ex`], which advance once per copy, or
 /// `instance_index` in a [`Shader`]'s `position`, which counts the copies
 /// from 0.
 ///
 /// Panics if a per-instance attribute's mesh has fewer vertices than
 /// `instances`. A mesh drawn as [`MeshDrawMode::Points`] is drawn once.
-pub fn draw_instanced(mesh: &Mesh, instances: u32, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_instanced_ex(mesh, instances, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// [`draw_instanced`] with the full set of LÖVE's `draw` arguments. See
-/// [`draw_ex`].
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.drawInstanced.
-pub fn draw_instanced_ex(
-    mesh: &Mesh,
-    instances: u32,
-    x: f32,
-    y: f32,
-    r: f32,
-    sx: f32,
-    sy: f32,
-    ox: f32,
-    oy: f32,
-) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+pub fn draw_instanced(mesh: &Mesh, instances: u32, params: impl Into<DrawParams>) {
+    let local = params.into().to_transform();
     context::with(|ctx| {
         ctx.gfx
             .push_mesh(&mut *ctx.backend, mesh, &local, instances)
     });
-}
-
-// ---------------------------------------------------------------------------
-// Particles
-
-/// Draws a particle system with its origin at `(x, y)`.
-pub fn draw_particles(system: &ParticleSystem, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_particles_ex(system, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws a particle system with the full set of LÖVE's `draw` arguments.
-/// See [`draw_ex`] for what they mean.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_particles_ex(
-    system: &ParticleSystem,
-    x: f32,
-    y: f32,
-    r: f32,
-    sx: f32,
-    sy: f32,
-    ox: f32,
-    oy: f32,
-) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_particles(system, &local));
 }
 
 // ---------------------------------------------------------------------------
@@ -2505,166 +2430,131 @@ pub fn font() -> Font {
     })
 }
 
-/// Draws text with its top-left corner at `(x, y)` in the current font and
-/// color. Line breaks in the text start new lines.
-pub fn print(text: &str, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    print_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws text with the full set of LÖVE's `print` arguments. See
-/// [`draw_ex`] for what they mean.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.print.
-pub fn print_ex(text: &str, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_text(ctx.backend.as_mut(), text, None, &local));
+/// Draws text in the current font and color, placed by `params`, the
+/// equivalent of `love.graphics.print`. Line breaks in the text start new
+/// lines. The text can be a string or colored parts, as [`TextSpans`]
+/// describes.
+pub fn print<'a>(text: impl Into<TextSpans<'a>>, params: impl Into<DrawParams>) {
+    let local = params.into().to_transform();
+    text.into().with_segments(|segments| {
+        context::with(|ctx| {
+            ctx.gfx
+                .push_colored_text(ctx.backend.as_mut(), segments, None, &local);
+        });
+    });
 }
 
 /// Draws text wrapped to `limit` pixels wide and aligned within that
-/// width, the equivalent of `love.graphics.printf`.
-pub fn printf(text: &str, position: impl Into<Vec2>, limit: f32, align: Align) {
-    let Vec2 { x, y } = position.into();
-    printf_ex(text, x, y, limit, align, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws wrapped text with the full set of LÖVE's `printf` arguments.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.printf.
-pub fn printf_ex(
-    text: &str,
-    x: f32,
-    y: f32,
+/// width, placed by `params`, the equivalent of `love.graphics.printf`.
+pub fn printf<'a>(
+    text: impl Into<TextSpans<'a>>,
+    params: impl Into<DrawParams>,
     limit: f32,
     align: Align,
-    r: f32,
-    sx: f32,
-    sy: f32,
-    ox: f32,
-    oy: f32,
 ) {
-    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| {
-        ctx.gfx
-            .push_text(ctx.backend.as_mut(), text, Some((limit, align)), &local);
+    let local = params.into().to_transform();
+    text.into().with_segments(|segments| {
+        context::with(|ctx| {
+            ctx.gfx
+                .push_colored_text(ctx.backend.as_mut(), segments, Some((limit, align)), &local);
+        });
     });
 }
 
-/// Draws text placed by `transform` instead of a position, rotation and
-/// scale.
-pub fn print_with(text: &str, transform: &Transform) {
-    context::with(|ctx| {
-        ctx.gfx
-            .push_text(ctx.backend.as_mut(), text, None, transform)
-    });
-}
-
-/// Draws wrapped text placed by `transform`.
-pub fn printf_with(text: &str, limit: f32, align: Align, transform: &Transform) {
-    context::with(|ctx| {
-        ctx.gfx
-            .push_text(ctx.backend.as_mut(), text, Some((limit, align)), transform);
-    });
-}
-
-/// Draws a [`Text`] with its top-left corner at `(x, y)` in the current
-/// color.
-pub fn draw_text(text: &Text, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_text_ex(text, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws a [`Text`] with the full set of LÖVE's `draw` arguments. See
-/// [`draw_ex`] for what they mean.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
-pub fn draw_text_ex(text: &Text, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
-    draw_text_with(text, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy));
-}
-
-/// Draws a [`Text`] placed by `transform`.
-pub fn draw_text_with(text: &Text, transform: &Transform) {
-    context::with(|ctx| {
-        ctx.gfx
-            .push_text_object(ctx.backend.as_mut(), text, transform)
-    });
-}
-
-/// Draws layer `layer` of an [`ArrayImage`], counting from 0, with its
-/// top-left corner at `(x, y)`. The equivalent of
-/// `love.graphics.drawLayer`.
+/// One layer of an [`ArrayImage`] or array [`Canvas`], drawn by [`draw`]
+/// as LÖVE's `drawLayer` does. Made with [`ArrayImage::layer`] or
+/// [`Canvas::layer`].
 ///
-/// Panics if there is no such layer, or if a custom shader is active: a
-/// shader reads an array image by declaring a `texture_2d_array<f32>` and
-/// being sent it with [`Shader::send_texture`].
-pub fn draw_layer(image: &impl Layered, layer: u32, position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    draw_layer_ex(image, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-}
-
-/// Draws a layer of an [`ArrayImage`] with the full set of LÖVE's `draw`
-/// arguments. See [`draw_ex`] for what they mean.
-#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.drawLayer.
-pub fn draw_layer_ex(
-    image: &impl Layered,
+/// Drawing panics if a custom shader is active: a shader reads an array
+/// image by declaring a `texture_2d_array<f32>` and being sent it with
+/// [`Shader::send_texture`].
+#[derive(Debug, Clone, Copy)]
+pub struct Layer<'a> {
+    texture: TextureId,
+    filter: Filter,
     layer: u32,
-    x: f32,
-    y: f32,
-    r: f32,
-    sx: f32,
-    sy: f32,
-    ox: f32,
-    oy: f32,
-) {
-    let (width, height) = image.layer_size();
-    let (width, height) = (width as f32, height as f32);
-    let quad = Quad::new((0.0, 0.0), (width, height), (width, height));
-    draw_layer_quad_with(
-        image,
-        layer,
-        &quad,
-        &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
-    );
+    quad: Option<&'a Quad>,
+    size: (u32, u32),
 }
 
-/// Draws part of a layer of an [`ArrayImage`], placed by `transform`.
-pub fn draw_layer_quad_with(image: &impl Layered, layer: u32, quad: &Quad, transform: &Transform) {
-    assert!(
-        layer < image.layers(),
-        "layer {layer} does not exist: there are {} layers",
-        image.layers()
-    );
-    context::with(|ctx| {
+impl<'a> Layer<'a> {
+    fn of(image: &impl Layered, layer: u32) -> Self {
         assert!(
-            ctx.gfx.shader.is_none(),
-            "graphics::draw_layer cannot be used with a custom shader active; \
-             send the array image to the shader with Shader::send_texture instead"
+            layer < image.layers(),
+            "layer {layer} does not exist: there are {} layers",
+            image.layers()
         );
-        ctx.gfx.push_texture(
-            image.layer_texture(),
+        Layer {
+            texture: image.layer_texture(),
+            filter: image.layer_filter(),
             layer,
-            image.layer_filter(),
-            quad,
-            transform,
-        );
-    });
+            quad: None,
+            size: image.layer_size(),
+        }
+    }
+
+    /// Just the part of the layer that `quad` describes.
+    #[must_use]
+    pub fn region(self, quad: &'a Quad) -> Layer<'a> {
+        Layer {
+            quad: Some(quad),
+            ..self
+        }
+    }
 }
 
-/// Something with layers [`draw_layer`] can draw one of: an
-/// [`ArrayImage`], or a [`Canvas`] made with
-/// [`TextureKind::Array`].
-pub trait Layered: layered_sealed::Sealed {
-    #[doc(hidden)]
+impl ArrayImage {
+    /// Layer `layer` of the image, counting from 0, to draw with [`draw`].
+    ///
+    /// Panics if there is no such layer.
+    #[doc(alias = "drawLayer")]
+    pub fn layer(&self, layer: u32) -> Layer<'_> {
+        Layer::of(self, layer)
+    }
+}
+
+impl Canvas {
+    /// Layer `layer` of an array canvas, counting from 0, to draw with
+    /// [`draw`].
+    ///
+    /// Panics if the canvas was not made with [`TextureKind::Array`], or
+    /// there is no such layer.
+    pub fn layer(&self, layer: u32) -> Layer<'_> {
+        Layer::of(self, layer)
+    }
+}
+
+impl draw::sealed::Sealed for Layer<'_> {
+    fn draw_transformed(&self, local: &Transform) {
+        let whole;
+        let quad = match self.quad {
+            Some(quad) => quad,
+            None => {
+                let (width, height) = (self.size.0 as f32, self.size.1 as f32);
+                whole = Quad::new((0.0, 0.0), (width, height), (width, height));
+                &whole
+            }
+        };
+        context::with(|ctx| {
+            assert!(
+                ctx.gfx.shader.is_none(),
+                "an array image layer cannot be drawn with a custom shader active; \
+                 send the array image to the shader with Shader::send_texture instead"
+            );
+            ctx.gfx
+                .push_texture(self.texture, self.layer, self.filter, quad, local);
+        });
+    }
+}
+impl Drawable for Layer<'_> {}
+
+/// Something with layers that [`Layer`] can draw one of: an
+/// [`ArrayImage`], or a [`Canvas`] made with [`TextureKind::Array`].
+trait Layered {
     fn layer_texture(&self) -> TextureId;
-    #[doc(hidden)]
     fn layer_filter(&self) -> Filter;
-    #[doc(hidden)]
     fn layer_size(&self) -> (u32, u32);
-    #[doc(hidden)]
     fn layers(&self) -> u32;
-}
-
-mod layered_sealed {
-    pub trait Sealed {}
-    impl Sealed for super::ArrayImage {}
-    impl Sealed for super::Canvas {}
 }
 
 impl Layered for ArrayImage {
@@ -2686,7 +2576,7 @@ impl Layered for Canvas {
     fn layer_texture(&self) -> TextureId {
         assert!(
             self.texture_type() == TextureKind::Array,
-            "graphics::draw_layer needs an array canvas, not a {:?} one",
+            "Canvas::layer needs an array canvas, not a {:?} one",
             self.texture_type()
         );
         self.texture()
@@ -2850,60 +2740,6 @@ pub fn system_limits() -> SystemLimits {
         canvas_msaa: context::with(|ctx| ctx.backend.max_msaa()),
         anisotropy: 1.0,
     }
-}
-
-/// Draws text made of colored parts, the equivalent of
-/// `love.graphics.print(coloredtext, x, y)`: each part is tinted by its
-/// color as well as the current one.
-///
-/// ```no_run
-/// use smitten::{Color, graphics};
-///
-/// graphics::print_colored(&[(Color::WHITE, "Score: "), (Color::rgb(1.0, 0.8, 0.2), "120")], (10.0, 10.0));
-/// ```
-pub fn print_colored(segments: &[(Color, &str)], position: impl Into<Vec2>) {
-    let Vec2 { x, y } = position.into();
-    let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-    print_colored_with(segments, &local);
-}
-
-/// Draws colored text placed by `transform`.
-pub fn print_colored_with(segments: &[(Color, &str)], transform: &Transform) {
-    context::with(|ctx| {
-        ctx.gfx
-            .push_colored_text(ctx.backend.as_mut(), segments, None, transform);
-    });
-}
-
-/// Draws text made of colored parts, wrapped to `limit` units and aligned
-/// within that width, the equivalent of `love.graphics.printf(coloredtext,
-/// ...)`.
-pub fn printf_colored(
-    segments: &[(Color, &str)],
-    position: impl Into<Vec2>,
-    limit: f32,
-    align: Align,
-) {
-    let Vec2 { x, y } = position.into();
-    let local = Transform::from_draw_args(x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
-    printf_colored_with(segments, limit, align, &local);
-}
-
-/// Draws wrapped colored text placed by `transform`.
-pub fn printf_colored_with(
-    segments: &[(Color, &str)],
-    limit: f32,
-    align: Align,
-    transform: &Transform,
-) {
-    context::with(|ctx| {
-        ctx.gfx.push_colored_text(
-            ctx.backend.as_mut(),
-            segments,
-            Some((limit, align)),
-            transform,
-        );
-    });
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use smitten::audio::Source;
+use smitten::graphics::DrawParams;
 use smitten::graphics::{Align, DrawMode, Font, Image, LineStyle, ParticleSystem};
 use smitten::physics::{Body, BodyType, World};
 use smitten::sound::SoundData;
@@ -677,7 +678,7 @@ impl Topple {
         }
 
         graphics::set_color(Color::WHITE);
-        graphics::draw_particles(&self.dust, (0.0, 0.0));
+        graphics::draw(&self.dust, (0.0, 0.0));
 
         // The block waiting to be dropped, and a line showing where it
         // will fall.
@@ -720,15 +721,9 @@ impl Topple {
         for heart in 0..HEARTS {
             let alpha = if heart < self.hearts { 1.0 } else { 0.18 };
             graphics::set_color(Color::rgba(1.0, 1.0, 1.0, alpha));
-            graphics::draw_ex(
+            graphics::draw(
                 &self.heart,
-                WIDTH - 40.0 - heart as f32 * 36.0,
-                12.0,
-                0.0,
-                2.0,
-                2.0,
-                0.0,
-                0.0,
+                DrawParams::at((WIDTH - 40.0 - heart as f32 * 36.0, 12.0)).scale(2.0),
             );
         }
 

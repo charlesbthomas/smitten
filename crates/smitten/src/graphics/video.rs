@@ -17,7 +17,7 @@ use crate::video::{VideoError, VideoStream};
 ///
 /// Load one with [`Video::load`](crate::graphics::Video::load), call
 /// [`Video::play`], and draw it each frame with
-/// [`draw_video`](crate::graphics::draw_video). The picture moves on as
+/// [`graphics::draw`](crate::graphics::draw). The picture moves on as
 /// it is drawn. A video with a sound track plays it through
 /// [`Video::source`], and the picture follows the sound so the two stay
 /// together.
