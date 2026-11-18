@@ -60,11 +60,14 @@ pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::{ImageData, ImageFormat, is_compressed};
 pub use layered::{ArrayImage, CubeImage, VolumeImage};
-pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
+pub use mesh::{Mesh, MeshDrawMode, MeshError, MeshVertex, VertexAttribute};
 pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
 pub use shader::{MatrixLayout, Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
-pub use smitten_core::backend::{CompressedFormat, RendererInfo};
+pub use smitten_core::backend::{
+    CompressedFormat, IndexDataType, RendererInfo, VertexDataType,
+    VertexStep as VertexAttributeStep,
+};
 pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
 pub use state::StackType;
 pub use stats::Stats;
@@ -659,7 +662,7 @@ impl GraphicsState {
         // made here like other shapes.
         if mesh.draw_mode() != MeshDrawMode::Points {
             let mut retired = Vec::new();
-            let uploaded = mesh.upload(backend, self.frame_number, &mut retired, true);
+            let uploaded = mesh.upload(backend, self.frame_number, &mut retired);
             self.retired_buffers.extend(retired);
             match uploaded {
                 Ok(Some(geometry)) => {
@@ -668,8 +671,11 @@ impl GraphicsState {
                         texture,
                         filter,
                         MeshDraw {
-                            vertices: geometry.vertices,
+                            layout: geometry.layout,
+                            buffers: geometry.buffers,
+                            vertex_count: geometry.vertex_count,
                             indices: geometry.indices,
+                            index_type: geometry.index_type,
                             first_index: 0,
                             index_count: geometry.index_count,
                             transform: transform.gpu_matrix(),

@@ -222,21 +222,132 @@ pub struct BufferId(pub u32);
 /// What a GPU buffer holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BufferUsage {
-    /// Vertices laid out as [`Vertex`].
+    /// Vertices laid out as a [`VertexLayout`] says.
     Vertex,
-    /// `u32` indices into a vertex buffer.
+    /// Indices into vertex buffers, as [`IndexDataType`] says.
     Index,
 }
+
+/// How the indices in an index buffer are stored, as LÖVE's
+/// `IndexDataType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum IndexDataType {
+    /// Two bytes each, for up to 65,536 vertices.
+    U16,
+    /// Four bytes each.
+    #[default]
+    U32,
+}
+
+impl IndexDataType {
+    /// How many bytes one index takes.
+    pub fn size(self) -> u32 {
+        match self {
+            IndexDataType::U16 => 2,
+            IndexDataType::U32 => 4,
+        }
+    }
+}
+
+/// How the values of a vertex attribute are stored, as LÖVE's
+/// `VertexAttributeDataType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VertexDataType {
+    /// 32-bit floats.
+    Float,
+    /// Bytes standing for 0.0 to 1.0, LÖVE's `byte`. Good for colors.
+    UNorm8,
+    /// 16-bit numbers standing for 0.0 to 1.0.
+    UNorm16,
+}
+
+impl VertexDataType {
+    /// How many bytes an attribute of this type with `components` values
+    /// takes in a vertex. Bytes and 16-bit numbers are padded to a whole
+    /// number of four bytes, as the GPU reads them in twos or fours.
+    pub fn size(self, components: u8) -> u32 {
+        let components = u32::from(components);
+        match self {
+            VertexDataType::Float => 4 * components,
+            VertexDataType::UNorm8 => 4,
+            VertexDataType::UNorm16 if components <= 2 => 4,
+            VertexDataType::UNorm16 => 8,
+        }
+    }
+}
+
+/// Whether a vertex buffer advances once a vertex or once an instance, as
+/// LÖVE's `VertexAttributeStep`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum VertexStep {
+    #[default]
+    PerVertex,
+    PerInstance,
+}
+
+/// The most vertex buffers one draw can read from.
+pub const MAX_VERTEX_BUFFERS: usize = 8;
+
+/// The most attributes a [`VertexLayout`] can have.
+pub const MAX_VERTEX_ATTRIBUTES: usize = 16;
+
+/// The attribute names the built-in mesh vertex shader reads, as LÖVE
+/// names them.
+pub const VERTEX_POSITION: &str = "VertexPosition";
+pub const VERTEX_TEX_COORD: &str = "VertexTexCoord";
+pub const VERTEX_COLOR: &str = "VertexColor";
+
+/// How a draw's vertex buffers are laid out.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VertexLayout {
+    /// One entry for each vertex buffer, in slot order.
+    pub buffers: Vec<VertexBufferLayout>,
+    pub attributes: Vec<VertexLayoutAttribute>,
+}
+
+/// How one vertex buffer of a [`VertexLayout`] is laid out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VertexBufferLayout {
+    /// How many bytes apart its vertices start, a multiple of four.
+    pub stride: u32,
+    pub step: VertexStep,
+}
+
+/// One named value of each vertex in a [`VertexLayout`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VertexLayoutAttribute {
+    /// Shaders find the attribute by this name. [`VERTEX_POSITION`],
+    /// [`VERTEX_TEX_COORD`] and [`VERTEX_COLOR`] are read by the built-in
+    /// shader; missing ones read as (0, 0, 0, 1), (0, 0) and white.
+    pub name: String,
+    /// Which of the layout's buffers it is in.
+    pub buffer: u32,
+    /// Where it starts in each vertex, in bytes.
+    pub offset: u32,
+    pub data_type: VertexDataType,
+    /// How many values it has, 1 to 4.
+    pub components: u8,
+}
+
+/// A handle to a [`VertexLayout`] a backend knows, from
+/// [`Backend::create_vertex_layout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VertexLayoutId(pub u32);
 
 /// A draw of geometry kept in GPU buffers, which the GPU places itself
 /// rather than taking it in pixels from [`Frame::vertices`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeshDraw {
-    /// Vertices laid out as [`Vertex`], in the mesh's own coordinates,
-    /// with colors not yet tinted.
-    pub vertices: BufferId,
-    /// `u32` indices into `vertices`, three to a triangle.
+    pub layout: VertexLayoutId,
+    /// The buffer for each of the layout's vertex buffers, by slot. Slots
+    /// past the layout's buffers are `None`.
+    pub buffers: [Option<BufferId>; MAX_VERTEX_BUFFERS],
+    /// How many vertices the indices may reach, which every per-vertex
+    /// buffer must hold.
+    pub vertex_count: u32,
+    /// Indices into the vertices, three to a triangle.
     pub indices: BufferId,
+    pub index_type: IndexDataType,
     /// The first index to draw.
     pub first_index: u32,
     /// How many indices to draw, a multiple of three.
@@ -779,6 +890,11 @@ pub trait Backend {
     /// Frees a buffer. Its handle must not be used afterwards, and draws
     /// still waiting that use it draw nothing.
     fn destroy_buffer(&mut self, buffer: BufferId);
+
+    /// Gets ready to draw meshes laid out as `layout`, and returns its
+    /// handle. The same layout always gets the same handle. Layouts are
+    /// few and kept until the backend closes.
+    fn create_vertex_layout(&mut self, layout: &VertexLayout) -> Result<VertexLayoutId, String>;
 
     /// Compiles a custom fragment shader written in WGSL.
     ///

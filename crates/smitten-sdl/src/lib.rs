@@ -20,7 +20,7 @@ use sdl3_sys::everything::*;
 use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, BufferId, BufferUsage, CompressedFormat, CursorId, Frame,
     RecordingDeviceId, RecordingSink, RenderTargetDesc, RendererInfo, ShaderId, ShaderInfo,
-    TextureId, TextureKind,
+    TextureId, TextureKind, VertexLayout, VertexLayoutId,
 };
 use smitten_core::{
     Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
@@ -777,6 +777,10 @@ impl Backend for SdlBackend {
 
     fn destroy_buffer(&mut self, buffer: BufferId) {
         self.renderer.destroy_buffer(buffer);
+    }
+
+    fn create_vertex_layout(&mut self, layout: &VertexLayout) -> Result<VertexLayoutId, String> {
+        self.renderer.create_vertex_layout(layout)
     }
 
     fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {

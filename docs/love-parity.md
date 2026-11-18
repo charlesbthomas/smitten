@@ -64,14 +64,6 @@ shaders and canvas formats.
 - `Texture:getTextureType`, `getDepth`, `getDepthSampleMode`,
   `setDepthSampleMode`.
 
-### Mesh
-
-- Custom vertex formats in `newMesh`, and `Mesh:getVertexFormat`.
-- `Mesh:attachAttribute`, `detachAttribute`, `setAttributeEnabled`,
-  `isAttributeEnabled`.
-- `Mesh:getVertexAttribute`, `setVertexAttribute`.
-- `IndexDataType` `uint16` for vertex maps.
-
 ### Shader
 
 - A vertex stage (LÖVE's `position` function). Smitten shaders are
