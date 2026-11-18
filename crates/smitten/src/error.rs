@@ -218,7 +218,7 @@ pub(crate) fn show(payload: &(dyn Any + Send)) {
             context::with(|ctx| {
                 ctx.gfx.finish_frame();
                 ctx.backend.present(&ctx.gfx.frame());
-                ctx.gfx.end_frame();
+                ctx.gfx.end_frame(&mut *ctx.backend);
             });
             if drawn.is_err() {
                 reset_graphics();
