@@ -446,6 +446,30 @@ impl Joint {
         });
     }
 
+    /// Sets only the lower limit of a revolute or prismatic joint,
+    /// keeping the upper one. See [`Joint::set_limits`].
+    pub fn set_lower_limit(&self, lower: f32) {
+        let (_, upper) = self.limits();
+        self.set_limits(lower, upper.max(lower));
+    }
+
+    /// Sets only the upper limit of a revolute or prismatic joint,
+    /// keeping the lower one.
+    pub fn set_upper_limit(&self, upper: f32) {
+        let (lower, _) = self.limits();
+        self.set_limits(lower.min(upper), upper);
+    }
+
+    /// The lower limit of a revolute or prismatic joint.
+    pub fn lower_limit(&self) -> f32 {
+        self.limits().0
+    }
+
+    /// The upper limit of a revolute or prismatic joint.
+    pub fn upper_limit(&self) -> f32 {
+        self.limits().1
+    }
+
     // Where the joint is.
 
     /// How far a revolute or wheel joint has turned since it was made, in
@@ -455,6 +479,35 @@ impl Joint {
         self.read(|joint, inner| {
             let frames = Joint::frames(joint, inner);
             (frames.one.rotation.inverse() * frames.two.rotation).angle()
+        })
+    }
+
+    /// The angle of the second body minus that of the first when a
+    /// revolute, prismatic or weld joint was made, in radians. The
+    /// joint's angle and limits are measured from it, and a weld joint
+    /// holds it.
+    pub fn reference_angle(&self) -> f32 {
+        self.expect(
+            &[JointType::Revolute, JointType::Prismatic, JointType::Weld],
+            "reference angle",
+        );
+        self.read(|joint, _| {
+            let data = &joint.data;
+            (data.local_frame1.rotation * data.local_frame2.rotation.inverse()).angle()
+        })
+    }
+
+    /// The direction a prismatic joint slides in, or a wheel joint's
+    /// suspension works in, in the world, as `(x, y)` one unit long. It
+    /// turns with the first body.
+    pub fn axis(&self) -> (f32, f32) {
+        self.expect(&[JointType::Prismatic, JointType::Wheel], "axis");
+        self.read(|joint, inner| {
+            let axis = Joint::frames(joint, inner)
+                .one
+                .rotation
+                .transform_vector(Vector::X);
+            (axis.x, axis.y)
         })
     }
 

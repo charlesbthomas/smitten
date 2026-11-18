@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use rapier2d::prelude::*;
 
-use super::Body;
 use super::world::Shared;
+use super::{Body, RayHit};
 
 /// Box2D's defaults, which LÖVE games are tuned around.
 pub(super) const DEFAULT_DENSITY: f32 = 1.0;
@@ -82,7 +82,9 @@ impl Fixture {
     /// Removes the fixture from its body. Does nothing if it was already
     /// destroyed.
     pub fn destroy(&self) {
-        self.world.borrow_mut().world.remove_collider(self.handle);
+        let mut inner = self.world.borrow_mut();
+        inner.held_density.remove(&self.handle);
+        inner.world.remove_collider(self.handle);
     }
 
     /// The body the fixture is attached to, or `None` if the fixture was
@@ -121,14 +123,26 @@ impl Fixture {
     /// The fixture's density: its mass for each square meter of its area.
     /// 1.0 by default.
     pub fn density(&self) -> f32 {
-        let meter = self.world.borrow().meter;
+        let inner = self.world.borrow();
+        let meter = inner.meter;
+        if let Some(&held) = inner.held_density.get(&self.handle) {
+            return held * meter * meter;
+        }
+        drop(inner);
         self.read(|collider| collider.density()) * meter * meter
     }
 
-    /// Sets the fixture's density, which changes its body's mass.
+    /// Sets the fixture's density, which changes its body's mass. If the
+    /// body's mass was set with
+    /// [`Body::set_mass_data`](super::Body::set_mass_data), it counts once
+    /// that is undone with [`Body::reset_mass_data`].
     pub fn set_density(&self, density: f32) -> &Fixture {
         let mut inner = self.world.borrow_mut();
         let density = density / (inner.meter * inner.meter);
+        if let Some(held) = inner.held_density.get_mut(&self.handle) {
+            *held = density;
+            return self;
+        }
         let world = &mut inner.world;
         let collider = world
             .colliders
@@ -199,6 +213,54 @@ impl Fixture {
         self.read(|collider| {
             let aabb = collider.compute_aabb();
             (aabb.mins.x, aabb.mins.y, aabb.maxs.x, aabb.maxs.y)
+        })
+    }
+
+    /// Where the line from `(x1, y1)` to `(x2, y2)` first runs into this
+    /// fixture, if it does. A line that starts inside it hits at once,
+    /// with a fraction of 0. LÖVE's `Fixture:rayCast`, with the hit point
+    /// worked out too.
+    pub fn ray_cast(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Option<RayHit> {
+        let direction = Vector::new(x2 - x1, y2 - y1);
+        let ray = Ray::new(Vector::new(x1, y1), direction);
+        let hit = self.read(|collider| {
+            collider
+                .shape()
+                .cast_ray_and_get_normal(collider.position(), &ray, 1.0, true)
+        })?;
+        Some(RayHit {
+            fixture: self.clone(),
+            x: x1 + direction.x * hit.time_of_impact,
+            y: y1 + direction.y * hit.time_of_impact,
+            normal_x: hit.normal.x,
+            normal_y: hit.normal.y,
+            fraction: hit.time_of_impact,
+        })
+    }
+
+    /// The fixture's share of its body's mass, as `(center_x, center_y,
+    /// mass, inertia)`: its center of mass relative to the body's origin,
+    /// its mass from its density and area, and its inertia around that
+    /// center.
+    pub fn mass_data(&self) -> (f32, f32, f32, f32) {
+        let density = self.density();
+        let meter = self.world.borrow().meter;
+        self.read(|collider| {
+            let props = collider
+                .shape()
+                .mass_properties(density / (meter * meter))
+                .transform_by(
+                    &collider
+                        .position_wrt_parent()
+                        .copied()
+                        .unwrap_or(Pose::IDENTITY),
+                );
+            (
+                props.local_com.x,
+                props.local_com.y,
+                props.mass(),
+                props.principal_inertia(),
+            )
         })
     }
 

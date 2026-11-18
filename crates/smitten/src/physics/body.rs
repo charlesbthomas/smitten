@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use rapier2d::prelude::*;
 
-use super::world::Shared;
-use super::{Fixture, Joint};
+use super::world::{Inner, Shared};
+use super::{Fixture, Joint, Touch, World};
 
 /// How a body takes part in the simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,7 +95,16 @@ impl Body {
     /// Removes the body from its world, with its fixtures and joints.
     /// Does nothing if it was already destroyed.
     pub fn destroy(&self) {
-        self.world.borrow_mut().world.remove_body(self.handle);
+        let mut inner = self.world.borrow_mut();
+        if let Some(body) = inner.world.bodies.get(self.handle) {
+            let colliders = body.colliders().to_vec();
+            for collider in colliders {
+                inner.held_density.remove(&collider);
+            }
+        }
+        inner.mass_set.remove(&self.handle);
+        inner.sleepless.remove(&self.handle);
+        inner.world.remove_body(self.handle);
     }
 
     /// The position of the body's origin as `(x, y)`.
@@ -349,6 +358,243 @@ impl Body {
         (point.x, point.y)
     }
 
+    /// The world the body is in.
+    pub fn world(&self) -> World {
+        World {
+            inner: self.world.clone(),
+        }
+    }
+
+    /// The body's position and angle together, as `(x, y, angle)`.
+    pub fn transform(&self) -> (f32, f32, f32) {
+        let (x, y) = self.position();
+        (x, y, self.angle())
+    }
+
+    /// Moves the body to `(x, y)` and turns it to `angle` at once.
+    pub fn set_transform(&self, x: f32, y: f32, angle: f32) {
+        self.change(|body| body.set_position(Pose::new(Vector::new(x, y), angle), true));
+    }
+
+    /// Moves the body's origin across to `x`, keeping its height.
+    pub fn set_x(&self, x: f32) {
+        let y = self.y();
+        self.set_position(x, y);
+    }
+
+    /// Moves the body's origin up or down to `y`.
+    pub fn set_y(&self, y: f32) {
+        let x = self.x();
+        self.set_position(x, y);
+    }
+
+    /// The body's center of mass in world coordinates: the point it turns
+    /// around when spun, and where [`Body::apply_force`] pushes.
+    pub fn world_center(&self) -> (f32, f32) {
+        self.read(|body| {
+            let center = body.center_of_mass();
+            (center.x, center.y)
+        })
+    }
+
+    /// The body's center of mass relative to its origin, without its
+    /// turn.
+    pub fn local_center(&self) -> (f32, f32) {
+        self.read(|body| {
+            let center = body.local_center_of_mass();
+            (center.x, center.y)
+        })
+    }
+
+    /// Turns a direction given relative to the body into a direction in
+    /// the world. Unlike [`Body::world_point`] it only turns, as a
+    /// direction has no position.
+    pub fn world_vector(&self, local_x: f32, local_y: f32) -> (f32, f32) {
+        let vector = self
+            .pose()
+            .rotation
+            .transform_vector(Vector::new(local_x, local_y));
+        (vector.x, vector.y)
+    }
+
+    /// Turns a direction in the world into one relative to the body.
+    pub fn local_vector(&self, x: f32, y: f32) -> (f32, f32) {
+        let vector = self
+            .pose()
+            .rotation
+            .inverse()
+            .transform_vector(Vector::new(x, y));
+        (vector.x, vector.y)
+    }
+
+    /// Turns many points given relative to the body into world
+    /// coordinates, as [`Body::world_point`] does one.
+    pub fn world_points(&self, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+        let pose = self.pose();
+        points
+            .iter()
+            .map(|&(x, y)| {
+                let point = pose.transform_point(Vector::new(x, y));
+                (point.x, point.y)
+            })
+            .collect()
+    }
+
+    /// Turns many world points into coordinates relative to the body.
+    pub fn local_points(&self, points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+        let pose = self.pose();
+        points
+            .iter()
+            .map(|&(x, y)| {
+                let point = pose.inverse_transform_point(Vector::new(x, y));
+                (point.x, point.y)
+            })
+            .collect()
+    }
+
+    /// How fast the point of the body at world point `(x, y)` is moving,
+    /// as `(x, y)` in units per second: the body's velocity plus what its
+    /// spin adds there. The rim of a spinning wheel moves faster than its
+    /// hub.
+    pub fn linear_velocity_from_world_point(&self, x: f32, y: f32) -> (f32, f32) {
+        self.read(|body| {
+            let velocity = body.velocity_at_point(Vector::new(x, y));
+            (velocity.x, velocity.y)
+        })
+    }
+
+    /// How fast the point `(x, y)` relative to the body is moving, in
+    /// world units per second.
+    pub fn linear_velocity_from_local_point(&self, local_x: f32, local_y: f32) -> (f32, f32) {
+        let (x, y) = self.world_point(local_x, local_y);
+        self.linear_velocity_from_world_point(x, y)
+    }
+
+    /// The body's `(center_x, center_y, mass, inertia)`: its center of
+    /// mass relative to its origin, its mass, and its inertia around that
+    /// center (as [`Body::inertia`] gives it). LÖVE's `getMassData`.
+    pub fn mass_data(&self) -> (f32, f32, f32, f32) {
+        self.read(|body| {
+            let props = &body.mass_properties().local_mprops;
+            (
+                props.local_com.x,
+                props.local_com.y,
+                props.mass(),
+                props.principal_inertia(),
+            )
+        })
+    }
+
+    /// Sets the body's mass, center of mass relative to its origin, and
+    /// inertia around that center, in place of what its fixtures give.
+    /// Their densities then count for nothing until
+    /// [`Body::reset_mass_data`] is called or a fixture is added, as in
+    /// LÖVE. Only dynamic bodies have mass.
+    pub fn set_mass_data(&self, center_x: f32, center_y: f32, mass: f32, inertia: f32) {
+        let mut inner = self.world.borrow_mut();
+        let Inner {
+            world,
+            held_density,
+            mass_set,
+            ..
+        } = &mut *inner;
+        let body = world
+            .bodies
+            .get_mut(self.handle)
+            .expect("this body was destroyed");
+        for &handle in body.colliders() {
+            if let Some(collider) = world.colliders.get_mut(handle) {
+                held_density
+                    .entry(handle)
+                    .or_insert_with(|| collider.density());
+                collider.set_mass(0.0);
+            }
+        }
+        mass_set.insert(self.handle);
+        let props = MassProperties::new(
+            Vector::new(center_x, center_y),
+            mass.max(0.0),
+            inertia.max(0.0),
+        );
+        body.set_additional_mass_properties(props, true);
+        body.recompute_mass_properties_from_colliders(&world.colliders);
+    }
+
+    /// Sets the body's mass, keeping its center of mass and inertia.
+    pub fn set_mass(&self, mass: f32) {
+        let (x, y, _, inertia) = self.mass_data();
+        self.set_mass_data(x, y, mass, inertia);
+    }
+
+    /// Sets how hard the body is to spin, keeping its mass and center.
+    pub fn set_inertia(&self, inertia: f32) {
+        let (x, y, mass, _) = self.mass_data();
+        self.set_mass_data(x, y, mass, inertia);
+    }
+
+    /// Gives the body back the mass, center and inertia its fixtures'
+    /// shapes and densities make, undoing [`Body::set_mass_data`].
+    pub fn reset_mass_data(&self) {
+        let mut inner = self.world.borrow_mut();
+        assert!(
+            inner.world.bodies.get(self.handle).is_some(),
+            "this body was destroyed"
+        );
+        reset_mass(&mut inner, self.handle);
+    }
+
+    /// Every pair of fixtures touching now where one is this body's, with
+    /// how hard they were pushed apart, as [`World::touching`] gives
+    /// them. LÖVE's `Body:getContacts`.
+    pub fn contacts(&self) -> Vec<Touch> {
+        self.world()
+            .touching()
+            .into_iter()
+            .filter(|touch| touch.involves(self))
+            .collect()
+    }
+
+    /// Whether the body takes part in the simulation. See
+    /// [`Body::set_active`].
+    pub fn is_active(&self) -> bool {
+        self.read(|body| body.is_enabled())
+    }
+
+    /// Takes the body out of the simulation, or puts it back, without
+    /// destroying it: while inactive it does not move, collide or show up
+    /// in queries, and its joints do nothing.
+    pub fn set_active(&self, active: bool) {
+        self.change(|body| body.set_enabled(active));
+    }
+
+    /// Whether the body may fall asleep when it comes to rest. See
+    /// [`Body::set_sleeping_allowed`].
+    pub fn is_sleeping_allowed(&self) -> bool {
+        let inner = self.world.borrow();
+        assert!(
+            inner.world.bodies.get(self.handle).is_some(),
+            "this body was destroyed"
+        );
+        !inner.sleepless.contains(&self.handle)
+    }
+
+    /// Keeps the body awake, or lets it fall asleep when it comes to rest
+    /// as bodies do. A body the game moves by hand should stay awake.
+    /// [`World::set_sleeping_allowed`] can keep every body awake.
+    pub fn set_sleeping_allowed(&self, allowed: bool) {
+        let mut inner = self.world.borrow_mut();
+        assert!(
+            inner.world.bodies.get(self.handle).is_some(),
+            "this body was destroyed"
+        );
+        if allowed {
+            inner.sleepless.remove(&self.handle);
+        } else {
+            inner.sleepless.insert(self.handle);
+        }
+        inner.apply_sleeping(self.handle);
+    }
+
     /// The body's fixtures.
     pub fn fixtures(&self) -> Vec<Fixture> {
         self.read(|body| body.colliders().to_vec())
@@ -404,9 +650,18 @@ impl Body {
             // As in Box2D: the bouncier of two fixtures decides the bounce.
             .restitution_combine_rule(CoefficientCombineRule::Max)
             .active_events(ActiveEvents::COLLISION_EVENTS)
-            // So that a pre-solve callback hears about it.
-            .active_hooks(ActiveHooks::MODIFY_SOLVER_CONTACTS);
+            // So that the pre-solve callback and contact filter hear about
+            // it.
+            .active_hooks(
+                ActiveHooks::MODIFY_SOLVER_CONTACTS
+                    | ActiveHooks::FILTER_CONTACT_PAIRS
+                    | ActiveHooks::FILTER_INTERSECTION_PAIR,
+            );
         let handle = inner.world.insert_collider(collider, Some(self.handle));
+        // As in Box2D, a new fixture puts back the mass its fixtures give.
+        if inner.mass_set.contains(&self.handle) {
+            reset_mass(&mut inner, self.handle);
+        }
         Fixture::new(&self.world, handle)
     }
 
@@ -479,6 +734,30 @@ impl Body {
         }
         self.add(ColliderBuilder::polyline(vertices, Some(indices)))
     }
+}
+
+/// Puts back the mass a body's fixtures give it.
+fn reset_mass(inner: &mut Inner, handle: RigidBodyHandle) {
+    let Inner {
+        world,
+        held_density,
+        mass_set,
+        ..
+    } = inner;
+    mass_set.remove(&handle);
+    let Some(body) = world.bodies.get_mut(handle) else {
+        return;
+    };
+    for collider in body.colliders() {
+        if let (Some(density), Some(fixture)) = (
+            held_density.remove(collider),
+            world.colliders.get_mut(*collider),
+        ) {
+            fixture.set_density(density);
+        }
+    }
+    body.set_additional_mass_properties(MassProperties::default(), true);
+    body.recompute_mass_properties_from_colliders(&world.colliders);
 }
 
 impl std::fmt::Debug for Body {

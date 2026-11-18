@@ -847,3 +847,293 @@ fn ray_cast_all_finds_every_fixture_nearest_first() {
     assert_eq!((&hits[0].fixture, &hits[1].fixture), (&near, &far));
     assert!((hits[0].x - 95.0).abs() < 0.01);
 }
+
+fn close(a: (f32, f32), b: (f32, f32)) -> bool {
+    distance(a, b) < 1e-3
+}
+
+#[test]
+fn bodies_turn_vectors_and_find_their_center() {
+    let world = World::new(0.0, 0.0);
+    let body = world.new_body(100.0, 50.0, BodyType::Dynamic);
+    // A circle off to the right puts the center of mass there.
+    body.add_circle_at(10.0, 0.0, 5.0);
+    body.set_angle(std::f32::consts::FRAC_PI_2);
+
+    assert!(close(body.local_center(), (10.0, 0.0)));
+    assert!(close(body.world_center(), (100.0, 60.0)));
+    assert!(close(body.world_vector(1.0, 0.0), (0.0, 1.0)));
+    assert!(close(body.local_vector(0.0, 1.0), (1.0, 0.0)));
+    let points = body.world_points(&[(0.0, 0.0), (10.0, 0.0)]);
+    assert!(close(points[0], (100.0, 50.0)) && close(points[1], (100.0, 60.0)));
+    let back = body.local_points(&points);
+    assert!(close(back[1], (10.0, 0.0)));
+}
+
+#[test]
+fn a_spinning_body_moves_faster_at_its_rim() {
+    let world = World::new(0.0, 0.0);
+    let wheel = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    wheel.add_circle(10.0);
+    wheel.set_linear_velocity(5.0, 0.0);
+    wheel.set_angular_velocity(2.0);
+    // Clockwise on screen: the point below the hub moves left.
+    let (x, y) = wheel.linear_velocity_from_world_point(0.0, 10.0);
+    assert!(
+        (x - (5.0 - 20.0)).abs() < 1e-3 && y.abs() < 1e-3,
+        "{x}, {y}"
+    );
+    let (x, _) = wheel.linear_velocity_from_local_point(0.0, -10.0);
+    assert!((x - 25.0).abs() < 1e-3);
+}
+
+#[test]
+fn transforms_set_position_and_angle_together() {
+    let world = World::new(0.0, 0.0);
+    let body = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    body.set_transform(10.0, 20.0, 0.5);
+    let (x, y, angle) = body.transform();
+    assert!(close((x, y), (10.0, 20.0)) && (angle - 0.5).abs() < 1e-5);
+    body.set_x(3.0);
+    body.set_y(4.0);
+    assert!(close(body.position(), (3.0, 4.0)));
+    assert_eq!(body.world().body_count(), 1);
+}
+
+#[test]
+fn mass_data_can_be_set_and_reset() {
+    let world = World::new(0.0, 0.0);
+    let body = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    let fixture = body.add_rectangle(30.0, 30.0);
+    let (_, _, mass, inertia) = body.mass_data();
+    assert!((mass - 1.0).abs() < 1e-3, "one square meter, got {mass}");
+    assert!((inertia - body.inertia()).abs() < 1e-6);
+
+    body.set_mass_data(5.0, 0.0, 10.0, 3.0);
+    let (x, y, mass, inertia) = body.mass_data();
+    assert!(close((x, y), (5.0, 0.0)));
+    assert!((mass - 10.0).abs() < 1e-3 && (inertia - 3.0).abs() < 1e-3);
+    assert!((body.mass() - 10.0).abs() < 1e-3);
+    // The fixture keeps its density while it counts for nothing.
+    assert!((fixture.density() - 1.0).abs() < 1e-5);
+
+    body.set_mass(2.0);
+    assert!((body.mass() - 2.0).abs() < 1e-3 && (body.inertia() - 3.0).abs() < 1e-3);
+    body.set_inertia(7.0);
+    assert!((body.mass() - 2.0).abs() < 1e-3 && (body.inertia() - 7.0).abs() < 1e-3);
+
+    // Pushing it shows the mass is real.
+    body.apply_linear_impulse(4.0, 0.0);
+    assert!((body.linear_velocity().0 - 2.0).abs() < 1e-3);
+
+    fixture.set_density(2.0);
+    assert!((body.mass() - 2.0).abs() < 1e-3, "not yet");
+    body.reset_mass_data();
+    assert!((body.mass() - 2.0).abs() < 1e-3, "two square meters' worth");
+    assert!(close(body.local_center(), (0.0, 0.0)));
+
+    // A new fixture also puts back what the fixtures give.
+    body.set_mass(50.0);
+    body.add_circle_at(100.0, 0.0, 1.0);
+    assert!(body.mass() < 3.0, "got {}", body.mass());
+}
+
+#[test]
+fn fixtures_ray_cast_and_report_their_mass() {
+    let world = World::new(0.0, 0.0);
+    let body = world.new_body(100.0, 0.0, BodyType::Dynamic);
+    let fixture = body.add_rectangle_at(30.0, 0.0, 30.0, 60.0, 0.0);
+    let hit = fixture.ray_cast(0.0, 0.0, 200.0, 0.0).expect("a hit");
+    assert!((hit.x - 115.0).abs() < 1e-3 && (hit.normal_x + 1.0).abs() < 1e-3);
+    assert!(fixture.ray_cast(0.0, 100.0, 200.0, 100.0).is_none());
+
+    let (x, y, mass, inertia) = fixture.mass_data();
+    assert!(close((x, y), (30.0, 0.0)));
+    assert!((mass - 2.0).abs() < 1e-3 && inertia > 0.0);
+}
+
+#[test]
+fn an_inactive_body_stays_put_and_lets_things_through() {
+    let (world, floor) = world_with_floor();
+    let ball = world.new_body(400.0, 100.0, BodyType::Dynamic);
+    ball.add_circle(10.0);
+    ball.set_active(false);
+    assert!(!ball.is_active());
+    run(&world, 0.5);
+    assert_eq!(ball.position(), (400.0, 100.0));
+
+    ball.set_active(true);
+    floor.set_active(false);
+    run(&world, 2.0);
+    assert!(ball.y() > 520.0, "fell through to {}", ball.y());
+}
+
+#[test]
+fn sleeping_can_be_turned_off_for_a_body_or_the_world() {
+    let (world, _) = world_with_floor();
+    let a = world.new_body(300.0, 480.0, BodyType::Dynamic);
+    a.add_rectangle(40.0, 40.0);
+    let b = world.new_body(500.0, 480.0, BodyType::Dynamic);
+    b.add_rectangle(40.0, 40.0);
+    b.set_sleeping_allowed(false);
+    assert!(!b.is_sleeping_allowed() && a.is_sleeping_allowed());
+    run(&world, 3.0);
+    assert!(!a.is_awake(), "a rests and sleeps");
+    assert!(b.is_awake(), "b is kept awake");
+
+    world.set_sleeping_allowed(false);
+    assert!(!world.is_sleeping_allowed());
+    assert!(a.is_awake());
+    run(&world, 3.0);
+    assert!(a.is_awake());
+
+    world.set_sleeping_allowed(true);
+    run(&world, 3.0);
+    assert!(!a.is_awake() && b.is_awake());
+}
+
+#[test]
+fn a_contact_filter_decides_what_collides() {
+    let (world, floor) = world_with_floor();
+    floor.fixtures()[0].set_user_data(7);
+    let ghost = world.new_body(300.0, 400.0, BodyType::Dynamic);
+    ghost.add_circle(10.0).set_user_data(1);
+    let rock = world.new_body(500.0, 400.0, BodyType::Dynamic);
+    rock.add_circle(10.0).set_user_data(2);
+    let sensor = world.new_body(300.0, 600.0, BodyType::Static);
+    sensor.add_rectangle(100.0, 20.0).set_sensor(true);
+
+    world.set_contact_filter(|pair| pair.a_data != 1 && pair.b_data != 1);
+    assert!(world.has_contact_filter());
+    let mut began = Vec::new();
+    for _ in 0..60 {
+        world.update(STEP);
+        began.extend(world.contacts().into_iter().filter(|c| c.began));
+    }
+    assert!(ghost.y() > 520.0, "the ghost fell through to {}", ghost.y());
+    assert!(
+        (rock.y() - 490.0).abs() < 2.0,
+        "the rock rests at {}",
+        rock.y()
+    );
+    // Not even the sensor saw the ghost.
+    assert!(began.iter().all(|c| !c.involves(&ghost)));
+    assert!(began.iter().any(|c| c.involves(&rock)));
+
+    world.clear_contact_filter();
+    assert!(!world.has_contact_filter());
+}
+
+#[test]
+fn the_world_is_locked_while_it_updates() {
+    let (world, _) = world_with_floor();
+    let ball = world.new_body(400.0, 485.0, BodyType::Dynamic);
+    ball.add_circle(10.0);
+    assert!(!world.is_locked());
+    let inside = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = inside.clone();
+    let probe = world.clone();
+    world.set_pre_solve(move |_| seen.set(probe.is_locked()));
+    run(&world, 0.2);
+    assert!(inside.get());
+    assert!(world.contact_count() >= 1);
+}
+
+#[test]
+fn translating_the_origin_moves_everything_by_the_opposite() {
+    let (world, _) = world_with_floor();
+    let ball = world.new_body(400.0, 300.0, BodyType::Dynamic);
+    let fixture = ball.add_circle(10.0);
+    ball.set_linear_velocity(5.0, 0.0);
+    let mouse = world.new_mouse_joint(&ball, 400.0, 300.0);
+
+    world.translate_origin(100.0, 50.0);
+    assert!(close(ball.position(), (300.0, 250.0)));
+    assert_eq!(ball.linear_velocity(), (5.0, 0.0));
+    assert!(close(mouse.target(), (300.0, 250.0)));
+    let (left, top, _, _) = fixture.bounding_box();
+    assert!((left - 290.0).abs() < 0.1 && (top - 240.0).abs() < 0.1);
+    world.update(STEP);
+    let hit = world.ray_cast(300.0, 0.0, 300.0, 1000.0).expect("a hit");
+    assert_eq!(hit.fixture, fixture);
+}
+
+#[test]
+fn body_contacts_and_two_point_contacts() {
+    let (world, floor) = world_with_floor();
+    let crate_ = world.new_body(400.0, 470.0, BodyType::Dynamic);
+    crate_.add_rectangle(40.0, 40.0);
+    let mut began = None;
+    for _ in 0..60 {
+        world.update(STEP);
+        if let Some(contact) = world.contacts().into_iter().find(|c| c.began) {
+            began.get_or_insert(contact);
+        }
+    }
+    let began = began.expect("the crate landed");
+    assert_eq!(began.children, (0, 0));
+    assert!(!began.points.is_empty());
+
+    let touches = crate_.contacts();
+    assert_eq!(touches.len(), 1);
+    assert!(touches[0].involves(&floor));
+    // A box flat on the floor touches at both bottom corners.
+    let points = &touches[0].points;
+    assert_eq!(points.len(), 2, "{points:?}");
+    for &(x, y) in points {
+        assert!(
+            (y - 500.0).abs() < 1.5 && (x - 400.0).abs() > 15.0,
+            "({x}, {y})"
+        );
+    }
+}
+
+#[test]
+fn a_chain_contact_says_which_segment_was_hit() {
+    let world = World::new(0.0, 600.0);
+    let ground = world.new_body(0.0, 0.0, BodyType::Static);
+    ground.add_chain(
+        &[(0.0, 500.0), (100.0, 500.0), (200.0, 500.0), (300.0, 500.0)],
+        false,
+    );
+    let ball = world.new_body(250.0, 400.0, BodyType::Dynamic);
+    ball.add_circle(10.0);
+    run(&world, 1.0);
+    let touches = ball.contacts();
+    assert_eq!(touches.len(), 1);
+    let touch = &touches[0];
+    let piece = if touch.a.body() == Some(ground.clone()) {
+        touch.children.0
+    } else {
+        touch.children.1
+    };
+    assert_eq!(piece, 2);
+}
+
+#[test]
+fn joints_know_their_reference_angle_axis_and_each_limit() {
+    let world = World::new(0.0, 0.0);
+    let a = world.new_body(0.0, 0.0, BodyType::Dynamic);
+    a.add_circle(5.0);
+    let b = world.new_body(10.0, 0.0, BodyType::Dynamic);
+    b.add_circle(5.0);
+    a.set_angle(0.25);
+    b.set_angle(1.0);
+
+    let hinge = world.new_revolute_joint(&a, &b, 5.0, 0.0, false);
+    assert!((hinge.reference_angle() - 0.75).abs() < 1e-5);
+    let weld = world.new_weld_joint(&a, &b, false);
+    assert!((weld.reference_angle() - 0.75).abs() < 1e-5);
+    weld.destroy();
+
+    let slider = world.new_prismatic_joint(&a, &b, 5.0, 0.0, 0.0, 1.0, false);
+    assert!((slider.reference_angle() - 0.75).abs() < 1e-5);
+    assert!(close(slider.axis(), (0.0, 1.0)));
+    let wheel = world.new_wheel_joint(&a, &b, 5.0, 0.0, 1.0, 0.0, false);
+    assert!(close(wheel.axis(), (1.0, 0.0)));
+
+    hinge.set_upper_limit(1.0);
+    hinge.set_lower_limit(-0.5);
+    assert_eq!((hinge.lower_limit(), hinge.upper_limit()), (-0.5, 1.0));
+    assert_eq!(hinge.limits(), (-0.5, 1.0));
+}
