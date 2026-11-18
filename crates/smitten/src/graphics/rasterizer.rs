@@ -195,7 +195,7 @@ impl Rasterizer {
         extra_spacing: f32,
     ) -> Result<Rasterizer, FontError> {
         let (width, height) = data.dimensions();
-        let image = ::image::RgbaImage::from_raw(width, height, data.as_bytes().to_vec())
+        let image = ::image::RgbaImage::from_raw(width, height, data.rgba8().into_owned())
             .ok_or_else(|| FontError::Parse("the image data is the wrong size".into()))?;
         Rasterizer::from_rgba(image, glyphs, extra_spacing)
     }

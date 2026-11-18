@@ -98,10 +98,6 @@ shaders, volume textures and canvas formats.
 
 - `Video:getStream`, `Video:setSource`.
 
-## image
-
-- `ImageData:getFormat`, and `ImageData` in pixel formats other than RGBA8.
-
 ## physics
 
 - Ghost vertices on chains and edges: `ChainShape` and `EdgeShape`

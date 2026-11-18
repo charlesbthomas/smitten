@@ -14,6 +14,7 @@ mod cull;
 mod filter;
 mod input;
 mod key;
+mod pixel_format;
 mod stencil;
 mod system;
 
@@ -27,6 +28,7 @@ pub use input::{
     MouseButton, TouchId,
 };
 pub use key::Key;
+pub use pixel_format::PixelFormat;
 pub use stencil::{CompareMode, StencilAction, StencilMode};
 pub use system::{
     Cursor, DisplayOrientation, FullscreenType, MessageBoxKind, PowerInfo, PowerState, WindowState,

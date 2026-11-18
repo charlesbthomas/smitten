@@ -58,7 +58,8 @@ pub use joystick::Joystick;
 pub use smitten_core::{
     BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor, DisplayOrientation,
     Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput,
-    Key, MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, VertexWinding, Wrap,
+    Key, MessageBoxKind, MouseButton, PixelFormat, Scaling, StencilAction, TouchId, VertexWinding,
+    Wrap,
 };
 
 use std::path::Path;
