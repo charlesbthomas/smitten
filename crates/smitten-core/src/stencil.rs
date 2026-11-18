@@ -63,6 +63,7 @@ pub struct DepthMode {
     /// [`CompareMode::Less`] draws where the new pixel is nearer than
     /// what is there, and so on.
     pub compare: CompareMode,
+    /// Whether drawing also stores its depth, for later draws to test against.
     pub write: bool,
 }
 

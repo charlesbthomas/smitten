@@ -69,6 +69,7 @@ pub fn power_info() -> PowerInfo {
 ///     .find(|language| translations.contains(&language.as_str()))
 ///     .unwrap_or_else(|| "en".to_string());
 /// ```
+#[doc(alias = "love.system.getPreferredLocales")]
 pub fn preferred_locales() -> Vec<String> {
     context::with(|ctx| ctx.backend.preferred_locales())
 }
@@ -79,6 +80,7 @@ pub fn preferred_locales() -> Vec<String> {
 /// This works on Android, with the `VIBRATE` permission in the app's
 /// manifest. Elsewhere it does nothing and returns `false`; to shake a
 /// gamepad, use [`crate::Joystick::set_vibration`].
+#[doc(alias = "love.system.vibrate")]
 pub fn vibrate(seconds: f32) -> bool {
     context::with(|ctx| ctx.backend.vibrate(seconds))
 }
@@ -89,6 +91,7 @@ pub fn vibrate(seconds: f32) -> bool {
 ///
 /// LÖVE can only tell on iOS and Android. Smitten cannot tell anywhere
 /// yet, so this is always `false`.
+#[doc(alias = "love.system.hasBackgroundMusic")]
 pub fn has_background_music() -> bool {
     false
 }

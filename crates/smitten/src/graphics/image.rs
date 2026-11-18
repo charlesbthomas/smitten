@@ -201,6 +201,7 @@ impl Image {
     /// Whether the pixels came from compressed data, such as a DDS file,
     /// the equivalent of `Image:isCompressed`. A compressed image cannot
     /// have its pixels replaced.
+    #[doc(alias = "Image:isCompressed")]
     pub fn is_compressed(&self) -> bool {
         self.inner.compressed.get()
     }
@@ -208,6 +209,7 @@ impl Image {
     /// How the image stores its pixels, the equivalent of
     /// `Texture:getFormat`. An image loaded from a file, and a compressed
     /// one, report [`PixelFormat::Rgba8`]; see [`Image::is_compressed`].
+    #[doc(alias = "Texture:getFormat")]
     pub fn format(&self) -> PixelFormat {
         self.inner.format.get()
     }
@@ -215,6 +217,7 @@ impl Image {
     /// Whether the image can be drawn and sampled by shaders, the
     /// equivalent of `Texture:isReadable`. Every image is; a canvas made
     /// with `readable: Some(false)` is not.
+    #[doc(alias = "Texture:isReadable")]
     pub fn is_readable(&self) -> bool {
         self.inner.readable.get()
     }
@@ -230,6 +233,7 @@ impl Image {
     /// decoded from sRGB, while rendering is gamma-correct, the
     /// equivalent of `Image:isFormatLinear`. Always `false` without
     /// gamma-correct rendering, as in LÖVE.
+    #[doc(alias = "Image:isFormatLinear")]
     pub fn is_format_linear(&self) -> bool {
         super::is_gamma_correct() && !self.inner.srgb.get()
     }
@@ -278,6 +282,7 @@ impl Image {
     /// tells beforehand.
     ///
     /// Its pixels cannot be replaced.
+    #[doc(alias = "love.graphics.newImage")]
     pub fn from_compressed_data(data: &CompressedImageData) -> Result<Image, ImageError> {
         Image::from_compressed_data_with(data, ImageSettings::default())
     }
@@ -336,6 +341,7 @@ impl Image {
     /// the GPU would, for a crisper image, and a negative one smaller.
     ///
     /// Does nothing to an image made without mipmaps.
+    #[doc(alias = "Image:setMipmapFilter")]
     pub fn set_mipmap_filter(&self, filter: Option<Filter>, sharpness: f32) {
         if self.inner.mipmap_count.get() <= 1 {
             return;
@@ -355,6 +361,7 @@ impl Image {
     ///
     /// The pixels must fit inside the image. They are converted if `data`
     /// is in another format than the image.
+    #[doc(alias = "Image:replacePixels")]
     pub fn replace_pixels(
         &self,
         data: &super::ImageData,
@@ -391,6 +398,7 @@ impl Image {
     /// blended as a new image's are.
     /// The texture's shape, the equivalent of `Texture:getTextureType`.
     /// Only a [`Canvas`](super::Canvas) can be other than flat.
+    #[doc(alias = "Texture:getTextureType")]
     pub fn texture_kind(&self) -> TextureKind {
         self.inner.kind.get()
     }
@@ -403,6 +411,7 @@ impl Image {
     /// equivalent of `Texture:getDepthSampleMode`. `None`, as a depth
     /// canvas starts out, reads plain depth values. Always `None` for
     /// anything other than a depth canvas.
+    #[doc(alias = "Texture:getDepthSampleMode")]
     pub fn depth_sample_mode(&self) -> Option<CompareMode> {
         self.inner.depth_sample_mode.get()
     }
@@ -417,6 +426,7 @@ impl Image {
     /// whose red channel holds the depth.
     ///
     /// Fails for anything other than a readable depth canvas.
+    #[doc(alias = "Texture:setDepthSampleMode")]
     pub fn set_depth_sample_mode(&self, mode: Option<CompareMode>) -> Result<(), GraphicsError> {
         if !self.format().is_depth() {
             return Err(GraphicsError::new(
@@ -461,11 +471,18 @@ impl fmt::Debug for Image {
 pub enum ImageError {
     /// The file could not be read.
     Read {
+        /// The file.
         path: PathBuf,
+        /// Why it could not be read.
         source: std::io::Error,
     },
     /// The file is not an image Smitten can decode.
-    Decode { path: PathBuf, message: String },
+    Decode {
+        /// The file.
+        path: PathBuf,
+        /// What is wrong with it.
+        message: String,
+    },
     /// The pixels could not be sent to the GPU.
     Upload(String),
     /// Data that did not come from a file could not be decoded or encoded.
@@ -705,6 +722,7 @@ impl Quad {
 
     /// The region as `(x, y, width, height)`, the equivalent of
     /// `Quad:getViewport`.
+    #[doc(alias = "Quad:getViewport")]
     pub fn viewport(&self) -> (f32, f32, f32, f32) {
         (self.x, self.y, self.width, self.height)
     }
@@ -712,6 +730,7 @@ impl Quad {
     /// Moves the region to `width` by `height` pixels at `(x, y)` in the
     /// same image, the equivalent of `Quad:setViewport`. Moving one quad
     /// along a sprite sheet animates whatever draws it.
+    #[doc(alias = "Quad:setViewport")]
     pub fn set_viewport(&mut self, position: impl Into<Vec2>, size: impl Into<Vec2>) {
         let Vec2 { x, y } = position.into();
         let Vec2 {
@@ -723,12 +742,14 @@ impl Quad {
 
     /// The size of the image the region is in, as `(width, height)`, the
     /// equivalent of `Quad:getTextureDimensions`.
+    #[doc(alias = "Quad:getTextureDimensions")]
     pub fn texture_dimensions(&self) -> (f32, f32) {
         (self.sheet_width, self.sheet_height)
     }
 
     /// Changes the size of the image the region is in, the last two
     /// arguments of LÖVE's `Quad:setViewport`.
+    #[doc(alias = "Quad:setViewport")]
     pub fn set_texture_dimensions(&mut self, size: impl Into<Vec2>) {
         let Vec2 {
             x: width,

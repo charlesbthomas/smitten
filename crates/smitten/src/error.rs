@@ -81,6 +81,7 @@ pub struct ErrorReport {
 ///     })
 /// });
 /// ```
+#[doc(alias = "love.errorhandler")]
 pub fn set_error_handler<D>(handler: impl FnOnce(&ErrorReport) -> Option<D> + 'static)
 where
     D: FnMut() + 'static,

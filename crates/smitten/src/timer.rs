@@ -51,6 +51,7 @@ impl TimerState {
 /// Smitten steps once a frame before [`crate::Game::update`]. Only a
 /// custom main loop made with [`crate::run_loop`] needs to call this, once
 /// a frame; calling it anywhere else makes the next `dt` shorter.
+#[doc(alias = "love.timer.step")]
 pub fn step() -> f32 {
     context::with(|ctx| {
         let now = ctx.backend.ticks_ns();
@@ -66,6 +67,7 @@ pub fn delta() -> f32 {
 /// The average of the seconds between frames over the last second, the
 /// equivalent of `love.timer.getAverageDelta`. Steadier than [`delta`]
 /// for showing frame times. It is 0 for the first second.
+#[doc(alias = "love.timer.getAverageDelta")]
 pub fn average_delta() -> f32 {
     context::with(|ctx| ctx.timer.average_delta)
 }
@@ -83,6 +85,7 @@ pub fn time() -> f64 {
 /// Pauses the game for `duration`, the equivalent of `love.timer.sleep`.
 /// Nothing is drawn and no events are handled meanwhile, so keep it
 /// short.
+#[doc(alias = "love.timer.sleep")]
 pub fn sleep(duration: std::time::Duration) {
     std::thread::sleep(duration);
 }

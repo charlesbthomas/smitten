@@ -8,6 +8,7 @@
 /// French keyboard, and are never held or pressed by position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum Key {
     A,
     B,

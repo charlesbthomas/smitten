@@ -104,15 +104,16 @@ pub struct World {
 pub struct Contact {
     /// `true` if they started touching, `false` if they stopped.
     pub began: bool,
+    /// The first fixture.
     pub a: Fixture,
+    /// The second fixture.
     pub b: Fixture,
     /// Where they touch, in world coordinates. For a sensor, or once they
     /// have stopped touching, it is the point half way between the two.
-    pub x: f32,
-    pub y: f32,
+    pub point: Vec2,
     /// The direction from `a` into `b` at that point, as a vector one
     /// unit long.
-    pub normal: (f32, f32),
+    pub normal: Vec2,
     /// How fast the two were closing on each other along the normal just
     /// before the update, in units per second. It says how hard they hit:
     /// near zero for things settling against each other, large for a
@@ -120,9 +121,9 @@ pub struct Contact {
     /// touching.
     pub speed: f32,
     /// Every point where they touch, in world coordinates: one or two,
-    /// or none for a sensor or once they have stopped touching. `x` and
-    /// `y` are the middle of these. LÖVE's `Contact:getPositions`.
-    pub points: Vec<(f32, f32)>,
+    /// or none for a sensor or once they have stopped touching. `point`
+    /// is the middle of these. LÖVE's `Contact:getPositions`.
+    pub points: Vec<Vec2>,
     /// Which piece of each fixture is touched: the index of the segment
     /// of a chain, 0 for any other shape. LÖVE's `Contact:getChildren`.
     pub children: (usize, usize),
@@ -240,13 +241,12 @@ fn touching_at(world: &PhysicsWorld, a: ColliderHandle, b: ColliderHandle) -> To
 /// Where a ray first met a fixture.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RayHit {
+    /// The fixture that was hit.
     pub fixture: Fixture,
     /// The point that was hit.
-    pub x: f32,
-    pub y: f32,
+    pub point: Vec2,
     /// The direction the surface faces at that point, of length 1.
-    pub normal_x: f32,
-    pub normal_y: f32,
+    pub normal: Vec2,
     /// How far along the ray the hit is: 0.0 at its start, 1.0 at its end.
     pub fraction: f32,
 }
@@ -255,13 +255,14 @@ pub struct RayHit {
 /// apart. See [`World::touching`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Touch {
+    /// The first fixture.
     pub a: Fixture,
+    /// The second fixture.
     pub b: Fixture,
     /// Where they touch, in world coordinates.
-    pub x: f32,
-    pub y: f32,
+    pub point: Vec2,
     /// The direction from `a` into `b` there, one unit long.
-    pub normal: (f32, f32),
+    pub normal: Vec2,
     /// The push along the normal that kept them apart during the last
     /// update, summed over the points where they touch. Divided by the
     /// update's `dt` it is a force: something resting on `b` pushes with
@@ -270,7 +271,7 @@ pub struct Touch {
     /// The push across the normal that friction gave, likewise.
     pub tangent_impulse: f32,
     /// Every point where they touch, one or two, in world coordinates.
-    pub points: Vec<(f32, f32)>,
+    pub points: Vec<Vec2>,
     /// Which piece of each fixture is touched: the index of the segment
     /// of a chain, 0 for any other shape.
     pub children: (usize, usize),
@@ -292,25 +293,29 @@ impl Touch {
 /// and use the user data copied here.
 #[derive(Debug)]
 pub struct PreSolve {
+    /// The first fixture.
     pub a: Fixture,
+    /// The second fixture.
     pub b: Fixture,
-    /// [`Fixture::user_data`] of `a` and `b`.
+    /// [`Fixture::user_data`] of `a`.
     pub a_data: u64,
+    /// [`Fixture::user_data`] of `b`.
     pub b_data: u64,
-    /// [`Body::user_data`] of the bodies of `a` and `b`.
+    /// [`Body::user_data`] of the body of `a`.
     pub a_body_data: u64,
+    /// [`Body::user_data`] of the body of `b`.
     pub b_body_data: u64,
     /// The direction from `a` into `b`, one unit long.
-    pub normal: (f32, f32),
+    pub normal: Vec2,
     /// Where they touch, in world coordinates.
-    pub x: f32,
-    pub y: f32,
+    pub point: Vec2,
     /// Set to `false` to let the two pass through each other for this
     /// update. `true` to begin with.
     pub enabled: bool,
-    /// The friction and bounce used for this contact, starting from the
-    /// fixtures' own. Changes last for this update only.
+    /// The friction used for this contact, starting from the fixtures'
+    /// own. Changes last for this update only.
     pub friction: f32,
+    /// The bounce used for this contact, likewise.
     pub restitution: f32,
     /// What `friction` and `restitution` started as.
     fixture_friction: f32,
@@ -322,12 +327,14 @@ impl PreSolve {
     /// fixtures, the equivalent of `Contact:resetFriction`. Changes only
     /// ever last one update here, so this undoes one made earlier in the
     /// same callback.
+    #[doc(alias = "Contact:resetFriction")]
     pub fn reset_friction(&mut self) {
         self.friction = self.fixture_friction;
     }
 
     /// Puts [`PreSolve::restitution`] back to the value mixed from the
     /// two fixtures, the equivalent of `Contact:resetRestitution`.
+    #[doc(alias = "Contact:resetRestitution")]
     pub fn reset_restitution(&mut self) {
         self.restitution = self.fixture_restitution;
     }
@@ -341,13 +348,17 @@ impl PreSolve {
 /// callback: compare them, or use the user data copied here.
 #[derive(Debug)]
 pub struct ContactFilter {
+    /// The first fixture.
     pub a: Fixture,
+    /// The second fixture.
     pub b: Fixture,
-    /// [`Fixture::user_data`] of `a` and `b`.
+    /// [`Fixture::user_data`] of `a`.
     pub a_data: u64,
+    /// [`Fixture::user_data`] of `b`.
     pub b_data: u64,
-    /// [`Body::user_data`] of the bodies of `a` and `b`.
+    /// [`Body::user_data`] of the body of `a`.
     pub a_body_data: u64,
+    /// [`Body::user_data`] of the body of `b`.
     pub b_body_data: u64,
 }
 
@@ -449,9 +460,8 @@ impl PhysicsHooks for Hooks {
                 b_data,
                 a_body_data,
                 b_body_data,
-                normal: (manifold.normal.x, manifold.normal.y),
-                x: point.x,
-                y: point.y,
+                normal: Vec2::new(manifold.normal.x, manifold.normal.y),
+                point: Vec2::new(point.x, point.y),
                 enabled: true,
                 friction: *manifold.friction,
                 restitution: *manifold.restitution,
@@ -606,11 +616,10 @@ impl World {
                 began: contact.began,
                 a: Fixture::new(&self.inner, contact.a),
                 b: Fixture::new(&self.inner, contact.b),
-                x: contact.point.x,
-                y: contact.point.y,
-                normal: (contact.normal.x, contact.normal.y),
+                point: Vec2::new(contact.point.x, contact.point.y),
+                normal: Vec2::new(contact.normal.x, contact.normal.y),
                 speed: contact.speed,
-                points: contact.points.clone(),
+                points: contact.points.iter().copied().map(Vec2::from).collect(),
                 children: contact.children,
             })
             .collect()
@@ -640,6 +649,7 @@ impl World {
     /// Set it before creating bodies, to roughly the size of a small crate
     /// in your game. It scales the simulation's tolerances, and the mass
     /// fixtures created afterwards get from their density.
+    #[doc(alias = "love.physics.setMeter")]
     pub fn set_meter(&self, units: f32) {
         assert!(
             units.is_finite() && units > 0.0,
@@ -730,12 +740,11 @@ impl World {
             touches.push(Touch {
                 a: Fixture::new(&self.inner, a),
                 b: Fixture::new(&self.inner, b),
-                x: point.x,
-                y: point.y,
-                normal: (normal.x, normal.y),
+                point: Vec2::new(point.x, point.y),
+                normal: Vec2::new(normal.x, normal.y),
                 normal_impulse,
                 tangent_impulse,
-                points: touching.points,
+                points: touching.points.into_iter().map(Vec2::from).collect(),
                 children: touching.children,
             });
         }
@@ -762,7 +771,7 @@ impl World {
     /// world.set_pre_solve(move |contact| {
     ///     // Things below the platform pass up through it: only a
     ///     // contact pushing up out of its top counts.
-    ///     let up = if contact.a == top { contact.normal.1 } else { -contact.normal.1 };
+    ///     let up = if contact.a == top { contact.normal.y } else { -contact.normal.y };
     ///     if up > -0.5 {
     ///         contact.enabled = false;
     ///     }
@@ -802,6 +811,7 @@ impl World {
     /// // Fixtures with user data 1 pass through everything.
     /// world.set_contact_filter(|pair| pair.a_data != 1 && pair.b_data != 1);
     /// ```
+    #[doc(alias = "World:setContactFilter")]
     pub fn set_contact_filter(&self, callback: impl FnMut(&ContactFilter) -> bool + 'static) {
         self.inner.borrow_mut().contact_filter = Some(Box::new(callback));
     }
@@ -837,6 +847,7 @@ impl World {
     /// How many pairs of fixtures are close enough to be checked for
     /// touching: those whose bounding boxes overlap, touching or not, as
     /// LÖVE's `World:getContactCount` counts them.
+    #[doc(alias = "World:getContactCount")]
     pub fn contact_count(&self) -> usize {
         let inner = self.inner.borrow();
         inner.world.contact_pairs().count() + inner.world.intersection_pairs().count()
@@ -891,6 +902,7 @@ impl World {
     /// bounding box, so a fixture near a corner may be listed without its
     /// shape quite reaching the box. Check with [`Fixture::test_point`]
     /// or [`World::fixtures_at`] where that matters.
+    #[doc(alias = "World:queryBoundingBox")]
     pub fn fixtures_in_box(&self, left: f32, top: f32, right: f32, bottom: f32) -> Vec<Fixture> {
         let query = Aabb::new(
             Vector::new(left.min(right), top.min(bottom)),
@@ -922,10 +934,11 @@ impl World {
             .intersect_ray(ray, 1.0, true, filter)
             .map(|(collider, _, hit)| RayHit {
                 fixture: Fixture::new(&self.inner, collider),
-                x: x1 + direction.x * hit.time_of_impact,
-                y: y1 + direction.y * hit.time_of_impact,
-                normal_x: hit.normal.x,
-                normal_y: hit.normal.y,
+                point: Vec2::new(
+                    x1 + direction.x * hit.time_of_impact,
+                    y1 + direction.y * hit.time_of_impact,
+                ),
+                normal: Vec2::new(hit.normal.x, hit.normal.y),
                 fraction: hit.time_of_impact,
             })
             .collect();
@@ -948,10 +961,11 @@ impl World {
             .cast_ray_and_get_normal(&ray, 1.0, true, filter)?;
         Some(RayHit {
             fixture: Fixture::new(&self.inner, collider),
-            x: x1 + direction.x * hit.time_of_impact,
-            y: y1 + direction.y * hit.time_of_impact,
-            normal_x: hit.normal.x,
-            normal_y: hit.normal.y,
+            point: Vec2::new(
+                x1 + direction.x * hit.time_of_impact,
+                y1 + direction.y * hit.time_of_impact,
+            ),
+            normal: Vec2::new(hit.normal.x, hit.normal.y),
             fraction: hit.time_of_impact,
         })
     }

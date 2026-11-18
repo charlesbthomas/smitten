@@ -480,7 +480,7 @@ impl Game for Topple {
                 }
             }
             if hard {
-                impacts.push((contact.x, contact.y, contact.speed));
+                impacts.push((contact.point.x, contact.point.y, contact.speed));
             }
         }
         for (x, y, speed) in impacts {

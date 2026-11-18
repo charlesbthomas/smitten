@@ -11,6 +11,7 @@ pub enum Cursor {
     Wait,
     /// Busy in the background: the game can still be used.
     WaitArrow,
+    /// A thin cross, for aiming.
     Crosshair,
     /// The pointing hand shown over links and buttons.
     Hand,
@@ -47,6 +48,7 @@ pub enum PowerState {
 /// The state of the computer's power supply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PowerInfo {
+    /// Whether the computer runs on battery or is plugged in.
     pub state: PowerState,
     /// How full the battery is, from 0 to 100, if that is known.
     pub percent: Option<u8>,
@@ -73,8 +75,11 @@ pub struct WindowState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MessageBoxKind {
     #[default]
+    /// An information icon.
     Info,
+    /// A warning icon.
     Warning,
+    /// An error icon.
     Error,
 }
 

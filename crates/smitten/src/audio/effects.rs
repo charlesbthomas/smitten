@@ -34,8 +34,10 @@ pub enum FilterType {
 /// Every gain is from 0.0 to 1.0, where 1.0 leaves that part of the sound
 /// alone. High frequencies are those above about 5 kHz and low frequencies
 /// those below about 250 Hz.
+#[doc(alias = "Source:setFilter")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Filter {
+    /// Which frequencies the filter lets through.
     pub kind: FilterType,
     /// The volume of the whole filtered sound.
     pub volume: f32,
@@ -157,6 +159,7 @@ impl FilterState {
 /// [`RingModulator`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Waveform {
+    /// A smooth sine wave.
     Sine,
     /// For chorus and flanger only.
     Triangle,
@@ -196,13 +199,21 @@ impl Waveform {
 /// one setting.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Effect {
+    /// Echoes of a room.
     Reverb(Reverb),
+    /// Several slightly detuned copies.
     Chorus(Chorus),
+    /// Clipping, for a rough sound.
     Distortion(Distortion),
+    /// Repeats that fade.
     Echo(Echo),
+    /// A sweeping, comb-filtered copy.
     Flanger(Flanger),
+    /// Evening out loud and quiet parts.
     Compressor(Compressor),
+    /// Raising and lowering bands of frequencies.
     Equalizer(Equalizer),
+    /// Multiplying with a tone, for a metallic sound.
     RingModulator(RingModulator),
 }
 
@@ -440,11 +451,13 @@ pub struct Equalizer {
     pub low_gain: f32,
     /// In hertz, from 50 to 800.
     pub low_cut: f32,
+    /// The gain around `low_mid_frequency`.
     pub low_mid_gain: f32,
     /// In hertz, from 200 to 3000.
     pub low_mid_frequency: f32,
     /// From 0.01 to 1.0.
     pub low_mid_bandwidth: f32,
+    /// The gain around `high_mid_frequency`.
     pub high_mid_gain: f32,
     /// In hertz, from 1000 to 8000.
     pub high_mid_frequency: f32,

@@ -36,6 +36,7 @@ pub fn is_down(button: MouseButton) -> bool {
 
 /// Returns whether any of `buttons` is held, as LÖVE's
 /// `love.mouse.isDown` does when given several.
+#[doc(alias = "love.mouse.isDown")]
 pub fn is_any_down(buttons: &[MouseButton]) -> bool {
     context::with(|ctx| {
         buttons
@@ -47,6 +48,7 @@ pub fn is_any_down(buttons: &[MouseButton]) -> bool {
 /// Returns whether the platform can change the cursor's look with
 /// [`set_cursor`] and [`set_image_cursor`], the equivalent of
 /// `love.mouse.isCursorSupported`. It is `false` on phones and tablets.
+#[doc(alias = "love.mouse.isCursorSupported")]
 pub fn is_cursor_supported() -> bool {
     context::with(|ctx| ctx.backend.cursor_supported())
 }
@@ -88,6 +90,7 @@ pub fn set_y(y: f32) {
 /// Chooses one of the operating system's cursors, the equivalent of
 /// `love.mouse.setCursor(love.mouse.getSystemCursor(name))`. It replaces
 /// an [`ImageCursor`].
+#[doc(alias = "love.mouse.setCursor")]
 pub fn set_cursor(cursor: Cursor) {
     let replaced = context::with(|ctx| match ctx.backend.set_cursor(cursor) {
         Ok(()) => {
@@ -191,6 +194,7 @@ impl ImageCursor {
     /// Loads a cursor from an image file, the equivalent of
     /// `love.mouse.newCursor(path, hot_x, hot_y)`. `(hot_x, hot_y)` is the pixel
     /// that points.
+    #[doc(alias = "love.mouse.newCursor")]
     pub fn load(path: impl AsRef<Path>, hot_x: u32, hot_y: u32) -> Result<ImageCursor, ImageError> {
         let data = ImageData::load(path)?;
         ImageCursor::from_image_data(&data, hot_x, hot_y)
@@ -200,6 +204,7 @@ impl ImageCursor {
 /// Shows `cursor` while the pointer is over the window, the equivalent of
 /// `love.mouse.setCursor(cursor)`. [`set_cursor`] goes back to a system
 /// cursor.
+#[doc(alias = "love.mouse.setCursor")]
 pub fn set_image_cursor(cursor: &ImageCursor) {
     let replaced = context::with(|ctx| match ctx.backend.set_image_cursor(cursor.inner.id) {
         Ok(()) => ctx.input.image_cursor.replace(cursor.clone()),

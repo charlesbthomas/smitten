@@ -11,6 +11,7 @@ use std::f32::consts::{FRAC_PI_2, PI};
 /// `max` are a source's attenuation distances and `rolloff` its rolloff.
 /// The clamped models treat anything nearer than `reference` as being at
 /// `reference` and anything farther than `max` as being at `max`.
+#[doc(alias = "love.audio.setDistanceModel")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DistanceModel {
     /// Distance does not change the volume.
@@ -23,9 +24,11 @@ pub enum DistanceModel {
     /// Falls in a straight line from full volume at `reference` to silent
     /// at `max`, when the rolloff is 1.0.
     Linear,
+    /// As `Linear`, never louder than at `reference`.
     LinearClamped,
     /// `(distance / reference) ^ -rolloff`.
     Exponent,
+    /// As `Exponent`, never louder than at `reference`.
     ExponentClamped,
 }
 

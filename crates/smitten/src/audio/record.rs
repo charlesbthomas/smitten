@@ -169,6 +169,7 @@ impl RecordingDevice {
     /// `RecordingDevice:getBitDepth`. Always 32: samples are recorded as
     /// `f32`, whatever LÖVE game code would have asked for, so nothing is
     /// lost to 8 or 16 bits.
+    #[doc(alias = "RecordingDevice:getBitDepth")]
     pub fn bit_depth(&self) -> u32 {
         32
     }
@@ -189,6 +190,7 @@ impl fmt::Debug for RecordingDevice {
 ///
 /// Some systems ask the player for permission the first time a game
 /// records.
+#[doc(alias = "love.audio.getRecordingDevices")]
 pub fn recording_devices() -> Vec<RecordingDevice> {
     context::with(|ctx| {
         let devices = ctx.backend.recording_devices();

@@ -68,6 +68,7 @@ pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};
 /// touch. LÖVE's `love.physics.getDistance`.
 ///
 /// Panics if the two belong to different worlds or either was destroyed.
+#[doc(alias = "love.physics.getDistance")]
 pub fn distance(a: &Fixture, b: &Fixture) -> (f32, Vec2, Vec2) {
     use rapier2d::parry::query::{self, ClosestPoints};
 

@@ -1,5 +1,6 @@
 /// A mouse button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum MouseButton {
     Left,
     Right,
@@ -25,6 +26,7 @@ pub struct JoystickId(pub u32);
 ///
 /// `A` is always the bottom face button, whatever is printed on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum GamepadButton {
     A,
     B,
@@ -69,6 +71,7 @@ impl GamepadButton {
 /// Stick axes run from -1.0 to 1.0, with right and down positive. Triggers
 /// run from 0.0 to 1.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum GamepadAxis {
     LeftX,
     LeftY,
@@ -97,6 +100,7 @@ impl GamepadAxis {
 
 /// The direction a joystick's hat (a small digital pad) is pushed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum JoystickHat {
     #[default]
     Centered,
@@ -151,6 +155,7 @@ impl JoystickHat {
 /// What a joystick reports about itself when it is connected.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct JoystickInfo {
+    /// The device's name, as the system reports it.
     pub name: String,
     /// A string of 32 hex digits naming the kind of device, the key that
     /// gamepad mappings are stored under.
@@ -161,13 +166,17 @@ pub struct JoystickInfo {
     pub product_id: u16,
     /// The product version, or 0 if unknown.
     pub product_version: u16,
+    /// How many axes it has.
     pub axis_count: usize,
+    /// How many buttons it has.
     pub button_count: usize,
+    /// How many hats it has.
     pub hat_count: usize,
 }
 
 /// A button or axis of a standard gamepad, as named in a gamepad mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum GamepadInput {
     Button(GamepadButton),
     Axis(GamepadAxis),
@@ -176,6 +185,7 @@ pub enum GamepadInput {
 /// A raw input of a joystick, numbered from 0 in the order the device
 /// reports them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum JoystickInput {
     Button(usize),
     Axis(usize),

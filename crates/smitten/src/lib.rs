@@ -28,6 +28,7 @@
 //! ```
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 /// Makes a handle type equal to, and hashed as, the handles that share
 /// its `Rc`: two handles are equal when they refer to the same resource.

@@ -32,7 +32,9 @@ use theora_rs::{DecoderContext, HeaderParser, Info, OggPacket, SetupInfo};
 pub enum VideoError {
     /// The file could not be read.
     Read {
+        /// The file.
         path: PathBuf,
+        /// Why it could not be read.
         source: std::io::Error,
     },
     /// The data is not a video Smitten can decode.
@@ -194,6 +196,7 @@ impl VideoStream {
     /// The path the video was loaded from, as given to
     /// [`VideoStream::load`], the equivalent of `VideoStream:getFilename`.
     /// `None` for one made with [`VideoStream::from_bytes`].
+    #[doc(alias = "VideoStream:getFilename")]
     pub fn filename(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -361,6 +364,7 @@ impl VideoStream {
     /// `love.video.newVideoStream`.
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
+    #[doc(alias = "love.video.newVideoStream")]
     pub fn load(path: impl AsRef<Path>) -> Result<VideoStream, VideoError> {
         let path = path.as_ref();
         let mut stream = VideoStream::from_bytes(read(path)?)?;

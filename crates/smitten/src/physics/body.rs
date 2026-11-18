@@ -585,6 +585,7 @@ impl Body {
     /// Every pair of fixtures touching now where one is this body's, with
     /// how hard they were pushed apart, as [`World::touching`] gives
     /// them. LÖVE's `Body:getContacts`.
+    #[doc(alias = "Body:getContacts")]
     pub fn contacts(&self) -> Vec<Touch> {
         self.world()
             .touching()

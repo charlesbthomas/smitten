@@ -60,6 +60,7 @@ impl Joystick {
 
     /// The USB vendor id, product id and product version, as LÖVE's
     /// `Joystick:getDeviceInfo`. Each is 0 if unknown.
+    #[doc(alias = "Joystick:getDeviceInfo")]
     pub fn device_info(&self) -> (u16, u16, u16) {
         self.read((0, 0, 0), |joystick| {
             let info = &joystick.info;
@@ -104,6 +105,7 @@ impl Joystick {
 
     /// Returns whether any of the raw `buttons` is held, as LÖVE's
     /// `Joystick:isDown` does when given several.
+    #[doc(alias = "Joystick:isDown")]
     pub fn is_any_down(&self, buttons: &[usize]) -> bool {
         buttons.iter().any(|&button| self.is_down(button))
     }
@@ -119,6 +121,7 @@ impl Joystick {
     /// The raw input that gamepad `input` is read from, as LÖVE's
     /// `Joystick:getGamepadMapping`. `None` if the device has no mapping
     /// or the mapping leaves `input` out.
+    #[doc(alias = "Joystick:getGamepadMapping")]
     pub fn gamepad_mapping(&self, input: GamepadInput) -> Option<JoystickInput> {
         let mapping = self.gamepad_mapping_string()?;
         gamepad_mapping::lookup(&mapping, input)
@@ -205,6 +208,7 @@ impl Joystick {
     ///
     /// Returns whether the gamepad took the request: `false` for one that
     /// cannot rumble or has been unplugged.
+    #[doc(alias = "Joystick:setVibration")]
     pub fn set_vibration(&self, left: f32, right: f32, seconds: f32) -> bool {
         context::with(|ctx| {
             let taken = ctx.backend.rumble_gamepad(self.id, left, right, seconds);
@@ -225,6 +229,7 @@ impl Joystick {
     /// `Joystick:getVibration`: what [`set_vibration`](Self::set_vibration)
     /// last asked for, or `(0.0, 0.0)` once its time is up or if the
     /// gamepad did not take it.
+    #[doc(alias = "Joystick:getVibration")]
     pub fn vibration(&self) -> (f32, f32) {
         context::with(|ctx| {
             let now = ctx.backend.ticks_ns();
@@ -274,6 +279,7 @@ pub fn joystick_count() -> usize {
 /// ```
 ///
 /// Returns whether the mapping was taken.
+#[doc(alias = "love.joystick.setGamepadMapping")]
 pub fn set_gamepad_mapping(guid: &str, input: GamepadInput, from: JoystickInput) -> bool {
     let guid = guid.trim();
     if guid.is_empty() || guid.contains(',') {
@@ -319,6 +325,7 @@ pub fn load_gamepad_mappings_from_str(mappings: &str) -> io::Result<usize> {
 /// `love.joystick.loadGamepadMappings(filename)`. The path is looked up
 /// as [`filesystem::read`](crate::filesystem::read) does. See
 /// [`load_gamepad_mappings_from_str`].
+#[doc(alias = "love.joystick.loadGamepadMappings")]
 pub fn load_gamepad_mappings(path: impl AsRef<Path>) -> io::Result<usize> {
     let text = crate::filesystem::read_string(path)?;
     load_gamepad_mappings_from_str(&text)
@@ -326,6 +333,7 @@ pub fn load_gamepad_mappings(path: impl AsRef<Path>) -> io::Result<usize> {
 
 /// The mapping used for joysticks with this GUID, in SDL's format, the
 /// equivalent of `love.joystick.getGamepadMappingString`.
+#[doc(alias = "love.joystick.getGamepadMappingString")]
 pub fn gamepad_mapping_string(guid: &str) -> Option<String> {
     context::with(|ctx| ctx.backend.gamepad_mapping(guid))
 }
@@ -335,6 +343,7 @@ pub fn gamepad_mapping_string(guid: &str) -> Option<String> {
 /// `love.joystick.saveGamepadMappings`. Write the text to a file and load
 /// it with [`load_gamepad_mappings`] in a later run to keep the player's
 /// choices.
+#[doc(alias = "love.joystick.saveGamepadMappings")]
 pub fn save_gamepad_mappings() -> String {
     let guids = context::with(|ctx| {
         let mut guids = ctx.input.added_mappings.clone();

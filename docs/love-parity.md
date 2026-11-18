@@ -8,7 +8,10 @@ fields) against smitten's public API by hand, and has been kept up to
 date as the gaps closed. [love-parity-plan.md](love-parity-plan.md) is
 the plan they were closed by.
 
-Names are LÖVE's, so each item can be looked up on the LÖVE wiki. Items
+Names are LÖVE's, so each item can be looked up on the LÖVE wiki.
+[coming-from-love.md](coming-from-love.md) shows how LÖVE calls
+translate into smitten's API, and each LÖVE name is a search alias in
+the API docs. Items
 covered by a differently shaped smitten API are counted as done and not
 listed. For example, `beginContact` is covered by `World::contacts`,
 `love.thread.newThread` by `std::thread::spawn`, `newDataView` by
@@ -65,3 +68,5 @@ ASTC and KTX textures).
 | LÖVE's GLSL shader dialect | Smitten shaders are WGSL. |
 | `t.externalstorage`, `t.accelerometerjoystick`, `t.audio.mic` | They only do anything on Android and iOS, which Smitten doesn't run on. |
 | `t.modules.*` | The `physics` and `video` Cargo features leave those modules out; the rest are always built in. |
+| `love.graphics.discard`, `flushBatch`, `SpriteBatch:flush` | Smitten's targets always keep their contents and a frame is sent to the GPU at once, so there is nothing for them to do. |
+| `setNewFont` | `set_font(&Font::load(path, size)?)`. |

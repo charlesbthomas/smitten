@@ -266,6 +266,7 @@ impl Shader {
     ///
     /// Panics if there is no such member or it has a different type. Use
     /// [`Shader::try_send_color`] to handle the failure instead.
+    #[doc(alias = "Shader:sendColor")]
     pub fn send_color(&self, name: &str, color: Color) {
         self.try_send_color(name, color)
             .unwrap_or_else(|error| panic!("{error}"));
@@ -442,6 +443,7 @@ impl Shader {
     /// Returns the compiler's warnings about the shader, as LÖVE's
     /// `Shader:getWarnings`. The WGSL compiler reports problems only as
     /// errors, from [`Shader::new`], so this is always empty.
+    #[doc(alias = "Shader:getWarnings")]
     pub fn warnings(&self) -> String {
         String::new()
     }
@@ -820,7 +822,9 @@ fn wgsl_name(kind: UniformKind) -> &'static str {
 pub enum ShaderError {
     /// The file could not be read.
     Read {
+        /// The file.
         path: PathBuf,
+        /// Why it could not be read.
         source: std::io::Error,
     },
     /// The source is not a valid shader. The message says where and why.
@@ -829,15 +833,20 @@ pub enum ShaderError {
     UnknownValue(String),
     /// The member exists but is declared with a different type.
     WrongType {
+        /// The name of the member or texture.
         name: String,
+        /// The type that was sent.
         sent: UniformKind,
         /// `None` if the member has a type that cannot be sent at all.
         declared: Option<UniformKind>,
     },
     /// More values were sent than the member has room for.
     TooManyValues {
+        /// The name of the member or texture.
         name: String,
+        /// How many values were sent.
         sent: usize,
+        /// How many the member holds.
         room: usize,
     },
     /// The shader declares no texture with this name.
@@ -845,13 +854,17 @@ pub enum ShaderError {
     /// The texture is declared as a different kind from the one sent,
     /// such as a cube image sent to a `texture_2d<f32>`.
     WrongTextureKind {
+        /// The name of the member or texture.
         name: String,
+        /// The kind that was sent.
         sent: TextureKind,
+        /// The kind the shader declares.
         declared: TextureKind,
     },
     /// A `texture_depth_2d` was sent something other than a depth canvas
     /// with a depth sample mode, or another texture was sent one.
     WrongDepthSampleMode {
+        /// The name of the member or texture.
         name: String,
         /// Whether the shader declares it as a `texture_depth_2d`.
         declared_depth: bool,

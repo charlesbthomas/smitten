@@ -158,6 +158,7 @@ impl Rasterizer {
     /// equivalent of `love.font.newTrueTypeRasterizer`: at `size` units,
     /// fitted to pixels as `hinting` says, at `dpi_scale` pixels a unit,
     /// or `None` to match the screen (1.0 without a running game).
+    #[doc(alias = "love.font.newTrueTypeRasterizer")]
     pub fn from_bytes(
         bytes: &[u8],
         size: f32,
@@ -174,6 +175,7 @@ impl Rasterizer {
 
     /// A rasterizer for the built-in font at `size` units, the equivalent
     /// of `love.font.newTrueTypeRasterizer(size)`.
+    #[doc(alias = "love.font.newTrueTypeRasterizer")]
     pub fn default_at(size: f32) -> Rasterizer {
         Rasterizer::from_bytes(DEFAULT_FONT, size, Hinting::Normal, None)
             .expect("the built-in font is valid")
@@ -182,6 +184,7 @@ impl Rasterizer {
     /// A rasterizer for an image font, the equivalent of
     /// `love.font.newImageRasterizer`. See [`Font::from_image`] for how
     /// the image is laid out.
+    #[doc(alias = "love.font.newImageRasterizer")]
     pub fn from_image(
         bytes: &[u8],
         glyphs: &str,
@@ -219,6 +222,7 @@ impl Rasterizer {
     /// A rasterizer for an AngelCode BMFont, the equivalent of
     /// `love.font.newBMFontRasterizer`: the text of its `.fnt` file and
     /// the bytes of each page image, in the order of their ids.
+    #[doc(alias = "love.font.newBMFontRasterizer")]
     pub fn from_bmfont(fnt: &str, pages: &[&[u8]]) -> Result<Rasterizer, FontError> {
         let file = BMFontFile::parse(fnt).map_err(FontError::Parse)?;
         Rasterizer::from_bmfont_file(&file, pages)
@@ -277,6 +281,7 @@ impl Rasterizer {
 
     /// The widest advance of any of its characters, in units, the
     /// equivalent of LÖVE's `Rasterizer:getAdvance`.
+    #[doc(alias = "Rasterizer:getAdvance")]
     pub fn advance(&self) -> f32 {
         match &self.face.source {
             Source::Vector(font) => (0..font.glyph_count())
@@ -391,6 +396,7 @@ impl std::fmt::Debug for Rasterizer {
 impl Font {
     /// Creates a font from a rasterizer, the equivalent of
     /// `love.graphics.newFont(rasterizer)`.
+    #[doc(alias = "love.graphics.newFont")]
     pub fn from_rasterizer(rasterizer: &Rasterizer) -> Result<Font, FontError> {
         let (filter, atlas) = context::with(|ctx| {
             (

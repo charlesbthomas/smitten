@@ -1,12 +1,14 @@
 //! Shared types for the Smitten game framework.
 //!
 //! This crate holds the plain data types that games see ([`Color`], [`Key`],
-//! [`Config`], [`Filter`]) and the [`backend`] boundary that platform crates implement.
+//! [`Config`], [`Filter`]) and the `backend` boundary that platform crates implement.
 //! It has no dependencies and no platform code. Games should depend on the
 //! `smitten` crate, which re-exports everything they need from here.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
+#[doc(hidden)]
 pub mod backend;
 
 mod blend;

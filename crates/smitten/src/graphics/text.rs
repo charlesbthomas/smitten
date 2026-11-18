@@ -38,8 +38,11 @@ const ATLAS_PADDING: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Align {
     #[default]
+    /// Lined up on the left.
     Left,
+    /// Centered.
     Center,
+    /// Lined up on the right.
     Right,
     /// Lines are stretched to the full width by widening their spaces.
     /// The last line of each paragraph is left as it is, aligned left.
@@ -56,9 +59,13 @@ pub enum Align {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Hinting {
     #[default]
+    /// The default: smooth and true to the outline.
     Normal,
+    /// The same as `Normal`.
     Light,
+    /// Every pixel fully on or off, for pixel-art TrueType fonts.
     Mono,
+    /// The same as `Normal`.
     None,
 }
 
@@ -197,6 +204,7 @@ impl Font {
     ///
     /// `extra_spacing` is added after each character, in units, and may be
     /// negative. One pixel of the image is one unit.
+    #[doc(alias = "love.graphics.newImageFont")]
     pub fn from_image(bytes: &[u8], glyphs: &str, extra_spacing: f32) -> Result<Font, FontError> {
         let (filter, built) = context::with(|ctx| {
             (
@@ -306,6 +314,7 @@ impl Font {
 
     /// Where the baseline of the first line is drawn, in units below the
     /// top of the text, the equivalent of LÖVE's `Font:getBaseline`.
+    #[doc(alias = "Font:getBaseline")]
     pub fn baseline(&self) -> f32 {
         let face = self.inner.face.borrow();
         (face.ascent * face.scale).round() / face.scale
@@ -336,6 +345,7 @@ impl Font {
 
     /// Whether this font or its fallbacks can draw every character of
     /// `text`, the equivalent of LÖVE's `Font:hasGlyphs`.
+    #[doc(alias = "Font:hasGlyphs")]
     pub fn has_glyphs(&self, text: &str) -> bool {
         self.with_faces(|faces| {
             text.chars()
@@ -350,6 +360,7 @@ impl Font {
     ///
     /// Only this font's own fallbacks are used, not theirs. Fonts that
     /// are each other's fallbacks keep each other alive.
+    #[doc(alias = "Font:setFallbacks")]
     pub fn set_fallbacks(&self, fallbacks: &[&Font]) {
         let mut list: Vec<Font> = Vec::new();
         for &font in fallbacks {
@@ -532,7 +543,9 @@ fn in_file(path: &Path, error: FontError) -> FontError {
 pub enum FontError {
     /// The file could not be read.
     Read {
+        /// The file.
         path: PathBuf,
+        /// Why it could not be read.
         source: std::io::Error,
     },
     /// The data is not a font Smitten can use.

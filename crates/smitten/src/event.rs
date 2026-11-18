@@ -100,6 +100,7 @@ pub struct TouchPoint {
 
 #[derive(Debug)]
 #[non_exhaustive]
+#[allow(missing_docs)] // The variants are named for what they are.
 pub enum Event {
     /// The player or the system asked the game to close. Taken by
     /// [`poll`], it no longer reaches [`crate::Game::quit`]; call [`quit`]
@@ -358,6 +359,7 @@ fn accept(ctx: &mut Context, event: BackendEvent) -> Option<Event> {
 /// the [`crate::Game`] callbacks, so most games never call this. It is for
 /// a game that is busy for a long time inside one callback, such as while
 /// loading, and wants to see input meanwhile with [`poll`].
+#[doc(alias = "love.event.pump")]
 pub fn pump() {
     context::with(|ctx| {
         while let Some(event) = ctx.backend.poll_event() {
@@ -393,6 +395,7 @@ pub fn pump() {
 ///     }
 /// }
 /// ```
+#[doc(alias = "love.event.poll")]
 pub fn poll() -> impl Iterator<Item = Event> {
     let events: Vec<Event> = context::with(|ctx| {
         let platform = std::mem::take(&mut ctx.events.platform);
@@ -411,6 +414,7 @@ pub fn poll() -> impl Iterator<Item = Event> {
 ///
 /// The game stands still meanwhile: nothing is updated or drawn. As with
 /// [`poll`], the event is not handed to the [`crate::Game`] callbacks.
+#[doc(alias = "love.event.wait")]
 pub fn wait(timeout: Option<f32>) -> Option<Event> {
     let queued = context::with(|ctx| {
         ctx.events
@@ -478,6 +482,7 @@ pub fn wait(timeout: Option<f32>) -> Option<Event> {
 ///     }
 /// }
 /// ```
+#[doc(alias = "love.event.push")]
 pub fn push<T: Any>(event: T) {
     context::with(|ctx| ctx.events.pending.push_back(CustomEvent::new(event)));
 }
@@ -485,6 +490,7 @@ pub fn push<T: Any>(event: T) {
 /// Throws away the events pushed with [`push`] that have not been handed
 /// to the game yet, the equivalent of `love.event.clear` for the game's
 /// own events.
+#[doc(alias = "love.event.clear")]
 pub fn clear() {
     context::with(|ctx| ctx.events.pending.clear());
 }

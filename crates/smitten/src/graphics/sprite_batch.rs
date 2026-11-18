@@ -140,6 +140,7 @@ impl SpriteBatch {
     /// How many sprites the batch has room for before it next grows, the
     /// equivalent of `SpriteBatch:getBufferSize`. It is at least the size
     /// it was created with.
+    #[doc(alias = "SpriteBatch:getBufferSize")]
     pub fn buffer_size(&self) -> usize {
         self.vertices.capacity() / VERTICES_PER_SPRITE
     }
@@ -153,6 +154,7 @@ impl SpriteBatch {
     /// Draws only `count` sprites from index `start`, the equivalent of
     /// `SpriteBatch:setDrawRange`. `None` draws them all again. Sprites
     /// outside the range are kept, just not drawn.
+    #[doc(alias = "SpriteBatch:setDrawRange")]
     pub fn set_draw_range(&mut self, range: Option<(usize, usize)>) {
         self.changed();
         self.draw_range = range;
@@ -177,6 +179,7 @@ impl SpriteBatch {
     ///
     /// Panics if the batch draws a plain [`Image`], or the layer does not
     /// exist.
+    #[doc(alias = "SpriteBatch:addLayer")]
     pub fn add_layer(&mut self, layer: u32, params: impl Into<DrawParams>) -> usize {
         let quad = self.whole();
         self.add_layer_quad(layer, &quad, params)
@@ -223,6 +226,7 @@ impl SpriteBatch {
     ///
     /// Panics if no sprite has that index, the batch draws a plain
     /// [`Image`], or the layer does not exist.
+    #[doc(alias = "SpriteBatch:setLayer")]
     pub fn set_layer(&mut self, index: usize, layer: u32, params: impl Into<DrawParams>) {
         let quad = self.whole();
         self.set_layer_quad(index, layer, &quad, params);
@@ -306,6 +310,7 @@ impl SpriteBatch {
 
     /// The image or array image the batch draws, the equivalent of
     /// `SpriteBatch:getTexture`.
+    #[doc(alias = "SpriteBatch:getTexture")]
     pub fn texture(&self) -> BatchTexture<'_> {
         match &self.source {
             Source::Image(image) => BatchTexture::Image(image),
@@ -352,6 +357,7 @@ impl SpriteBatch {
     ///
     /// Attaching another attribute of the same name replaces the first.
     /// Fails if the mesh has no attribute `name`.
+    #[doc(alias = "SpriteBatch:attachAttribute")]
     pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), GraphicsError> {
         if !mesh
             .vertex_format()

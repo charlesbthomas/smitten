@@ -139,6 +139,7 @@ impl Canvas {
     /// Fails for a format the GPU cannot draw to, for multisampling with
     /// mipmaps, and for a depth canvas that has mipmaps, is not flat, or
     /// is both readable and multisampled.
+    #[doc(alias = "love.graphics.newCanvas")]
     pub fn with_settings(
         width: u32,
         height: u32,
@@ -170,6 +171,7 @@ impl Canvas {
 
     /// How many samples each pixel of the canvas holds, 1 if it is not
     /// multisampled, the equivalent of `Canvas:getMSAA`.
+    #[doc(alias = "Canvas:getMSAA")]
     pub fn msaa(&self) -> u32 {
         self.msaa
     }
@@ -248,6 +250,7 @@ impl Canvas {
     }
 
     /// The canvas's shape, the equivalent of `Texture:getTextureType`.
+    #[doc(alias = "Texture:getTextureType")]
     pub fn texture_type(&self) -> TextureKind {
         self.kind
     }
@@ -270,6 +273,7 @@ impl Canvas {
     ///
     /// Like [`Canvas::to_image_data`], this draws what is queued for every
     /// canvas straight away.
+    #[doc(alias = "Canvas:generateMipmaps")]
     pub fn generate_mipmaps(&self) -> Result<(), GraphicsError> {
         if self.mipmaps == MipmapMode::None {
             return Err(GraphicsError::new("the canvas was made without mipmaps"));
@@ -305,6 +309,7 @@ impl Canvas {
     /// also draws what is queued for every canvas straight away: avoid it
     /// between drawing a canvas to the screen and changing that canvas
     /// later in the same frame, or the screen shows the later contents.
+    #[doc(alias = "Canvas:newImageData")]
     pub fn to_image_data(&self) -> Result<ImageData, GraphicsError> {
         self.to_image_data_slice(0, 0)
     }
@@ -313,6 +318,7 @@ impl Canvas {
     /// depth slice at one mipmap level, the equivalent of
     /// `Canvas:newImageData(slice, mipmap)`. The result is that level's
     /// size.
+    #[doc(alias = "Canvas:newImageData")]
     pub fn to_image_data_slice(&self, layer: u32, mipmap: u32) -> Result<ImageData, GraphicsError> {
         if layer >= self.layers {
             return Err(format!(

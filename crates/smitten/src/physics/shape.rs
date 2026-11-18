@@ -270,6 +270,7 @@ impl Shape {
     /// The smallest box around the shape on a body at `(x, y)` turned by
     /// `angle`, as `(left, top, right, bottom)`. LÖVE's
     /// `Shape:computeAABB`.
+    #[doc(alias = "Shape:computeAABB")]
     pub fn bounding_box(&self, position: impl Into<Vec2>, angle: f32) -> (f32, f32, f32, f32) {
         let Vec2 { x, y } = position.into();
         let aabb = self.shape.compute_aabb(&self.placed(x, y, angle));
@@ -282,6 +283,7 @@ impl Shape {
     /// mass from the body's origin, its mass, and its inertia around that
     /// center. Lines and chains have no area and so no mass. LÖVE's
     /// `Shape:computeMass`.
+    #[doc(alias = "Shape:computeMass")]
     pub fn compute_mass(&self, density: f32, meter: f32) -> (f32, f32, f32, f32) {
         let props = self
             .shape
@@ -300,6 +302,7 @@ impl Shape {
     /// normal_y, fraction)`: the way the surface faces there, and how far
     /// along the line the hit is, from 0.0 to 1.0. LÖVE's
     /// `Shape:rayCast`.
+    #[doc(alias = "Shape:rayCast")]
     #[allow(clippy::too_many_arguments)] // Mirrors Shape:rayCast.
     pub fn ray_cast(
         &self,
@@ -320,6 +323,7 @@ impl Shape {
 
     /// Whether the shape, on a body at `(x, y)` turned by `angle`, covers
     /// the point `(point_x, point_y)`. LÖVE's `Shape:testPoint`.
+    #[doc(alias = "Shape:testPoint")]
     pub fn test_point(
         &self,
         position: impl Into<Vec2>,
@@ -512,18 +516,21 @@ impl Shape {
 impl CircleShape {
     /// The same circle with another radius. LÖVE's
     /// `CircleShape:setRadius`, on a copy.
+    #[doc(alias = "CircleShape:setRadius")]
     pub fn with_radius(&self, radius: f32) -> CircleShape {
         Shape::circle_at(self.point(), radius)
     }
 
     /// A circle's center, measured from the body's origin. LÖVE's
     /// `CircleShape:getPoint`.
+    #[doc(alias = "CircleShape:getPoint")]
     pub fn point(&self) -> Vec2 {
         self.center()
     }
 
     /// The same circle moved to be centered `(x, y)` from the body's
     /// origin. LÖVE's `CircleShape:setPoint`, on a copy.
+    #[doc(alias = "CircleShape:setPoint")]
     pub fn with_point(&self, position: impl Into<Vec2>) -> CircleShape {
         Shape::circle_at(position, self.radius())
     }
@@ -541,6 +548,7 @@ impl<K: shape_kind::Lines> ShapeOf<K> {
     /// before, where it would otherwise catch on the join. A chain's own
     /// joins are smooth already; this is for where one edge or chain
     /// meets another.
+    #[doc(alias = "EdgeShape:setPreviousVertex")]
     pub fn set_previous_vertex(&mut self, position: impl Into<Vec2>) {
         let Vec2 { x, y } = position.into();
         self.inner.previous = Some((x, y));
@@ -560,6 +568,7 @@ impl ChainShape {
     /// `ChainShape:getChildEdge`.
     ///
     /// Panics if the chain has no such line.
+    #[doc(alias = "ChainShape:getChildEdge")]
     pub fn child_edge(&self, index: usize) -> EdgeShape {
         let chain = self
             .shape

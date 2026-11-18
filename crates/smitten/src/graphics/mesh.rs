@@ -21,13 +21,16 @@ use crate::{Color, context};
 /// and `VertexColor`. Other names are for custom vertex shaders.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VertexAttribute {
+    /// The name shaders know it by.
     pub name: String,
+    /// The type of each value.
     pub data_type: VertexDataType,
     /// How many values it has, 1 to 4.
     pub components: u8,
 }
 
 impl VertexAttribute {
+    /// An attribute called `name` with `components` values of `data_type`.
     pub fn new(name: impl Into<String>, data_type: VertexDataType, components: u8) -> Self {
         VertexAttribute {
             name: name.into(),
@@ -384,9 +387,11 @@ pub(crate) struct GpuGeometry {
 pub struct MeshVertex {
     /// Position in the mesh's own coordinates.
     pub x: f32,
+    /// See `x`.
     pub y: f32,
     /// Where in the texture this corner is, from 0 to 1 across and down.
     pub u: f32,
+    /// See `u`.
     pub v: f32,
     /// Multiplied with the texture, and blended across each triangle.
     pub color: Color,
@@ -830,6 +835,7 @@ impl Mesh {
     /// Sends changed vertices to the GPU now rather than when the mesh is
     /// next drawn, as LÖVE's `Mesh:flush` does. Drawing does it anyway, so
     /// this is only ever needed to choose when the work happens.
+    #[doc(alias = "Mesh:flush")]
     pub fn flush(&self) {
         context::with(|ctx| {
             let frame = ctx.gfx.frame_number();

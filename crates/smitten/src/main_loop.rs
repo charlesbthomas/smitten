@@ -133,6 +133,7 @@ impl MainLoop {
     /// When the game called [`event::quit`], [`Event::Quit`] comes last.
     /// Nothing closes by itself in a custom loop: return from the closure
     /// on [`Event::Quit`] to end the game.
+    #[doc(alias = "love.event.pump")]
     pub fn poll(&mut self) -> Vec<Event> {
         event::pump();
         let mut events: Vec<Event> = event::poll().collect();
@@ -149,6 +150,7 @@ impl MainLoop {
     ///
     /// The clock starts when the window opens, so call this once after
     /// loading to keep the loading time out of the first frame.
+    #[doc(alias = "love.timer.step")]
     pub fn step(&mut self) -> f32 {
         let dt = timer::step();
         reload::check();

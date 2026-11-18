@@ -19,6 +19,7 @@ impl Rasterizer {
     /// Loads a TrueType or OpenType font file as a rasterizer at `size`
     /// units, or an AngelCode BMFont if the file name ends in `.fnt`, the
     /// equivalent of `love.font.newRasterizer`.
+    #[doc(alias = "love.font.newRasterizer")]
     pub fn load(path: impl AsRef<Path>, size: f32) -> Result<Rasterizer, FontError> {
         let path = path.as_ref();
         let is_bmfont = path
@@ -58,6 +59,7 @@ impl Rasterizer {
     /// `love.font.newImageRasterizer`. See
     /// [`Font::from_image`](crate::graphics::Font::from_image) for how the
     /// image is laid out.
+    #[doc(alias = "love.font.newImageRasterizer")]
     pub fn load_image(
         path: impl AsRef<Path>,
         glyphs: &str,
@@ -76,6 +78,7 @@ impl Rasterizer {
 impl Rasterizer {
     /// Loads an AngelCode BMFont `.fnt` file and its pages as a rasterizer,
     /// the equivalent of `love.font.newBMFontRasterizer`.
+    #[doc(alias = "love.font.newBMFontRasterizer")]
     pub fn load_bmfont(path: impl AsRef<Path>) -> Result<Rasterizer, FontError> {
         Rasterizer::read_bmfont(path.as_ref())
     }

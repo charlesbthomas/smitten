@@ -195,6 +195,7 @@ impl Source {
     /// starts from the beginning of the file, wherever the decoder is.
     ///
     /// [`Decoder`]: crate::sound::Decoder
+    #[doc(alias = "love.audio.newSource")]
     pub fn from_decoder(
         decoder: &crate::sound::Decoder,
         kind: SourceType,
@@ -306,12 +307,14 @@ impl Source {
     /// Moves playback to `sample`, counted in sample frames of the sound
     /// at its own rate, as LÖVE's `Source:seek(sample, "samples")`. A
     /// queueable source cannot seek.
+    #[doc(alias = "Source:seek")]
     pub fn seek_samples(&self, sample: u64) {
         self.mixer().seek_frame(self.id, sample);
     }
 
     /// Returns the playback position in sample frames of the sound at its
     /// own rate, as LÖVE's `Source:tell("samples")`.
+    #[doc(alias = "Source:tell")]
     pub fn tell_samples(&self) -> u64 {
         self.mixer().tell_frame(self.id)
     }
@@ -319,6 +322,7 @@ impl Source {
     /// Returns the sound's length in sample frames, as LÖVE's
     /// `Source:getDuration("samples")`. `None` when
     /// [`duration`](Self::duration) is.
+    #[doc(alias = "Source:getDuration")]
     pub fn sample_count(&self) -> Option<u64> {
         self.mixer().frame_count(self.id)
     }
@@ -463,6 +467,7 @@ impl Source {
     ///
     /// Like the rest of positioning, it only affects mono sounds. It
     /// applies to what goes to effects as well as to the speakers.
+    #[doc(alias = "Source:setAirAbsorption")]
     pub fn set_air_absorption(&self, amount: f32) {
         self.change_placement(|placement| placement.air_absorption = amount.clamp(0.0, 10.0));
     }
@@ -495,6 +500,7 @@ impl Source {
 
     /// Returns how the sound is sent through the effect called `name`, as
     /// LÖVE's `Source:getEffect`, or `None` if it is not sent there.
+    #[doc(alias = "Source:getEffect")]
     pub fn effect(&self, name: &str) -> Option<EffectSend> {
         self.mixer()
             .send_filter(self.id, name)
@@ -553,7 +559,9 @@ impl fmt::Debug for Source {
 pub enum AudioError {
     /// The file could not be read.
     Read {
+        /// The file.
         path: PathBuf,
+        /// Why it could not be read.
         source: std::io::Error,
     },
     /// The data is not audio Smitten can decode.
@@ -753,6 +761,7 @@ pub fn volume() -> f32 {
 /// equivalent of `love.audio.play` with several sources. Calling
 /// [`Source::play`] on each in turn could let the audio thread mix a
 /// buffer between two of them, putting them a few milliseconds apart.
+#[doc(alias = "love.audio.play")]
 pub fn play(sources: &[&Source]) {
     let mixer = shared_mixer();
     let mut mixer = lock(&mixer);
@@ -880,6 +889,7 @@ pub fn remove_effect(name: &str) -> bool {
 
 /// Whether effects work, the equivalent of `love.audio.isEffectsSupported`.
 /// Smitten mixes effects itself, so they always do.
+#[doc(alias = "love.audio.isEffectsSupported")]
 pub fn is_effects_supported() -> bool {
     true
 }
@@ -888,6 +898,7 @@ pub fn is_effects_supported() -> bool {
 /// `love.audio.getMaxSceneEffects`. Smitten's own mixer has no limit
 /// other than the time it takes to run them, so this is `usize::MAX`.
 /// LÖVE's OpenAL usually allows a few dozen.
+#[doc(alias = "love.audio.getMaxSceneEffects")]
 pub fn max_scene_effects() -> usize {
     usize::MAX
 }
@@ -895,6 +906,7 @@ pub fn max_scene_effects() -> usize {
 /// How many effects one source can be sent through at once, the
 /// equivalent of `love.audio.getMaxSourceEffects`. There is no limit, as
 /// with [`max_scene_effects`]; OpenAL usually allows 2 to 4.
+#[doc(alias = "love.audio.getMaxSourceEffects")]
 pub fn max_source_effects() -> usize {
     usize::MAX
 }
@@ -903,6 +915,7 @@ pub fn max_source_effects() -> usize {
 /// `love.audio.setMixWithSystem`. Only phones and tablets can choose, and
 /// Smitten does not run on them yet, so this returns `false` and changes
 /// nothing, as LÖVE does on desktop systems.
+#[doc(alias = "love.audio.setMixWithSystem")]
 pub fn set_mix_with_system(mix: bool) -> bool {
     let _ = mix;
     false

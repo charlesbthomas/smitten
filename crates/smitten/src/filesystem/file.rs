@@ -108,6 +108,7 @@ pub struct File {
 /// path must be relative and the file is in the save directory, with any
 /// missing parent directories created. [`FileMode::Closed`] touches
 /// nothing and gives a `File` to [open](File::open) later.
+#[doc(alias = "love.filesystem.openFile")]
 pub fn open_file(path: impl AsRef<Path>, mode: FileMode) -> io::Result<File> {
     let mut file = File {
         stream: None,
@@ -202,6 +203,7 @@ impl File {
     }
 
     /// Whether the file is open, the equivalent of `File:isOpen`.
+    #[doc(alias = "File:isOpen")]
     pub fn is_open(&self) -> bool {
         self.stream.is_some()
     }
@@ -213,6 +215,7 @@ impl File {
     ///
     /// Fails if the file is already open; [close](File::close) it first
     /// to change its mode.
+    #[doc(alias = "File:open")]
     pub fn open(&mut self, mode: FileMode) -> io::Result<()> {
         if self.is_open() {
             return Err(io::Error::new(
@@ -247,6 +250,7 @@ impl File {
     ///
     /// The file is closed even if the flush fails; the error says the
     /// last writes may be lost.
+    #[doc(alias = "File:close")]
     pub fn close(&mut self) -> io::Result<()> {
         let stream = self.stream.take();
         self.mode = FileMode::Closed;
@@ -257,6 +261,7 @@ impl File {
     }
 
     /// How writes are buffered, the equivalent of `File:getBuffer`.
+    #[doc(alias = "File:getBuffer")]
     pub fn buffer(&self) -> BufferMode {
         self.buffer
     }
@@ -267,6 +272,7 @@ impl File {
     ///
     /// Only writing is affected. Reading always uses a buffer, which does
     /// not change what is read.
+    #[doc(alias = "File:setBuffer")]
     pub fn set_buffer(&mut self, mode: BufferMode) -> io::Result<()> {
         self.buffer = mode;
         let Some(Stream::Writer(writer)) = &mut self.stream else {
@@ -313,12 +319,14 @@ impl File {
 
     /// How many bytes from the start the next read or write happens at,
     /// the equivalent of `File:tell`.
+    #[doc(alias = "File:tell")]
     pub fn tell(&mut self) -> io::Result<u64> {
         self.stream_position()
     }
 
     /// Whether everything has been read, the equivalent of `File:isEOF`.
     /// Always true for a file opened for writing.
+    #[doc(alias = "File:isEOF")]
     pub fn is_eof(&mut self) -> io::Result<bool> {
         match &mut self.stream {
             Some(Stream::Writer(_)) => Ok(true),
@@ -329,6 +337,7 @@ impl File {
 
     /// Reads up to `count` bytes, fewer only at the end of the file, the
     /// equivalent of `File:read(count)`.
+    #[doc(alias = "File:read")]
     pub fn read_bytes(&mut self, count: usize) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::new();
         Read::by_ref(self)
@@ -339,6 +348,7 @@ impl File {
 
     /// Reads everything from here to the end of the file, the equivalent
     /// of `File:read()`.
+    #[doc(alias = "File:read")]
     pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::new();
         self.read_to_end(&mut bytes)?;
@@ -346,6 +356,7 @@ impl File {
     }
 
     /// Writes all of `contents`, the equivalent of `File:write`.
+    #[doc(alias = "File:write")]
     pub fn write_bytes(&mut self, contents: impl AsRef<[u8]>) -> io::Result<()> {
         self.write_all(contents.as_ref())
     }

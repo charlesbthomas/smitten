@@ -119,6 +119,7 @@ fn wait_until<'a, T>(
 
 impl<T> Channel<T> {
     /// An empty channel, like `love.thread.newChannel`.
+    #[doc(alias = "love.thread.newChannel")]
     pub fn new() -> Channel<T> {
         Channel {
             shared: Arc::new(Shared {
@@ -152,6 +153,7 @@ impl<T> Channel<T> {
     /// Adds `value` to the end of the queue, then waits until it has been
     /// popped, like `Channel:supply`. With a `timeout`, gives up after it
     /// and returns `false`; the value then stays in the queue.
+    #[doc(alias = "Channel:supply")]
     pub fn supply(&self, value: T, timeout: Option<Duration>) -> bool {
         let mut state = self.lock();
         let id = state.push(value);
@@ -175,6 +177,7 @@ impl<T> Channel<T> {
     /// Takes the value at the front of the queue, waiting for one if the
     /// queue is empty, like `Channel:demand`. With a `timeout`, gives up
     /// after it and returns `None`.
+    #[doc(alias = "Channel:demand")]
     pub fn demand(&self, timeout: Option<Duration>) -> Option<T> {
         let state = self.lock();
         let (mut state, ready) = wait_until(&self.shared.changed, state, timeout, |state| {
@@ -209,6 +212,7 @@ impl<T> Channel<T> {
     /// Runs `work` with the channel to itself, like
     /// `Channel:performAtomic`: no other thread pushes or pops until it
     /// returns. Use it to look at a value and take it only if it suits.
+    #[doc(alias = "Channel:performAtomic")]
     pub fn perform_atomic<R>(&self, work: impl FnOnce(&mut Locked<'_, T>) -> R) -> R {
         let mut locked = Locked { state: self.lock() };
         let result = work(&mut locked);
@@ -299,6 +303,7 @@ type Registry = Mutex<HashMap<(String, TypeId), Box<dyn Any + Send>>>;
 /// Channels of different value types are kept apart even when their
 /// names match: `channel::<i32>("log")` and `channel::<String>("log")`
 /// are two channels.
+#[doc(alias = "love.thread.getChannel")]
 pub fn channel<T: Send + 'static>(name: &str) -> Channel<T> {
     static NAMED: OnceLock<Registry> = OnceLock::new();
     let mut named = NAMED

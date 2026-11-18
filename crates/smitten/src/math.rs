@@ -71,6 +71,7 @@ impl RandomGenerator {
     /// The state is a string of hexadecimal digits, so it can be written
     /// to a save file as it is. Like LÖVE's, it is meant to be passed back
     /// unchanged, not read.
+    #[doc(alias = "RandomGenerator:getState")]
     pub fn state(&self) -> String {
         let mut text = format!("0x{:016x}", self.seed);
         for word in self.state {
@@ -274,6 +275,7 @@ pub fn shuffle<T>(items: &mut [T]) {
 /// same output. The pattern has features about one unit across, so scale
 /// the input to taste: `noise(time * 0.5)` drifts slowly. At whole
 /// numbers the result is always 0.5.
+#[doc(alias = "love.math.noise")]
 pub fn noise(x: f32) -> f32 {
     noise3(x, 0.0, 0.0)
 }
@@ -318,6 +320,7 @@ pub fn noise3(x: f32, y: f32, z: f32) -> f32 {
 /// Smooth noise through four dimensions, from 0.0 to 1.0, like
 /// `love.math.noise(x, y, z, w)`. See [`noise`]. Using time as the fourth
 /// input animates a 3D pattern.
+#[doc(alias = "love.math.noise")]
 pub fn noise4(x: f32, y: f32, z: f32, w: f32) -> f32 {
     let floors = [x.floor(), y.floor(), z.floor(), w.floor()];
     let cells = floors.map(|floor| floor as i32);
@@ -442,6 +445,7 @@ pub fn is_convex(points: &[impl Into<Vec2> + Copy]) -> bool {
 ///
 /// Returns nothing for fewer than three corners, or if the polygon is so
 /// tangled that no triangle can be cut from it.
+#[doc(alias = "love.math.triangulate")]
 pub fn triangulate(points: &[impl Into<Vec2> + Copy]) -> Vec<[Vec2; 3]> {
     let points = tuples(points);
     let points = &points[..];

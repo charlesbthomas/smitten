@@ -33,6 +33,7 @@ pub enum AreaSpreadDistribution {
 /// [`ParticleSystem::set_emission_area`].
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EmissionArea {
+    /// The shape of the area.
     pub distribution: AreaSpreadDistribution,
     /// Half the width of the area, or the spread across for
     /// [`AreaSpreadDistribution::Normal`].
@@ -221,6 +222,7 @@ impl ParticleSystem {
     /// Makes a system with the same settings and no particles, in the
     /// stopped state, the equivalent of LÖVE's `ParticleSystem:clone`.
     /// [`Clone`] copies the particles and state as well.
+    #[doc(alias = "ParticleSystem:clone")]
     pub fn clone_stopped(&self) -> ParticleSystem {
         let mut copy = self.clone();
         copy.particles = Vec::with_capacity(self.max.min(4096));

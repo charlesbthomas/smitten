@@ -280,6 +280,7 @@ impl Fixture {
     /// fixture, if it does. A line that starts inside it hits at once,
     /// with a fraction of 0. LÖVE's `Fixture:rayCast`, with the hit point
     /// worked out too.
+    #[doc(alias = "Fixture:rayCast")]
     pub fn ray_cast(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Option<RayHit> {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
@@ -292,10 +293,11 @@ impl Fixture {
         })?;
         Some(RayHit {
             fixture: self.clone(),
-            x: x1 + direction.x * hit.time_of_impact,
-            y: y1 + direction.y * hit.time_of_impact,
-            normal_x: hit.normal.x,
-            normal_y: hit.normal.y,
+            point: Vec2::new(
+                x1 + direction.x * hit.time_of_impact,
+                y1 + direction.y * hit.time_of_impact,
+            ),
+            normal: Vec2::new(hit.normal.x, hit.normal.y),
             fraction: hit.time_of_impact,
         })
     }

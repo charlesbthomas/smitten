@@ -46,6 +46,7 @@ impl ImageData {
     /// For a format without alpha, they read back as opaque black.
     ///
     /// Fails for depth and stencil formats, which only canvases can have.
+    #[doc(alias = "love.image.newImageData")]
     pub fn with_format(
         width: u32,
         height: u32,
@@ -66,6 +67,7 @@ impl ImageData {
     /// rawdata)`. Multi-byte channels are little-endian, and packed
     /// formats such as `rgb10a2` are one little-endian 32-bit number with
     /// red in the lowest bits, as the GPU stores them.
+    #[doc(alias = "love.image.newImageData")]
     pub fn from_raw(
         width: u32,
         height: u32,
@@ -89,6 +91,7 @@ impl ImageData {
     }
 
     /// How the pixels are stored, the equivalent of `ImageData:getFormat`.
+    #[doc(alias = "ImageData:getFormat")]
     pub fn format(&self) -> PixelFormat {
         self.format
     }
@@ -192,6 +195,7 @@ impl ImageData {
 
     /// Replaces every pixel with what `change` returns for its position
     /// and current color, the equivalent of `ImageData:mapPixel`.
+    #[doc(alias = "ImageData:mapPixel")]
     pub fn map_pixels(&mut self, mut change: impl FnMut(u32, u32, Color) -> Color) {
         for y in 0..self.height {
             for x in 0..self.width {
@@ -274,6 +278,7 @@ impl ImageData {
     /// The image as the contents of a file in `format`, the equivalent of
     /// `ImageData:encode`. Works for [`PixelFormat::Rgba8`] images, and
     /// [`PixelFormat::Rgba16`] ones as PNG, as in LÖVE.
+    #[doc(alias = "ImageData:encode")]
     pub fn encode(&self, format: ImageFormat) -> Result<Vec<u8>, ImageError> {
         let color_type = match (self.format, format) {
             (PixelFormat::Rgba8 | PixelFormat::Srgba8, _) => ::image::ExtendedColorType::Rgba8,
@@ -341,7 +346,9 @@ impl ImageData {
 /// `ImageFormat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageFormat {
+    /// PNG, lossless.
     Png,
+    /// TGA, uncompressed.
     Tga,
 }
 
@@ -349,6 +356,7 @@ pub enum ImageFormat {
 /// [`CompressedImageData`](super::CompressedImageData) rather than an
 /// [`ImageData`], the equivalent of `love.image.isCompressed`. Smitten
 /// reads DDS and KTX files.
+#[doc(alias = "love.image.isCompressed")]
 pub fn is_compressed(bytes: &[u8]) -> bool {
     super::compressed::is_compressed_file(bytes)
 }

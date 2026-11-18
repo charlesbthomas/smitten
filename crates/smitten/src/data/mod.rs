@@ -81,6 +81,7 @@ impl CompressedData {
     }
 
     /// The format the bytes are in, like `CompressedData:getFormat`.
+    #[doc(alias = "CompressedData:getFormat")]
     pub fn format(&self) -> CompressedDataFormat {
         self.format
     }
@@ -107,6 +108,7 @@ impl AsRef<[u8]> for CompressedData {
 /// `level` trades speed for size, from 0 (fastest) to 9 (smallest), as in
 /// LÖVE. `None` picks the format's usual level. LZ4 has only one level and
 /// ignores it.
+#[doc(alias = "love.data.compress")]
 pub fn compress(format: CompressedDataFormat, bytes: &[u8], level: Option<u32>) -> CompressedData {
     let level = flate2::Compression::new(level.unwrap_or(6).min(9));
     // Writing into a Vec cannot fail, so neither can these encoders.
@@ -133,6 +135,7 @@ pub fn compress(format: CompressedDataFormat, bytes: &[u8], level: Option<u32>) 
 
 /// Gives back the bytes that [`compress`] was given, like
 /// `love.data.decompress`.
+#[doc(alias = "love.data.decompress")]
 pub fn decompress(data: &CompressedData) -> Result<Vec<u8>, DataError> {
     decompress_bytes(data.format, &data.bytes)
 }
@@ -174,6 +177,7 @@ pub enum EncodeFormat {
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Writes `bytes` as text, like `love.data.encode`.
+#[doc(alias = "love.data.encode")]
 pub fn encode(format: EncodeFormat, bytes: &[u8]) -> String {
     match format {
         EncodeFormat::Hex => bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
@@ -222,6 +226,7 @@ pub fn encode_lines(format: EncodeFormat, bytes: &[u8], line_length: usize) -> S
 /// Reads bytes back from text written by [`encode`], like
 /// `love.data.decode`. Whitespace, such as the line breaks
 /// [`encode_lines`] adds, is skipped. Base64 padding may be left off.
+#[doc(alias = "love.data.decode")]
 pub fn decode(format: EncodeFormat, text: &str) -> Result<Vec<u8>, DataError> {
     let digits = text.bytes().filter(|byte| !byte.is_ascii_whitespace());
     match format {
@@ -291,16 +296,23 @@ pub fn decode(format: EncodeFormat, text: &str) -> Result<Vec<u8>, DataError> {
 /// checking files against known sums and for talking to old services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HashFunction {
+    /// MD5, 16 bytes. Not secure.
     Md5,
+    /// SHA-1, 20 bytes. Not secure.
     Sha1,
+    /// SHA-224, 28 bytes.
     Sha224,
+    /// SHA-256, 32 bytes.
     Sha256,
+    /// SHA-384, 48 bytes.
     Sha384,
+    /// SHA-512, 64 bytes.
     Sha512,
 }
 
 /// The raw digest of `bytes`, like `love.data.hash`. Use
 /// [`encode`] with [`EncodeFormat::Hex`] to get the usual text form.
+#[doc(alias = "love.data.hash")]
 pub fn hash(function: HashFunction, bytes: &[u8]) -> Vec<u8> {
     use sha2::Digest;
     match function {
@@ -351,6 +363,7 @@ impl ByteData {
     }
 
     /// How many bytes there are, like `Data:getSize`.
+    #[doc(alias = "Data:getSize")]
     pub fn size(&self) -> usize {
         self.bytes.len()
     }

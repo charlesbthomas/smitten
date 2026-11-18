@@ -154,8 +154,8 @@ fn ray_casts_find_the_nearest_fixture() {
         .ray_cast((0.0, 0.0), (400.0, 0.0))
         .expect("the ray hits");
     assert_eq!(hit.fixture, near_shape);
-    assert!((hit.x - 90.0).abs() < 0.01 && hit.y.abs() < 0.01);
-    assert!((hit.normal_x + 1.0).abs() < 0.01);
+    assert!((hit.point.x - 90.0).abs() < 0.01 && hit.point.y.abs() < 0.01);
+    assert!((hit.normal.x + 1.0).abs() < 0.01);
     assert!((hit.fraction - 0.225).abs() < 0.001);
 
     assert!(world.ray_cast((0.0, 100.0), (400.0, 100.0)).is_none());
@@ -435,8 +435,16 @@ fn a_contact_says_where_and_how_hard() {
     }
     let contact = landing.expect("the box never landed");
     // Between the bottom of the box and the top of the floor, under the box.
-    assert!((contact.x - 40.0).abs() < 12.0, "x was {}", contact.x);
-    assert!((contact.y - 290.0).abs() < 6.0, "y was {}", contact.y);
+    assert!(
+        (contact.point.x - 40.0).abs() < 12.0,
+        "x was {}",
+        contact.point.x
+    );
+    assert!(
+        (contact.point.y - 290.0).abs() < 6.0,
+        "y was {}",
+        contact.point.y
+    );
     // As hard as it was falling.
     assert!(fall_speed > 100.0);
     assert!(
@@ -447,8 +455,8 @@ fn a_contact_says_where_and_how_hard() {
     // The normal points from the first fixture's body towards the second's.
     let (first, second) = (contact.a.body().unwrap(), contact.b.body().unwrap());
     let towards = second.y() - first.y();
-    assert!(contact.normal.1 * towards > 0.0);
-    assert!(contact.normal.0.abs() < 0.1);
+    assert!(contact.normal.y * towards > 0.0);
+    assert!(contact.normal.x.abs() < 0.1);
 }
 
 #[test]
@@ -763,9 +771,9 @@ fn pre_solve_can_make_a_one_way_platform() {
     world.set_pre_solve(move |contact| {
         counter.set(counter.get() + 1);
         let up = if contact.a == top {
-            contact.normal.1
+            contact.normal.y
         } else {
-            -contact.normal.1
+            -contact.normal.y
         };
         // The normal points from the platform into the other: up, out of
         // its top, is negative y.
@@ -866,7 +874,7 @@ fn ray_cast_all_finds_every_fixture_nearest_first() {
     let hits = world.ray_cast_all((0.0, 0.0), (400.0, 0.0));
     assert_eq!(hits.len(), 2);
     assert_eq!((&hits[0].fixture, &hits[1].fixture), (&near, &far));
-    assert!((hits[0].x - 95.0).abs() < 0.01);
+    assert!((hits[0].point.x - 95.0).abs() < 0.01);
 }
 
 fn close(a: impl Into<Vec2>, b: impl Into<Vec2>) -> bool {
@@ -965,7 +973,7 @@ fn fixtures_ray_cast_and_report_their_mass() {
     let body = world.new_body((100.0, 0.0), BodyType::Dynamic);
     let fixture = body.add_rectangle_at((30.0, 0.0), (30.0, 60.0), 0.0);
     let hit = fixture.ray_cast((0.0, 0.0), (200.0, 0.0)).expect("a hit");
-    assert!((hit.x - 115.0).abs() < 1e-3 && (hit.normal_x + 1.0).abs() < 1e-3);
+    assert!((hit.point.x - 115.0).abs() < 1e-3 && (hit.normal.x + 1.0).abs() < 1e-3);
     assert!(fixture.ray_cast((0.0, 100.0), (200.0, 100.0)).is_none());
 
     let (x, y, mass, inertia) = fixture.mass_data();
@@ -1103,7 +1111,7 @@ fn body_contacts_and_two_point_contacts() {
     // A box flat on the floor touches at both bottom corners.
     let points = &touches[0].points;
     assert_eq!(points.len(), 2, "{points:?}");
-    for &(x, y) in points {
+    for &Vec2 { x, y } in points {
         assert!(
             (y - 500.0).abs() < 1.5 && (x - 400.0).abs() > 15.0,
             "({x}, {y})"

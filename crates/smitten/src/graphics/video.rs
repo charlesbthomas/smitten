@@ -155,6 +155,7 @@ impl Video {
     ///
     /// Any source works, such as a dub in another language. The video's
     /// length becomes the longer of the picture and the new sound.
+    #[doc(alias = "Video:setSource")]
     pub fn set_source(&mut self, source: Option<Source>) -> Option<Source> {
         let position = self.tell_secs();
         let old = std::mem::replace(&mut self.source, source);
@@ -184,6 +185,7 @@ impl Video {
     ///
     /// Let go of it before drawing the video or asking for its image,
     /// which move the stream on and panic while it is held.
+    #[doc(alias = "Video:getStream")]
     pub fn stream(&self) -> Ref<'_, VideoStream> {
         self.stream.borrow()
     }
@@ -283,6 +285,7 @@ impl Video {
     /// [`crate::video`] for how to make one.
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
+    #[doc(alias = "love.graphics.newVideo")]
     pub fn load(path: impl AsRef<Path>) -> Result<Video, VideoError> {
         Video::from_bytes(crate::video::read(path.as_ref())?, true)
     }

@@ -29,6 +29,7 @@ impl FileData {
     /// Reads a whole file into a [`FileData`], the equivalent of
     /// `love.filesystem.newFileData(filename)`. The file is looked up as in
     /// [`super::read`].
+    #[doc(alias = "love.filesystem.newFileData")]
     pub fn load(path: impl AsRef<Path>) -> io::Result<FileData> {
         let path = path.as_ref();
         Ok(FileData::new(super::read(path)?, path))
@@ -39,6 +40,7 @@ impl FileData {
     /// Makes a `FileData` from bytes already in memory and the name they
     /// go by, the equivalent of `love.filesystem.newFileData(contents,
     /// name)`. Nothing is read or written.
+    #[doc(alias = "love.filesystem.newFileData")]
     pub fn new(bytes: impl Into<Vec<u8>>, filename: impl Into<PathBuf>) -> Self {
         Self {
             bytes: bytes.into(),
@@ -48,12 +50,14 @@ impl FileData {
 
     /// The name the data goes by, the equivalent of
     /// `FileData:getFilename`.
+    #[doc(alias = "FileData:getFilename")]
     pub fn filename(&self) -> &Path {
         &self.filename
     }
 
     /// The part of the name after its last dot, without the dot, the
     /// equivalent of `FileData:getExtension`. `None` if there is none.
+    #[doc(alias = "FileData:getExtension")]
     pub fn extension(&self) -> Option<&str> {
         self.filename.extension()?.to_str()
     }

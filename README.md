@@ -18,6 +18,7 @@ impl Game for Hello {
 
     fn draw(&mut self) {
         graphics::clear(Color::rgb(0.1, 0.1, 0.2));
+        graphics::print("Hello from smitten", (40.0, 40.0));
     }
 }
 
@@ -32,8 +33,11 @@ Early. A window (with fullscreen and an icon), the game loop, keyboard, mouse an
 shapes, images, text, the transform stack, canvases, blend modes, the
 scissor, the stencil, particle systems, sprite batches, save files, random numbers and noise, physics, and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
 streamed, positional, with filters and effects, and readable as samples) work, as do custom shaders written in WGSL. Rendering currently
-uses Vulkan only, so macOS is not supported yet. See
-[docs/api-sketch.md](docs/api-sketch.md) for where the API is headed.
+uses Vulkan only, so macOS is not supported yet. Every LÖVE function
+that means something in Rust on the desktop has a smitten equivalent;
+[docs/coming-from-love.md](docs/coming-from-love.md) shows how calls
+translate, and [docs/love-parity.md](docs/love-parity.md) lists what is
+left out on purpose.
 
 ## Layout
 

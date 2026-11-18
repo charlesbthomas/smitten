@@ -145,6 +145,7 @@ impl SoundData {
     /// a sound of that bit depth. Samples are clipped to -1.0 to 1.0.
     ///
     /// Panics if `bit_depth` is not 8 or 16.
+    #[doc(alias = "SoundData:getString")]
     pub fn to_pcm(&self, bit_depth: u8) -> Vec<u8> {
         let clipped = self.samples.iter().map(|sample| sample.clamp(-1.0, 1.0));
         match bit_depth {
@@ -224,6 +225,7 @@ impl SoundData {
     /// `love.sound.newSoundData(path)`.
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
+    #[doc(alias = "love.sound.newSoundData")]
     pub fn load(path: impl AsRef<Path>) -> Result<SoundData, AudioError> {
         let path = path.as_ref();
         let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
@@ -387,6 +389,7 @@ impl Decoder {
     /// samples per channel, such as [`DEFAULT_DECODER_BUFFER_SIZE`].
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
+    #[doc(alias = "love.sound.newDecoder")]
     pub fn load(path: impl AsRef<Path>, buffer_size: usize) -> Result<Decoder, AudioError> {
         let path = path.as_ref();
         let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {

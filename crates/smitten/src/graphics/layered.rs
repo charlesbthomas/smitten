@@ -311,6 +311,7 @@ impl VolumeImage {
     }
 
     /// How many slices deep it is, the equivalent of `Texture:getDepth`.
+    #[doc(alias = "Texture:getDepth")]
     pub fn depth(&self) -> u32 {
         self.inner.layers
     }

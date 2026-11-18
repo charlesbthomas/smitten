@@ -47,6 +47,7 @@ pub fn direction() -> Vec2 {
 ///
 /// Returns `None` if the layout puts a key there that Smitten has no
 /// name for, such as `é`.
+#[doc(alias = "love.keyboard.getKeyFromScancode")]
 pub fn layout_key(key: Key) -> Option<Key> {
     context::with(|ctx| ctx.backend.layout_key(key))
 }
@@ -56,6 +57,7 @@ pub fn layout_key(key: Key) -> Option<Key> {
 /// `love.keyboard.getScancodeFromKey`. The reverse of [`layout_key`].
 ///
 /// Returns `None` if the layout has no such key.
+#[doc(alias = "love.keyboard.getScancodeFromKey")]
 pub fn layout_position(key: Key) -> Option<Key> {
     context::with(|ctx| ctx.backend.layout_position(key))
 }
@@ -78,6 +80,7 @@ pub fn is_layout_down(key: Key) -> bool {
 /// `key_pressed` once. They never affect
 /// [`Game::text_input`](crate::Game::text_input), which always repeats as
 /// the system does.
+#[doc(alias = "love.keyboard.setKeyRepeat")]
 pub fn set_key_repeat(enabled: bool) {
     context::with(|ctx| ctx.input.key_repeat = enabled);
 }
@@ -94,6 +97,7 @@ pub fn has_key_repeat() -> bool {
 ///
 /// Text input is on when the game starts, as in LÖVE on desktop. A game
 /// can turn it off until a text box is selected.
+#[doc(alias = "love.keyboard.setTextInput")]
 pub fn set_text_input(enabled: bool) {
     context::with(|ctx| {
         if let Err(message) = ctx.backend.set_text_input(enabled) {
@@ -106,6 +110,7 @@ pub fn set_text_input(enabled: bool) {
 /// as [`mouse::position`](crate::mouse::position), the equivalent of
 /// `love.keyboard.setTextInput(true, x, y, w, h)`. Input methods put
 /// their window beside it, and screen keyboards try not to cover it.
+#[doc(alias = "love.keyboard.setTextInput")]
 pub fn set_text_input_area(position: impl Into<Vec2>, size: impl Into<Vec2>) {
     let Vec2 { x, y } = position.into();
     let Vec2 {
@@ -132,12 +137,14 @@ pub fn set_text_input_area(position: impl Into<Vec2>, size: impl Into<Vec2>) {
 
 /// Returns whether typed text is being reported, the equivalent of
 /// `love.keyboard.hasTextInput`.
+#[doc(alias = "love.keyboard.hasTextInput")]
 pub fn has_text_input() -> bool {
     context::with(|ctx| ctx.backend.text_input_active())
 }
 
 /// Returns whether the platform has an on-screen keyboard, the equivalent
 /// of `love.keyboard.hasScreenKeyboard`.
+#[doc(alias = "love.keyboard.hasScreenKeyboard")]
 pub fn has_screen_keyboard() -> bool {
     context::with(|ctx| ctx.backend.has_screen_keyboard())
 }

@@ -362,6 +362,7 @@ fn get_int(bytes: &[u8], little: bool, signed: bool) -> Result<i64, DataError> {
 /// assert_eq!(values, [Value::Int(-2), Value::from("hi"), Value::Float(0.5)]);
 /// assert_eq!(next, bytes.len());
 /// ```
+#[doc(alias = "love.data.pack")]
 pub fn pack(format: &str, values: &[Value]) -> Result<Vec<u8>, DataError> {
     let mut parsed = Format::new(format);
     let mut out = Vec::new();
@@ -465,6 +466,7 @@ pub fn pack(format: &str, values: &[Value]) -> Result<Vec<u8>, DataError> {
 /// How many bytes [`pack`] makes with `format`, like
 /// `love.data.getPackedSize`. Formats with `s` or `z` have no fixed size
 /// and are an error.
+#[doc(alias = "love.data.getPackedSize")]
 pub fn packed_size(format: &str) -> Result<usize, DataError> {
     let mut parsed = Format::new(format);
     let mut total: usize = 0;
@@ -481,6 +483,7 @@ pub fn packed_size(format: &str) -> Result<usize, DataError> {
 
 /// Reads values that [`pack`] packed with the same `format`, like
 /// `love.data.unpack`.
+#[doc(alias = "love.data.unpack")]
 pub fn unpack(format: &str, bytes: &[u8]) -> Result<Vec<Value>, DataError> {
     unpack_at(format, bytes, 0).map(|(values, _)| values)
 }
