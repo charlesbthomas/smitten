@@ -1034,10 +1034,18 @@ impl Mesh {
         backend: &mut dyn Backend,
         frame: u64,
         retired: &mut Vec<BufferId>,
+        instances: u32,
     ) -> Result<Option<GpuGeometry>, String> {
         let vertex_count = self.vertex_count();
         for attachment in self.enabled_attachments() {
             let source_count = attachment.source.borrow().count();
+            if attachment.step == VertexStep::PerInstance && source_count < instances as usize {
+                panic!(
+                    "attribute `{}` is attached per instance from a mesh with {source_count} \
+                     vertices, fewer than the {instances} instances drawn",
+                    attachment.attach_name
+                );
+            }
             if attachment.step == VertexStep::PerVertex && source_count < vertex_count {
                 panic!(
                     "attribute `{}` is attached from a mesh with {source_count} vertices, \

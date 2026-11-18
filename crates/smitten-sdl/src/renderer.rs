@@ -2285,7 +2285,7 @@ impl Renderer {
                         SDL_DrawGPUIndexedPrimitives(
                             pass,
                             draw.index_count,
-                            1,
+                            draw.instance_count,
                             draw.first_index,
                             0,
                             0,
@@ -2314,7 +2314,7 @@ impl Renderer {
             .first_index
             .checked_add(draw.index_count)?
             .checked_mul(draw.index_type.size())?;
-        if draw.index_count == 0 || index_end > indices.size {
+        if draw.index_count == 0 || draw.instance_count == 0 || index_end > indices.size {
             return None;
         }
         let mut vertices = Vec::with_capacity(layout.desc.buffers.len());
@@ -2323,11 +2323,11 @@ impl Renderer {
                 .buffers
                 .get(&draw.buffers.get(slot).copied().flatten()?.0)
                 .filter(|buffer| buffer.usage == BufferUsage::Vertex)?;
-            // Every vertex the indices may reach must be there. An
-            // instance buffer only needs the one instance drawn.
+            // Every vertex the indices may reach, and every instance
+            // drawn, must be there.
             let needed = match buffer_layout.step {
                 VertexStep::PerVertex => draw.vertex_count,
-                VertexStep::PerInstance => 1,
+                VertexStep::PerInstance => draw.instance_count,
             };
             if u64::from(needed) * u64::from(buffer_layout.stride) > u64::from(buffer.size) {
                 return None;

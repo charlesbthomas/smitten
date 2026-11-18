@@ -706,7 +706,18 @@ impl GraphicsState {
     }
 
     /// Queues the triangles of `mesh`, placed by `local`.
-    fn push_mesh(&mut self, backend: &mut dyn Backend, mesh: &Mesh, local: &Transform) {
+    /// Queues `instances` copies of `mesh`, placed by `local`. Drawn
+    /// without the GPU's help, as points are, it is drawn once.
+    fn push_mesh(
+        &mut self,
+        backend: &mut dyn Backend,
+        mesh: &Mesh,
+        local: &Transform,
+        instances: u32,
+    ) {
+        if instances == 0 {
+            return;
+        }
         let transform = self.device().then_inner(local);
         let (texture, filter) = match mesh.texture() {
             Some(image) => (Some(image.texture()), image.filter()),
@@ -717,7 +728,7 @@ impl GraphicsState {
         // made here like other shapes.
         if mesh.draw_mode() != MeshDrawMode::Points {
             let mut retired = Vec::new();
-            let uploaded = mesh.upload(backend, self.frame_number, &mut retired);
+            let uploaded = mesh.upload(backend, self.frame_number, &mut retired, instances);
             self.retired_buffers.extend(retired);
             match uploaded {
                 Ok(Some(geometry)) => {
@@ -733,6 +744,7 @@ impl GraphicsState {
                             index_type: geometry.index_type,
                             first_index: 0,
                             index_count: geometry.index_count,
+                            instance_count: instances,
                             transform: transform.gpu_matrix(),
                             tint: color_array(self.color),
                         },
@@ -2122,7 +2134,42 @@ pub fn draw_mesh(mesh: &Mesh, x: f32, y: f32) {
 #[allow(clippy::too_many_arguments)] // Mirrors love.graphics.draw.
 pub fn draw_mesh_ex(mesh: &Mesh, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) {
     let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
-    context::with(|ctx| ctx.gfx.push_mesh(&mut *ctx.backend, mesh, &local));
+    context::with(|ctx| ctx.gfx.push_mesh(&mut *ctx.backend, mesh, &local, 1));
+}
+
+/// Draws `instances` copies of a mesh at once with its origin at
+/// `(x, y)`, as LÖVE's `drawInstanced`. Each copy is drawn in the same
+/// place, so give them something to tell them apart: attributes attached
+/// with [`VertexAttributeStep::PerInstance`] through
+/// [`Mesh::attach_attribute_ex`], which advance once per copy, or
+/// `instance_index` in a [`Shader`]'s `position`, which counts the copies
+/// from 0.
+///
+/// Panics if a per-instance attribute's mesh has fewer vertices than
+/// `instances`. A mesh drawn as [`MeshDrawMode::Points`] is drawn once.
+pub fn draw_instanced(mesh: &Mesh, instances: u32, x: f32, y: f32) {
+    draw_instanced_ex(mesh, instances, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+}
+
+/// [`draw_instanced`] with the full set of LÖVE's `draw` arguments. See
+/// [`draw_ex`].
+#[allow(clippy::too_many_arguments)] // Mirrors love.graphics.drawInstanced.
+pub fn draw_instanced_ex(
+    mesh: &Mesh,
+    instances: u32,
+    x: f32,
+    y: f32,
+    r: f32,
+    sx: f32,
+    sy: f32,
+    ox: f32,
+    oy: f32,
+) {
+    let local = Transform::from_draw_args(x, y, r, sx, sy, ox, oy);
+    context::with(|ctx| {
+        ctx.gfx
+            .push_mesh(&mut *ctx.backend, mesh, &local, instances)
+    });
 }
 
 // ---------------------------------------------------------------------------

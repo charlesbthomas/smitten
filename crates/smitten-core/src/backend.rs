@@ -369,6 +369,9 @@ pub struct MeshDraw {
     pub first_index: u32,
     /// How many indices to draw, a multiple of three.
     pub index_count: u32,
+    /// How many copies of the geometry to draw, at least 1. Each
+    /// per-instance buffer must hold this many instances.
+    pub instance_count: u32,
     /// Places the mesh's coordinates in pixels of the target, as a 4 by 4
     /// matrix in column-major order.
     pub transform: [f32; 16],
