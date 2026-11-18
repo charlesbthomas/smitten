@@ -7,10 +7,9 @@ use smitten_core::{DepthMode, StencilMode};
 use super::{CanvasList, Font, GraphicsState, LineJoin, LineStyle, Shader, Transform};
 use crate::{BlendAlphaMode, BlendMode, Color, CullMode, Filter, VertexWinding};
 
-/// What [`push_ex`](super::push_ex) saves, the equivalent of LÖVE's
-/// `StackType`.
+/// What a push saves, for the matching pop to restore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum StackType {
+pub(crate) enum StackType {
     /// Only the transform, as [`push`](super::push) saves.
     #[default]
     Transform,

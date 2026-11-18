@@ -64,10 +64,10 @@ pub use main_loop::{MainLoop, run_loop};
 pub use math::{Vec2, Vec3};
 pub use result::{Error, Result};
 pub use smitten_core::{
-    BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor, DisplayOrientation,
-    Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput,
-    Key, MessageBoxKind, MouseButton, PixelFormat, Scaling, StencilAction, TouchId, VertexWinding,
-    Wrap,
+    Blend, BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor,
+    DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput,
+    JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton, PixelFormat, Scaling,
+    StencilAction, TouchId, VertexWinding, Wrap,
 };
 
 use std::path::Path;

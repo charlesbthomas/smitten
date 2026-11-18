@@ -46,7 +46,8 @@ use crate::context;
 use smitten_core::{DepthMode, PixelFormat, StencilMode};
 
 use crate::{
-    BlendAlphaMode, BlendMode, Color, CompareMode, CullMode, Filter, StencilAction, VertexWinding,
+    Blend, BlendAlphaMode, BlendMode, Color, CompareMode, CullMode, Filter, StencilAction,
+    VertexWinding,
 };
 use batch::Batch;
 pub(crate) use screen::Screen;
@@ -74,9 +75,9 @@ pub use smitten_core::backend::{
     VertexStep as VertexAttributeStep,
 };
 pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
-pub use state::StackType;
+use state::StackType;
 pub use stats::Stats;
-pub use text::{Align, Font, FontError, Hinting};
+pub use text::{Align, Font, FontError, FontSettings, Hinting};
 pub use text_object::Text;
 pub use transform::Transform;
 #[cfg(feature = "video")]
@@ -961,26 +962,83 @@ fn whole_image(image: &Image) -> Quad {
 // ---------------------------------------------------------------------------
 // Screen
 
-/// Fills the screen, or the active canvas, with `color`, replacing
-/// whatever was there, resets its stencil values to 0 and its depth
-/// values to 1. The scissor does not limit it. See [`clear_ex`] to clear
-/// only some of that.
-pub fn clear(color: Color) {
-    context::with(|ctx| ctx.gfx.batch.clear_target(color));
+/// Clears the screen, or the active canvas, the equivalent of
+/// `love.graphics.clear`. The scissor does not limit it.
+///
+/// A [`Color`] fills the picture with it, replacing whatever was there,
+/// resets the stencil values to 0 and the depth values to 1.
+/// [`ClearValues`] picks which of those to clear and to what.
+///
+/// ```no_run
+/// use smitten::{graphics, Color};
+/// use smitten::graphics::ClearValues;
+///
+/// graphics::clear(Color::BLACK);
+/// // Reset only the stencil, keeping the picture.
+/// graphics::clear(ClearValues::NONE.stencil(0));
+/// ```
+pub fn clear(values: impl Into<ClearValues>) {
+    let ClearValues {
+        color,
+        stencil,
+        depth,
+    } = values.into();
+    context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil, depth));
 }
 
-/// Clears only the parts of the screen, or the active canvas, that are
-/// given, the equivalent of LÖVE's `clear(color, stencil, depth)` and
-/// `clear(false, …)`.
-///
-/// `color` fills the picture, replacing what was there, `stencil` sets
-/// every stencil value and `depth` every depth value, from 0 to 1. `None`
-/// leaves that part as it is, so `clear_ex(None, Some(0), None)` resets
-/// the stencil and keeps the rest. [`clear`] is
-/// `clear_ex(Some(color), Some(0), Some(1.0))`. The scissor does not
-/// limit it.
-pub fn clear_ex(color: Option<Color>, stencil: Option<u8>, depth: Option<f32>) {
-    context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil, depth));
+/// What [`clear`] clears: the picture, the stencil values and the depth
+/// values, each to its own value, or left as they are when `None`. LÖVE's
+/// `clear(color, stencil, depth)` and `clear(false, ...)`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ClearValues {
+    /// The color to fill the picture with.
+    pub color: Option<Color>,
+    /// The value to set every stencil value to.
+    pub stencil: Option<u8>,
+    /// The value to set every depth value to, from 0 to 1.
+    pub depth: Option<f32>,
+}
+
+impl ClearValues {
+    /// Clears nothing, to add to with the other methods.
+    pub const NONE: ClearValues = ClearValues {
+        color: None,
+        stencil: None,
+        depth: None,
+    };
+
+    /// Also fills the picture with `color`.
+    #[must_use]
+    pub fn color(self, color: Color) -> Self {
+        Self {
+            color: Some(color),
+            ..self
+        }
+    }
+
+    /// Also sets every stencil value to `value`.
+    #[must_use]
+    pub fn stencil(self, value: u8) -> Self {
+        Self {
+            stencil: Some(value),
+            ..self
+        }
+    }
+
+    /// Also sets every depth value to `value`, from 0 to 1.
+    #[must_use]
+    pub fn depth(self, value: f32) -> Self {
+        Self {
+            depth: Some(value),
+            ..self
+        }
+    }
+}
+
+impl From<Color> for ClearValues {
+    fn from(color: Color) -> Self {
+        ClearValues::NONE.color(color).stencil(0).depth(1.0)
+    }
 }
 
 /// Fills each canvas being drawn to with its own color, the equivalent of
@@ -1184,7 +1242,7 @@ pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), GraphicsEr
 /// [`PixelFormat::Depth24Stencil8`],
 /// the same size in pixels as what is drawn to and multisampled alike.
 /// Unlike a canvas's own values, it can be shared between canvases,
-/// cleared with [`clear_ex`], and, made readable, sampled afterwards, for
+/// cleared with [`clear`] and [`ClearValues`], and, made readable, sampled afterwards, for
 /// instance as a shadow map. Without a stencil part, stencil drawing and
 /// tests do nothing. [`depth_stencil_canvas`] returns it.
 ///
@@ -1394,7 +1452,7 @@ pub fn save_screenshot(path: impl AsRef<Path>) {
 /// from them. Nothing `draw` draws is visible itself.
 ///
 /// Every pixel has a stencil value from 0 to 255. This first resets them
-/// all to 0, then sets the covered pixels to 1. Use [`stencil_ex`] for
+/// all to 0, then sets the covered pixels to 1. Use [`stencil_with`] for
 /// other values or to build on earlier marks.
 ///
 /// ```no_run
@@ -1411,17 +1469,29 @@ pub fn save_screenshot(path: impl AsRef<Path>) {
 /// The screen and each canvas have their own stencil values. The screen's
 /// are also reset at the start of every frame.
 pub fn stencil(draw: impl FnOnce()) {
-    stencil_ex(StencilAction::Replace, 1, false, draw);
+    stencil_with(StencilWrite::default(), draw);
 }
 
-/// Changes the stencil values of the pixels covered by what `draw` draws.
+/// Changes the stencil values of the pixels covered by what `draw` draws,
+/// as `write` says, the equivalent of LÖVE's
+/// `stencil(fn, action, value, keepvalues)`.
 ///
-/// `action` says how: [`StencilAction::Replace`] sets them to `value`,
-/// while the other actions count up, count down (stopping at 255 and 0,
-/// or wrapping around with the `Wrap` actions) or flip them and ignore
-/// `value`. With `keep_values` the existing values are built on;
-/// otherwise they are all reset to 0 first.
-pub fn stencil_ex(action: StencilAction, value: u8, keep_values: bool, draw: impl FnOnce()) {
+/// ```no_run
+/// use smitten::graphics::{self, DrawMode, StencilWrite};
+/// use smitten::StencilAction;
+///
+/// // Count how many circles cover each pixel.
+/// graphics::stencil_with(
+///     StencilWrite { action: StencilAction::Increment, ..StencilWrite::default() },
+///     || graphics::circle(DrawMode::Fill, (200.0, 200.0), 80.0),
+/// );
+/// ```
+pub fn stencil_with(write: StencilWrite, draw: impl FnOnce()) {
+    let StencilWrite {
+        action,
+        value,
+        keep_values,
+    } = write;
     let previous = context::with(|ctx| {
         let batch = &mut ctx.gfx.batch;
         if !keep_values {
@@ -1434,6 +1504,31 @@ pub fn stencil_ex(action: StencilAction, value: u8, keep_values: bool, draw: imp
     });
     draw();
     context::with(|ctx| (ctx.gfx.batch.stencil, ctx.gfx.batch.stencil_value) = previous);
+}
+
+/// How [`stencil_with`] changes the stencil values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StencilWrite {
+    /// How the values change: [`StencilAction::Replace`] sets them to
+    /// `value`, while the other actions count up, count down (stopping
+    /// at 255 and 0, or wrapping around with the `Wrap` actions) or flip
+    /// them and ignore `value`. Defaults to `Replace`.
+    pub action: StencilAction,
+    /// The value `Replace` sets. Defaults to 1.
+    pub value: u8,
+    /// Whether to build on the existing values instead of resetting them
+    /// all to 0 first. Defaults to `false`.
+    pub keep_values: bool,
+}
+
+impl Default for StencilWrite {
+    fn default() -> Self {
+        StencilWrite {
+            action: StencilAction::Replace,
+            value: 1,
+            keep_values: false,
+        }
+    }
 }
 
 /// Draws only the pixels whose stencil value compares to `value` as
@@ -1514,37 +1609,27 @@ pub fn point_size() -> f32 {
     context::with(|ctx| ctx.gfx.point_size)
 }
 
-/// Sets how what is drawn combines with what is already there.
-///
-/// Colors are taken to be multiplied by their alpha as they are drawn,
-/// except with the modes that only work premultiplied (see
-/// [`BlendMode::default_alpha_mode`]). Use [`set_blend_mode_ex`] to draw
-/// premultiplied colors, such as a canvas, in another mode.
-///
-/// The blend mode stays set until changed, even across frames.
-pub fn set_blend_mode(mode: BlendMode) {
-    set_blend_mode_ex(mode, mode.default_alpha_mode());
-}
-
-/// Sets the blend mode and whether the colors drawn are already
-/// multiplied by their alpha, the equivalent of LÖVE's
-/// `setBlendMode(mode, alphamode)`.
+/// Sets how what is drawn is combined with what is already there, the
+/// equivalent of LÖVE's `setBlendMode`. A [`BlendMode`] on its own uses
+/// its usual alpha mode; [`BlendMode::with_alpha`] chooses another.
 ///
 /// ```no_run
 /// use smitten::{graphics, BlendAlphaMode, BlendMode};
 ///
 /// # let canvas = smitten::graphics::Canvas::new(64, 64).unwrap();
+/// graphics::set_blend_mode(BlendMode::Add);
 /// // Add a canvas full of soft glows onto the screen.
-/// graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied);
+/// graphics::set_blend_mode(BlendMode::Add.with_alpha(BlendAlphaMode::Premultiplied));
 /// graphics::draw(&canvas, (0.0, 0.0));
 /// ```
 ///
 /// Panics for [`BlendMode::Multiply`], [`BlendMode::Lighten`] or
 /// [`BlendMode::Darken`] with [`BlendAlphaMode::AlphaMultiply`], as LÖVE
 /// raises an error: those modes only work premultiplied.
-/// [`BlendMode::Premultiplied`] is always premultiplied whatever `alpha`
-/// says.
-pub fn set_blend_mode_ex(mode: BlendMode, alpha: BlendAlphaMode) {
+/// [`BlendMode::Premultiplied`] is always premultiplied whatever the
+/// alpha mode says.
+pub fn set_blend_mode(blend: impl Into<Blend>) {
+    let Blend { mode, alpha } = blend.into();
     assert!(
         !(mode.needs_premultiplied()
             && mode != BlendMode::Premultiplied
@@ -1557,15 +1642,10 @@ pub fn set_blend_mode_ex(mode: BlendMode, alpha: BlendAlphaMode) {
     });
 }
 
-/// Returns the current blend mode.
-pub fn blend_mode() -> BlendMode {
-    context::with(|ctx| ctx.gfx.batch.blend)
-}
-
 /// Returns the current blend mode and alpha mode, the equivalent of
 /// LÖVE's `getBlendMode`. [`BlendMode::Premultiplied`] comes back as
 /// itself, with [`BlendAlphaMode::Premultiplied`].
-pub fn blend_mode_ex() -> (BlendMode, BlendAlphaMode) {
+pub fn blend_mode() -> Blend {
     context::with(|ctx| {
         let mode = ctx.gfx.batch.blend;
         let alpha = if mode == BlendMode::Premultiplied {
@@ -1573,7 +1653,7 @@ pub fn blend_mode_ex() -> (BlendMode, BlendAlphaMode) {
         } else {
             ctx.gfx.batch.blend_alpha
         };
-        (mode, alpha)
+        mode.with_alpha(alpha)
     })
 }
 
@@ -1862,7 +1942,7 @@ pub const MAX_STACK_DEPTH: usize = 64;
 /// Panics if more than [`MAX_STACK_DEPTH`] pushes are waiting for a
 /// [`pop`], which is almost always a missing `pop` in the game.
 pub fn push() {
-    push_ex(StackType::Transform);
+    push_kind(StackType::Transform);
 }
 
 /// Saves the transform and every other drawing setting so [`pop`] can
@@ -1887,12 +1967,11 @@ pub fn push() {
 /// }
 /// ```
 pub fn push_all() {
-    push_ex(StackType::All);
+    push_kind(StackType::All);
 }
 
-/// Saves what `kind` says, for [`pop`] to restore: [`push`] and
-/// [`push_all`] in one function, as LÖVE's `push(stacktype)`.
-pub fn push_ex(kind: StackType) {
+/// Saves what `kind` says, for [`pop`] to restore.
+fn push_kind(kind: StackType) {
     context::with(|ctx| {
         assert!(
             ctx.gfx.stack.len() < MAX_STACK_DEPTH,
@@ -2310,7 +2389,7 @@ impl Drawable for Text {}
 /// LÖVE's `drawInstanced`. Each copy is drawn in the same place, so give
 /// them something to tell them apart: attributes attached with
 /// [`VertexAttributeStep::PerInstance`] through
-/// [`Mesh::attach_attribute_ex`], which advance once per copy, or
+/// [`Mesh::attach_attribute_with`], which advance once per copy, or
 /// `instance_index` in a [`Shader`]'s `position`, which counts the copies
 /// from 0.
 ///
@@ -2335,19 +2414,18 @@ impl Font {
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
     pub fn load(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
-        Font::load_with(path, size, Hinting::Normal, None)
+        Font::load_with(path, size, FontSettings::default())
     }
 }
 
 impl Font {
     /// Loads a font file with the full set of LÖVE's `newFont` arguments:
-    /// its size, how its outlines are fitted to pixels, and how many pixels
-    /// its glyphs hold for each unit, or `None` to match the screen.
+    /// its size, and how its outlines are fitted to pixels and how sharp
+    /// its glyphs are, as [`FontSettings`] says.
     pub fn load_with(
         path: impl AsRef<Path>,
         size: f32,
-        hinting: Hinting,
-        dpi_scale: Option<f32>,
+        settings: FontSettings,
     ) -> Result<Font, FontError> {
         let path = path.as_ref();
         let is_bmfont = path
@@ -2358,7 +2436,7 @@ impl Font {
         } else {
             let bytes =
                 crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-            Font::from_bytes_ex(&bytes, size, hinting, dpi_scale)?
+            Font::from_bytes_with(&bytes, size, settings)?
         };
         font.watch(path);
         Ok(font)

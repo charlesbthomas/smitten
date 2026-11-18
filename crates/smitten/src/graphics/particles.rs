@@ -30,7 +30,7 @@ pub enum AreaSpreadDistribution {
 }
 
 /// Where new particles appear around the emitter, as set by
-/// [`ParticleSystem::set_emission_area_ex`].
+/// [`ParticleSystem::set_emission_area`].
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EmissionArea {
     pub distribution: AreaSpreadDistribution,
@@ -45,6 +45,28 @@ pub struct EmissionArea {
     /// Whether each particle's direction is turned to point away from the
     /// emitter, so particles burst outwards from the area's center.
     pub relative_direction: bool,
+}
+
+impl EmissionArea {
+    /// Spreads new particles evenly over a box reaching `extent.x` to
+    /// each side of the emitter and `extent.y` above and below it.
+    pub fn uniform(extent: impl Into<Vec2>) -> Self {
+        Self::new(AreaSpreadDistribution::Uniform, extent)
+    }
+
+    /// An area of `distribution`'s shape, whose size `extent` gives as
+    /// [`AreaSpreadDistribution`] describes, not turned, and with
+    /// particles keeping their own direction.
+    pub fn new(distribution: AreaSpreadDistribution, extent: impl Into<Vec2>) -> Self {
+        let Vec2 { x: dx, y: dy } = extent.into();
+        EmissionArea {
+            distribution,
+            dx,
+            dy,
+            angle: 0.0,
+            relative_direction: false,
+        }
+    }
 }
 
 /// Where a new particle goes in the drawing order, the equivalent of
@@ -356,31 +378,14 @@ impl ParticleSystem {
         self.position.into()
     }
 
-    /// Spreads new particles evenly over a box reaching `dx` to each side
-    /// of the position and `dy` above and below it.
-    pub fn set_emission_area(&mut self, delta: impl Into<Vec2>) {
-        let Vec2 { x: dx, y: dy } = delta.into();
-        self.set_emission_area_ex(AreaSpreadDistribution::Uniform, (dx, dy), 0.0, false);
-    }
-
-    /// Sets the area new particles appear in with the full set of LÖVE's
-    /// `setEmissionArea` arguments: its shape, its size, the angle it is
-    /// turned by in radians, and whether particles head away from the
-    /// emitter (see [`EmissionArea`]).
-    pub fn set_emission_area_ex(
-        &mut self,
-        distribution: AreaSpreadDistribution,
-        delta: impl Into<Vec2>,
-        angle: f32,
-        relative_direction: bool,
-    ) {
-        let Vec2 { x: dx, y: dy } = delta.into();
+    /// Sets the area new particles appear in, the equivalent of LÖVE's
+    /// `setEmissionArea`. [`EmissionArea::uniform`] spreads them evenly
+    /// over a box.
+    pub fn set_emission_area(&mut self, area: EmissionArea) {
         self.area = EmissionArea {
-            distribution,
-            dx: dx.abs(),
-            dy: dy.abs(),
-            angle,
-            relative_direction,
+            dx: area.dx.abs(),
+            dy: area.dy.abs(),
+            ..area
         };
     }
 
@@ -1126,7 +1131,11 @@ mod tests {
         particles.set_colors(&[Color::WHITE]);
         particles.set_relative_rotation(true);
         particles.set_insert_mode(ParticleInsertMode::Random);
-        particles.set_emission_area_ex(AreaSpreadDistribution::Ellipse, (-3.0, 4.0), 1.0, true);
+        particles.set_emission_area(EmissionArea {
+            angle: 1.0,
+            relative_direction: true,
+            ..EmissionArea::new(AreaSpreadDistribution::Ellipse, (-3.0, 4.0))
+        });
 
         assert_eq!(particles.emission_rate(), 5.0);
         assert_eq!(particles.emitter_lifetime(), Some(2.0));
@@ -1329,12 +1338,11 @@ mod tests {
         let mut particles = system(100);
         particles.set_particle_lifetime(5.0, 5.0);
         particles.set_speed(10.0, 10.0);
-        particles.set_emission_area_ex(
-            AreaSpreadDistribution::BorderEllipse,
-            (5.0, 5.0),
-            0.0,
-            true,
-        );
+        particles.set_emission_area(EmissionArea {
+            angle: 0.0,
+            relative_direction: true,
+            ..EmissionArea::new(AreaSpreadDistribution::BorderEllipse, (5.0, 5.0))
+        });
         particles.emit(50);
         for particle in &particles.particles {
             // Moving the same way as the particle lies from the center.
@@ -1346,12 +1354,10 @@ mod tests {
     fn radial_acceleration_pushes_away_and_tangential_swirls() {
         let mut particles = system(1);
         particles.set_particle_lifetime(5.0, 5.0);
-        particles.set_emission_area_ex(
+        particles.set_emission_area(EmissionArea::new(
             AreaSpreadDistribution::BorderRectangle,
             (1.0, 0.0),
-            0.0,
-            false,
-        );
+        ));
         particles.set_radial_acceleration(100.0, 100.0);
         particles.emit(1);
         let start = particles.particles[0].x;
@@ -1361,12 +1367,10 @@ mod tests {
 
         let mut swirling = system(1);
         swirling.set_particle_lifetime(5.0, 5.0);
-        swirling.set_emission_area_ex(
+        swirling.set_emission_area(EmissionArea::new(
             AreaSpreadDistribution::BorderRectangle,
             (1.0, 0.0),
-            0.0,
-            false,
-        );
+        ));
         swirling.set_tangential_acceleration(100.0, 100.0);
         swirling.emit(1);
         let x = swirling.particles[0].x;

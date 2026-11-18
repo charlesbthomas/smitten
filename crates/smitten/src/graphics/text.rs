@@ -112,6 +112,17 @@ impl Drop for Inner {
     }
 }
 
+/// Options for making a font, the arguments LÖVE's `newFont` takes after
+/// the size.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FontSettings {
+    /// How outlines are fitted to pixels.
+    pub hinting: Hinting,
+    /// How many pixels the glyphs hold for each unit, or `None` to match
+    /// the screen. Use a higher scale for text that will be enlarged.
+    pub dpi_scale: Option<f32>,
+}
+
 impl Font {
     /// Creates a font from the bytes of a TrueType or OpenType file.
     /// `size` is the height of the font in units.
@@ -119,30 +130,18 @@ impl Font {
     /// Its glyphs are drawn as sharp as the screen, so text stays crisp on
     /// a high-DPI display.
     pub fn from_bytes(bytes: &[u8], size: f32) -> Result<Font, FontError> {
-        Font::with_hinting(bytes, size, Hinting::Normal)
-    }
-
-    /// As [`Font::from_bytes`], with glyphs drawn at `dpi_scale` pixels
-    /// for each unit. Use a higher scale for text that will be enlarged.
-    pub fn with_dpi_scale(bytes: &[u8], size: f32, dpi_scale: f32) -> Result<Font, FontError> {
-        Font::from_bytes_ex(bytes, size, Hinting::Normal, Some(dpi_scale))
-    }
-
-    /// As [`Font::from_bytes`], fitting outlines to pixels as `hinting`
-    /// says.
-    pub fn with_hinting(bytes: &[u8], size: f32, hinting: Hinting) -> Result<Font, FontError> {
-        Font::from_bytes_ex(bytes, size, hinting, None)
+        Font::from_bytes_with(bytes, size, FontSettings::default())
     }
 
     /// Creates a font with the full set of LÖVE's `newFont` arguments:
-    /// its size, its hinting, and how many pixels its glyphs hold for
-    /// each unit, or `None` to match the screen.
-    pub fn from_bytes_ex(
+    /// its size, and how its outlines are fitted to pixels and how sharp
+    /// its glyphs are, as [`FontSettings`] says.
+    pub fn from_bytes_with(
         bytes: &[u8],
         size: f32,
-        hinting: Hinting,
-        dpi_scale: Option<f32>,
+        settings: FontSettings,
     ) -> Result<Font, FontError> {
+        let FontSettings { hinting, dpi_scale } = settings;
         let (filter, scale) =
             context::with(|ctx| (ctx.gfx.default_filter, ctx.gfx.screen.draw_scale()));
         Font::build(bytes, size, filter, dpi_scale.unwrap_or(scale), hinting)

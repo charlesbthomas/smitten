@@ -7,6 +7,7 @@
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use smitten::graphics::EmissionArea;
 use smitten::graphics::{AreaSpreadDistribution, Image, ParticleSystem};
 use smitten::{BlendMode, Color, Config, Game, Key, MouseButton, event, graphics, mouse};
 
@@ -40,7 +41,7 @@ impl Game for Particles {
         let mut fire = ParticleSystem::new(&dot, 600);
         fire.set_emission_rate(220.0);
         fire.set_particle_lifetime(0.4, 0.9);
-        fire.set_emission_area((10.0, 4.0));
+        fire.set_emission_area(EmissionArea::uniform((10.0, 4.0)));
         fire.set_direction(-FRAC_PI_2);
         fire.set_spread(0.6);
         fire.set_speed(60.0, 160.0);
@@ -56,7 +57,7 @@ impl Game for Particles {
         smoke.set_emission_rate(25.0);
         smoke.set_particle_lifetime(2.0, 3.5);
         smoke.set_position((0.0, -40.0));
-        smoke.set_emission_area((8.0, 4.0));
+        smoke.set_emission_area(EmissionArea::uniform((8.0, 4.0)));
         smoke.set_direction(-FRAC_PI_2);
         smoke.set_spread(0.5);
         smoke.set_speed(30.0, 60.0);
@@ -88,12 +89,11 @@ impl Game for Particles {
         swirl.set_position((600.0, 360.0));
         swirl.set_emission_rate(160.0);
         swirl.set_particle_lifetime(1.5, 2.5);
-        swirl.set_emission_area_ex(
-            AreaSpreadDistribution::BorderEllipse,
-            (70.0, 70.0),
-            0.0,
-            true,
-        );
+        swirl.set_emission_area(EmissionArea {
+            angle: 0.0,
+            relative_direction: true,
+            ..EmissionArea::new(AreaSpreadDistribution::BorderEllipse, (70.0, 70.0))
+        });
         swirl.set_direction(FRAC_PI_2);
         swirl.set_speed(40.0, 60.0);
         swirl.set_radial_acceleration(-40.0, -20.0);

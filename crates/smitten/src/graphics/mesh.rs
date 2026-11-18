@@ -753,7 +753,7 @@ impl Mesh {
     /// later changes to `mesh`. `mesh` must have at least as many vertices
     /// as this one when it is drawn.
     pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), GraphicsError> {
-        self.attach_attribute_ex(name, mesh, VertexStep::PerVertex, name)
+        self.attach_attribute_with(name, mesh, VertexStep::PerVertex, name)
     }
 
     /// As [`attach_attribute`](Self::attach_attribute), with LÖVE's other
@@ -761,7 +761,7 @@ impl Mesh {
     /// or with each instance drawn, and `attach_name` is the name shaders
     /// know the attribute by here. Attaching again under the same
     /// `attach_name` replaces it.
-    pub fn attach_attribute_ex(
+    pub fn attach_attribute_with(
         &mut self,
         name: &str,
         mesh: &Mesh,
@@ -886,13 +886,13 @@ impl Mesh {
     /// As [`set_vertex_map`](Self::set_vertex_map), storing the indices on
     /// the GPU as `data_type`, as LÖVE's `setVertexMap(map, datatype)`.
     /// With [`IndexDataType::U16`], indices above 65,535 are skipped.
-    pub fn set_vertex_map_ex(&mut self, map: Option<&[u32]>, data_type: IndexDataType) {
+    pub fn set_vertex_map_with(&mut self, map: Option<&[u32]>, data_type: IndexDataType) {
         self.set_vertex_map(map);
         self.index_type = Some(data_type);
     }
 
     /// How the mesh's indices are stored on the GPU: as asked for with
-    /// [`set_vertex_map_ex`](Self::set_vertex_map_ex), or otherwise 16-bit
+    /// [`set_vertex_map_with`](Self::set_vertex_map_with), or otherwise 16-bit
     /// when the mesh has at most 65,536 vertices, as in LÖVE.
     pub fn index_data_type(&self) -> IndexDataType {
         self.index_type.unwrap_or(if self.vertex_count() <= 65_536 {
@@ -1374,7 +1374,7 @@ mod tests {
     fn small_meshes_use_16_bit_indices_unless_told_otherwise() {
         let mut mesh = Mesh::new(&corners(3), MeshDrawMode::Triangles);
         assert_eq!(mesh.index_data_type(), IndexDataType::U16);
-        mesh.set_vertex_map_ex(Some(&[0, 1, 2]), IndexDataType::U32);
+        mesh.set_vertex_map_with(Some(&[0, 1, 2]), IndexDataType::U32);
         assert_eq!(mesh.index_data_type(), IndexDataType::U32);
         mesh.set_vertex_map(Some(&[0, 1, 2]));
         assert_eq!(mesh.index_data_type(), IndexDataType::U16);
@@ -1397,7 +1397,7 @@ mod tests {
         )
         .unwrap();
         assert!(mesh.attach_attribute("Missing", &offsets).is_err());
-        mesh.attach_attribute_ex(
+        mesh.attach_attribute_with(
             "Offset",
             &offsets,
             VertexStep::PerInstance,

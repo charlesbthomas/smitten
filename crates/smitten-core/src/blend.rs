@@ -3,7 +3,8 @@
 ///
 /// Each mode also has a [`BlendAlphaMode`], which says whether the colors
 /// drawn are already multiplied by their alpha. `set_blend_mode` picks the
-/// usual one for the mode; `set_blend_mode_ex` takes it as well.
+/// usual one for a mode on its own; [`BlendMode::with_alpha`] chooses it.
+/// The two together are a [`Blend`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BlendMode {
     /// Ordinary transparency. The default, as in LÖVE.
@@ -37,6 +38,11 @@ pub enum BlendMode {
 }
 
 impl BlendMode {
+    /// This mode with `alpha` as its alpha mode, for `set_blend_mode`.
+    pub fn with_alpha(self, alpha: BlendAlphaMode) -> Blend {
+        Blend { mode: self, alpha }
+    }
+
     /// Every blend mode, in declaration order.
     pub const ALL: [BlendMode; 9] = [
         BlendMode::Alpha,
@@ -85,6 +91,26 @@ pub enum BlendAlphaMode {
     /// The colors already are, as the contents of a canvas are. Draw a
     /// canvas with see-through parts this way, in any blend mode.
     Premultiplied,
+}
+
+/// A blend mode together with its alpha mode, the pair LÖVE's
+/// `setBlendMode(mode, alphamode)` takes and `getBlendMode` returns.
+///
+/// A [`BlendMode`] converts into one with its
+/// [default alpha mode](BlendMode::default_alpha_mode), and
+/// [`BlendMode::with_alpha`] makes one with another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Blend {
+    /// How colors are combined.
+    pub mode: BlendMode,
+    /// Whether the colors drawn are already multiplied by their alpha.
+    pub alpha: BlendAlphaMode,
+}
+
+impl From<BlendMode> for Blend {
+    fn from(mode: BlendMode) -> Self {
+        mode.with_alpha(mode.default_alpha_mode())
+    }
 }
 
 #[cfg(test)]
