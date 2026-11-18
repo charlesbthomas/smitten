@@ -31,8 +31,13 @@ pub struct RenderTargetDesc {
     /// those of `create_mipmapped_texture` do.
     pub mipmaps: Option<bool>,
     /// Above 1, it is multisampled with as many samples per pixel as the
-    /// GPU allows up to this.
+    /// GPU allows up to this. Only a [`TextureKind::Flat`] target can be.
     pub samples: u32,
+    /// What shape of texture it is.
+    pub kind: TextureKind,
+    /// How many layers an array target has, or how deep a volume target
+    /// is. A cube has 6, and a flat target 1.
+    pub layers: u32,
 }
 
 impl RenderTargetDesc {
@@ -44,8 +49,20 @@ impl RenderTargetDesc {
             format: PixelFormat::Rgba8,
             mipmaps: None,
             samples: 1,
+            kind: TextureKind::Flat,
+            layers: 1,
         }
     }
+}
+
+/// Which part of a render target a pass draws to: one layer of an array
+/// target, one face of a cube (in the order +x, -x, +y, -y, +z, -z), or
+/// one slice of a volume, at one mipmap level. Zero for both is the whole
+/// of a flat target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TargetSlice {
+    pub layer: u32,
+    pub mipmap: u32,
 }
 
 /// Something that happened on the platform since the last poll.
@@ -667,6 +684,9 @@ pub struct Pass {
     /// The colors to fill each of `extra_targets` with first, as `clear`
     /// does for `target`.
     pub extra_clears: [Option<Color>; MAX_TARGETS - 1],
+    /// The part of `target`, then of each of `extra_targets`, drawn to.
+    /// A pass drawn at a mipmap level is that level's size.
+    pub slices: [TargetSlice; MAX_TARGETS],
     /// The value to reset the target's stencil values to first, or `None`
     /// to keep them. Each target has its own stencil values, kept until
     /// cleared.
@@ -952,7 +972,17 @@ pub trait Backend {
     /// format: four bytes a pixel for RGBA8, and laid out as
     /// `create_texture_in` takes them otherwise. This waits for the GPU,
     /// so it is slow.
-    fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String>;
+    fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String> {
+        self.read_texture_slice(texture, TargetSlice::default())
+    }
+
+    /// As [`Backend::read_texture`], for one layer, cube face or volume
+    /// slice of a texture at one mipmap level, which is that level's size.
+    fn read_texture_slice(
+        &mut self,
+        texture: TextureId,
+        slice: TargetSlice,
+    ) -> Result<(u32, u32, Vec<u8>), String>;
 
     /// Monotonic time in nanoseconds.
     fn ticks_ns(&self) -> u64;

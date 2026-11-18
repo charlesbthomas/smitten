@@ -20,7 +20,7 @@ use sdl3_sys::everything::*;
 use smitten_core::backend::{
     AudioFill, Backend, BackendEvent, BufferId, BufferUsage, CompressedFormat, CursorId, Frame,
     RecordingDeviceId, RecordingSink, RenderTargetDesc, RendererInfo, ShaderId, ShaderInfo,
-    TextureId, TextureKind, VertexLayout, VertexLayoutId,
+    TargetSlice, TextureId, TextureKind, VertexLayout, VertexLayoutId,
 };
 use smitten_core::{
     Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
@@ -811,8 +811,12 @@ impl Backend for SdlBackend {
         self.renderer.render_offscreen(frame);
     }
 
-    fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String> {
-        self.renderer.read_texture(texture)
+    fn read_texture_slice(
+        &mut self,
+        texture: TextureId,
+        slice: TargetSlice,
+    ) -> Result<(u32, u32, Vec<u8>), String> {
+        self.renderer.read_texture(texture, slice)
     }
 
     fn ticks_ns(&self) -> u64 {

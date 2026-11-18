@@ -14,8 +14,8 @@ use sdl3_sys::everything::*;
 use smitten_core::backend::{
     BoundTexture, BufferId, BufferUsage, ColorMask, CompressedFormat, DrawCall, Frame,
     IndexDataType, MAX_VERTEX_ATTRIBUTES, MAX_VERTEX_BUFFERS, MeshDraw, Pass, RenderTargetDesc,
-    RendererInfo, Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex, VertexDataType,
-    VertexLayout, VertexLayoutId as MeshVertexLayoutId, VertexStep,
+    RendererInfo, Scissor, ShaderId, ShaderInfo, TargetSlice, TextureId, TextureKind, Vertex,
+    VertexDataType, VertexLayout, VertexLayoutId as MeshVertexLayoutId, VertexStep,
 };
 use smitten_core::{
     BlendAlphaMode, BlendMode, CompareMode, Filter, PixelFormat, StencilAction, StencilMode,
@@ -155,6 +155,9 @@ struct Texture {
     /// How mipmaps are sampled, once the texture has them.
     mipmaps: Option<Mipmaps>,
     kind: TextureKind,
+    /// How many layers an array has, or how deep a volume is: 6 for a
+    /// cube and 1 for a flat texture.
+    layers: u32,
     /// Whether the pixels are compressed, which means they cannot be
     /// replaced.
     compressed: bool,
@@ -437,6 +440,7 @@ impl Renderer {
                 levels,
                 mipmaps,
                 kind: TextureKind::Flat,
+                layers: 1,
                 compressed: false,
                 auto_mipmaps: false,
             },
@@ -584,6 +588,7 @@ impl Renderer {
                 levels: level_count,
                 mipmaps,
                 kind: TextureKind::Flat,
+                layers: 1,
                 compressed: true,
                 auto_mipmaps: false,
             },
@@ -641,6 +646,7 @@ impl Renderer {
                 levels: 1,
                 mipmaps: None,
                 kind,
+                layers: layers.len() as u32,
                 compressed: false,
                 auto_mipmaps: false,
             },
@@ -659,9 +665,25 @@ impl Renderer {
             format,
             mipmaps,
             samples,
+            kind,
+            layers,
         } = desc;
         if width == 0 || height == 0 {
             return Err("a canvas must be at least 1x1 pixels".to_string());
+        }
+        let layers = match kind {
+            TextureKind::Flat => 1,
+            TextureKind::Cube if width != height => {
+                return Err("a cube canvas must be square".to_string());
+            }
+            TextureKind::Cube => 6,
+            TextureKind::Array | TextureKind::Volume if layers == 0 => {
+                return Err("a canvas must have at least one layer".to_string());
+            }
+            TextureKind::Array | TextureKind::Volume => layers,
+        };
+        if kind != TextureKind::Flat && samples > 1 {
+            return Err("only a flat canvas can be multisampled".to_string());
         }
         if format.is_depth() {
             return Err(format!(
@@ -690,12 +712,17 @@ impl Renderer {
             let handle = SDL_CreateGPUTexture(
                 self.device,
                 &SDL_GPUTextureCreateInfo {
-                    r#type: SDL_GPU_TEXTURETYPE_2D,
+                    r#type: match kind {
+                        TextureKind::Flat => SDL_GPU_TEXTURETYPE_2D,
+                        TextureKind::Array => SDL_GPU_TEXTURETYPE_2D_ARRAY,
+                        TextureKind::Cube => SDL_GPU_TEXTURETYPE_CUBE,
+                        TextureKind::Volume => SDL_GPU_TEXTURETYPE_3D,
+                    },
                     format,
                     usage: SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
                     width,
                     height,
-                    layer_count_or_depth: 1,
+                    layer_count_or_depth: layers,
                     num_levels: levels,
                     sample_count: SDL_GPU_SAMPLECOUNT_1,
                     ..Default::default()
@@ -704,18 +731,22 @@ impl Renderer {
             if handle.is_null() {
                 return Err(format!("could not create a canvas: {}", sdl_error()));
             }
-            // New GPU memory holds garbage, so start it out transparent.
+            // New GPU memory holds garbage, so start every layer out
+            // transparent.
             let commands = SDL_AcquireGPUCommandBuffer(self.device);
             if !commands.is_null() {
-                let target = SDL_GPUColorTargetInfo {
-                    texture: handle,
-                    load_op: SDL_GPU_LOADOP_CLEAR,
-                    store_op: SDL_GPU_STOREOP_STORE,
-                    ..Default::default()
-                };
-                let pass = SDL_BeginGPURenderPass(commands, &target, 1, ptr::null());
-                if !pass.is_null() {
-                    SDL_EndGPURenderPass(pass);
+                for layer in 0..layers {
+                    let target = SDL_GPUColorTargetInfo {
+                        texture: handle,
+                        layer_or_depth_plane: layer,
+                        load_op: SDL_GPU_LOADOP_CLEAR,
+                        store_op: SDL_GPU_STOREOP_STORE,
+                        ..Default::default()
+                    };
+                    let pass = SDL_BeginGPURenderPass(commands, &target, 1, ptr::null());
+                    if !pass.is_null() {
+                        SDL_EndGPURenderPass(pass);
+                    }
                 }
                 // The smaller levels start out transparent too.
                 if levels > 1 {
@@ -773,11 +804,12 @@ impl Renderer {
                 msaa,
                 samples,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: mipmap_bytes(format, width, height, levels)
+                bytes: mipmap_bytes(format, width, height, levels) * u64::from(layers)
                     + mipmap_bytes(format, width, height, 1) * u64::from(samples.max(1) - 1),
                 levels,
                 mipmaps: blend,
-                kind: TextureKind::Flat,
+                kind,
+                layers,
                 compressed: false,
                 auto_mipmaps: mipmaps == Some(true),
             },
@@ -1574,16 +1606,31 @@ impl Renderer {
     /// Copies a texture's pixels back from the GPU: four bytes each (red,
     /// green, blue, alpha), in rows from the top. Waits for the GPU to
     /// finish what it was given first.
-    pub fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String> {
+    pub fn read_texture(
+        &mut self,
+        texture: TextureId,
+        slice: TargetSlice,
+    ) -> Result<(u32, u32, Vec<u8>), String> {
         let Some(&source) = self.textures.get(&texture.0) else {
             return Err("the texture no longer exists".to_string());
         };
         if source.compressed || is_depth_format(source.format) {
             return Err("only a color texture can be read back".to_string());
         }
-        let length = source.width as usize
-            * source.height as usize
-            * bytes_per_pixel(source.format) as usize;
+        if slice.layer >= source.layers || slice.mipmap >= source.levels {
+            return Err(format!(
+                "layer {} at mipmap {} does not exist in a texture with {} layers and {} mipmaps",
+                slice.layer, slice.mipmap, source.layers, source.levels
+            ));
+        }
+        let (width, height) = level_size(source.width, source.height, slice.mipmap);
+        // A volume's slices are depths, not layers.
+        let (layer, z) = if source.kind == TextureKind::Volume {
+            (0, slice.layer)
+        } else {
+            (slice.layer, 0)
+        };
+        let length = width as usize * height as usize * bytes_per_pixel(source.format) as usize;
         let size = u32::try_from(length).map_err(|_| "the image is too large".to_string())?;
         // SAFETY: the transfer buffer is `size` bytes, exactly what the
         // texture holds, it is only read once the GPU has filled it, and it
@@ -1612,16 +1659,19 @@ impl Renderer {
                 pass,
                 &SDL_GPUTextureRegion {
                     texture: source.handle,
-                    w: source.width,
-                    h: source.height,
+                    mip_level: slice.mipmap,
+                    layer,
+                    z,
+                    w: width,
+                    h: height,
                     d: 1,
                     ..Default::default()
                 },
                 &SDL_GPUTextureTransferInfo {
                     transfer_buffer: transfer,
                     offset: 0,
-                    pixels_per_row: source.width,
-                    rows_per_layer: source.height,
+                    pixels_per_row: width,
+                    rows_per_layer: height,
                 },
             );
             SDL_EndGPUCopyPass(pass);
@@ -1642,7 +1692,7 @@ impl Renderer {
             ptr::copy_nonoverlapping(mapped.cast::<u8>(), pixels.as_mut_ptr(), length);
             SDL_UnmapGPUTransferBuffer(self.device, transfer);
             SDL_ReleaseGPUTransferBuffer(self.device, transfer);
-            Ok((source.width, source.height, pixels))
+            Ok((width, height, pixels))
         }
     }
 
@@ -1706,14 +1756,18 @@ impl Renderer {
                         screen_height,
                     ),
                     Some(id) => match self.textures.get_mut(&id.0) {
-                        Some(target) if target.is_target => (
-                            target.handle,
-                            target.msaa,
-                            target.stencil,
-                            std::mem::take(&mut target.stencil_fresh),
-                            target.width,
-                            target.height,
-                        ),
+                        Some(target) if target.is_target && slice_fits(target, pass.slices[0]) => {
+                            let (width, height) =
+                                level_size(target.width, target.height, pass.slices[0].mipmap);
+                            (
+                                target.handle,
+                                target.msaa,
+                                target.stencil,
+                                std::mem::take(&mut target.stencil_fresh),
+                                width,
+                                height,
+                            )
+                        }
                         _ => continue,
                     },
                 };
@@ -1726,21 +1780,28 @@ impl Renderer {
                 }
 
                 let mut infos = [SDL_GPUColorTargetInfo::default(); MAX_COLOR_TARGETS];
-                infos[0] = self.color_target_info(texture, msaa, pass.clear);
+                infos[0] = self.color_target_info(texture, msaa, pass.clear, pass.slices[0]);
                 let mut info_count = 1;
                 // The extra targets must match the first, or the pass is
                 // skipped.
                 let mut extras_ok = true;
-                for (id, clear) in pass.extra_targets.iter().zip(pass.extra_clears) {
+                for ((id, clear), slice) in pass
+                    .extra_targets
+                    .iter()
+                    .zip(pass.extra_clears)
+                    .zip(&pass.slices[1..])
+                {
                     let Some(id) = id else { break };
                     match self.textures.get(&id.0) {
                         Some(extra)
                             if extra.is_target
-                                && (extra.width, extra.height) == (width, height)
+                                && slice_fits(extra, *slice)
+                                && level_size(extra.width, extra.height, slice.mipmap)
+                                    == (width, height)
                                 && extra.msaa.is_null() == msaa.is_null() =>
                         {
                             infos[info_count] =
-                                self.color_target_info(extra.handle, extra.msaa, clear);
+                                self.color_target_info(extra.handle, extra.msaa, clear, *slice);
                             info_count += 1;
                         }
                         _ => extras_ok = false,
@@ -1821,10 +1882,15 @@ impl Renderer {
         texture: *mut SDL_GPUTexture,
         msaa: *mut SDL_GPUTexture,
         clear: Option<smitten_core::Color>,
+        slice: TargetSlice,
     ) -> SDL_GPUColorTargetInfo {
         let mut info = if msaa.is_null() {
             SDL_GPUColorTargetInfo {
                 texture,
+                // A layer of an array, a face of a cube, or a depth of a
+                // volume.
+                layer_or_depth_plane: slice.layer,
+                mip_level: slice.mipmap,
                 load_op: SDL_GPU_LOADOP_LOAD,
                 store_op: SDL_GPU_STOREOP_STORE,
                 ..Default::default()
@@ -2863,6 +2929,11 @@ fn compressed_srgb_format(format: CompressedFormat) -> Option<SDL_GPUTextureForm
         CompressedFormat::Bc7 => Some(SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB),
         CompressedFormat::Bc4 | CompressedFormat::Bc5 => None,
     }
+}
+
+/// Whether `slice` names a layer and mipmap level that `texture` has.
+fn slice_fits(texture: &Texture, slice: TargetSlice) -> bool {
+    slice.layer < texture.layers && slice.mipmap < texture.levels
 }
 
 /// The SDL format for a pixel format.
