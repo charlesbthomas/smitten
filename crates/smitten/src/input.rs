@@ -19,6 +19,9 @@ pub(crate) struct JoystickState {
     pub raw_buttons: Vec<bool>,
     pub raw_axes: Vec<f32>,
     pub hats: Vec<JoystickHat>,
+    /// The rumble last asked for: left and right strengths, and when it
+    /// ends, in backend ticks.
+    pub vibration: (f32, f32, u64),
 }
 
 impl JoystickState {
@@ -31,6 +34,7 @@ impl JoystickState {
             info,
             buttons: HashSet::new(),
             axes: [0.0; GamepadAxis::ALL.len()],
+            vibration: (0.0, 0.0, 0),
         }
     }
 }
@@ -100,7 +104,7 @@ impl InputState {
         self.touches.iter().find(|touch| touch.id == id)
     }
 
-    fn joystick_mut(&mut self, id: JoystickId) -> Option<&mut JoystickState> {
+    pub fn joystick_mut(&mut self, id: JoystickId) -> Option<&mut JoystickState> {
         self.joysticks.iter_mut().find(|joystick| joystick.id == id)
     }
 
