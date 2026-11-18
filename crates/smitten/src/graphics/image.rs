@@ -10,7 +10,7 @@ use crate::context;
 use crate::reload::Asset;
 
 use super::CompressedImageData;
-use super::compressed::is_dds;
+use super::compressed::is_compressed_file;
 use super::stats::{Counted, Kind};
 
 /// A picture that can be drawn, the equivalent of LÖVE's `Image`.
@@ -517,7 +517,7 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
         source,
     })?;
     // A compressed file is used as it is, mipmaps and all.
-    let image = if is_dds(&bytes) {
+    let image = if is_compressed_file(&bytes) {
         let data = CompressedImageData::from_bytes(&bytes).map_err(|error| match error {
             ImageError::Invalid(message) => ImageError::Decode {
                 path: path.to_path_buf(),
@@ -549,7 +549,7 @@ pub(crate) fn load(path: &Path, settings: ImageSettings) -> Result<Image, ImageE
 /// Replaces an image's pixels with a newer version of its file, which
 /// may be compressed.
 pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> Result<(), String> {
-    if is_dds(bytes) {
+    if is_compressed_file(bytes) {
         let data = CompressedImageData::from_bytes(bytes).map_err(|error| error.to_string())?;
         let (width, height) = data.dimensions();
         let texture = backend.create_compressed_texture(

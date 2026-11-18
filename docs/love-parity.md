@@ -48,7 +48,7 @@ GPU features, such as depth canvases.
 
 | Item | Why |
 |---|---|
-| KTX, ASTC and ETC textures | Only DDS files load. BC6H and PVRTC are missing too (`CompressedFormat` has BC1 to BC5 and BC7). |
+| ETC and PVRTC textures | SDL's GPU API has no ETC or PVRTC formats, so such DDS and KTX files are refused with that reason. KTX 2 files are refused too; KTX 1 files load. |
 | `drawLayer` with a custom shader | The array-texture pipeline has its own shader. |
 | macOS and web | The renderer is Vulkan only. |
 | Lua-only filesystem functions | `load`, `getRequirePath`, `setRequirePath`, `getCRequirePath`, `setCRequirePath`, `init`, `setSource` and the like have no Rust meaning. |
