@@ -255,6 +255,9 @@ pub(crate) struct SearchPath {
     last: Vec<Mount>,
     /// Whether symbolic links on disk are followed.
     pub follow_symlinks: bool,
+    /// Whether the asset directory is looked at before the save
+    /// directory, like `t.appendidentity`.
+    pub assets_first: bool,
 }
 
 impl Default for SearchPath {
@@ -263,6 +266,7 @@ impl Default for SearchPath {
             first: Vec::new(),
             last: Vec::new(),
             follow_symlinks: true,
+            assets_first: false,
         }
     }
 }
@@ -277,6 +281,13 @@ pub(crate) fn symlink_refused() -> io::Error {
 }
 
 impl SearchPath {
+    pub fn new(assets_first: bool) -> Self {
+        Self {
+            assets_first,
+            ..Self::default()
+        }
+    }
+
     fn places<'a>(&'a self, save: Option<&'a Path>, assets: &'a Path) -> Vec<Place<'a>> {
         let first = self
             .first
@@ -288,9 +299,14 @@ impl SearchPath {
             .iter()
             .enumerate()
             .map(|(index, mount)| Place::Mount(Slot::Last(index), mount));
+        let (before, after) = if self.assets_first {
+            (Some(assets), save)
+        } else {
+            (save, Some(assets))
+        };
         first
-            .chain(save.map(Place::Disk))
-            .chain([Place::Disk(assets)])
+            .chain(before.map(Place::Disk))
+            .chain(after.map(Place::Disk))
             .chain(last)
             .collect()
     }
@@ -510,6 +526,29 @@ mod tests {
         assert_eq!(search.list(None, &assets, &parts("packs")), ["music"]);
         let found = search.find(None, &assets, &parts("packs")).unwrap();
         assert_eq!(found.info.kind, FileType::Directory);
+    }
+
+    #[test]
+    fn appending_the_identity_puts_shipped_files_first() {
+        let dir = TempDir::new("append-identity");
+        let assets = dir.0.join("assets");
+        let save = dir.0.join("save");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::create_dir_all(&save).unwrap();
+        std::fs::write(assets.join("level.txt"), "shipped").unwrap();
+        std::fs::write(save.join("level.txt"), "saved").unwrap();
+        std::fs::write(save.join("progress.txt"), "3").unwrap();
+
+        let mut search = SearchPath::default();
+        let read_from = |search: &mut SearchPath, path: &str| {
+            let found = search.find(Some(&save), &assets, &parts(path)).unwrap();
+            String::from_utf8(search.read(&found).unwrap()).unwrap()
+        };
+        assert_eq!(read_from(&mut search, "level.txt"), "saved");
+        search.assets_first = true;
+        assert_eq!(read_from(&mut search, "level.txt"), "shipped");
+        // A file only in the save directory is still found.
+        assert_eq!(read_from(&mut search, "progress.txt"), "3");
     }
 
     #[test]

@@ -88,6 +88,8 @@ fn main() {
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
+| `t.appendidentity` | `Config::append_identity` | Searches shipped files before saved ones. |
+| `t.console` | `Config::console` | Opens a console on Windows. |
 | `love.graphics.newCanvas(w, h)` | `graphics::new_canvas(w, h)` | A `Canvas` can be passed wherever an `&Image` is expected. |
 | `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
 | `love.graphics.newCanvas(w, h, {msaa = 4})` / `canvas:getMSAA()` | `Canvas::with_msaa(w, h, 4)` / `canvas.msaa()` | The GPU may give fewer samples. |

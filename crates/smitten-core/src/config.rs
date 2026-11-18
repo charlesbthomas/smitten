@@ -3,6 +3,10 @@ use std::path::PathBuf;
 use crate::FullscreenType;
 
 /// Startup settings, the equivalent of LÖVE's `conf.lua`.
+///
+/// LÖVE's `t.modules.*` switches are Cargo features of the `smitten`
+/// crate here: turn off `physics` or `video` to leave those modules out
+/// of the build. The other modules are small enough to always include.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Window title.
@@ -57,6 +61,16 @@ pub struct Config {
     /// Names the game's save directory, like `t.identity` in LÖVE's
     /// `conf.lua`. When `None`, the executable's name is used.
     pub identity: Option<String>,
+    /// Whether the asset directory is searched before the save directory,
+    /// like `t.appendidentity`. Off by default, so a file the game saved
+    /// overrides a shipped file with the same name.
+    pub append_identity: bool,
+    /// Whether to open a console window for the game's printed output on
+    /// Windows, like `t.console`. It matters for a game built with
+    /// `#![windows_subsystem = "windows"]`, which otherwise has nowhere to
+    /// print. When the game was started from a console, that console is
+    /// used instead of a new one. Other platforms ignore it.
+    pub console: bool,
     /// Whether presentation waits for the display's vertical sync.
     pub vsync: bool,
     /// How many samples each pixel of the screen holds, to smooth the
@@ -89,6 +103,8 @@ impl Default for Config {
             centered: true,
             icon: None,
             identity: None,
+            append_identity: false,
+            console: false,
             vsync: true,
             msaa: 0,
             hot_reload: cfg!(debug_assertions),
