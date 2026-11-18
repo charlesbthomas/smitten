@@ -18,8 +18,9 @@ use std::ptr;
 use sdl3_sys::everything::*;
 
 use smitten_core::backend::{
-    AudioFill, Backend, BackendEvent, CompressedFormat, CursorId, Frame, RecordingDeviceId,
-    RecordingSink, RenderTargetDesc, RendererInfo, ShaderId, ShaderInfo, TextureId, TextureKind,
+    AudioFill, Backend, BackendEvent, BufferId, BufferUsage, CompressedFormat, CursorId, Frame,
+    RecordingDeviceId, RecordingSink, RenderTargetDesc, RendererInfo, ShaderId, ShaderInfo,
+    TextureId, TextureKind,
 };
 use smitten_core::{
     Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
@@ -741,6 +742,18 @@ impl Backend for SdlBackend {
 
     fn texture_memory(&self) -> u64 {
         self.renderer.texture_memory()
+    }
+
+    fn create_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Result<BufferId, String> {
+        self.renderer.create_buffer(usage, data)
+    }
+
+    fn update_buffer(&mut self, buffer: BufferId, offset: u32, data: &[u8]) -> Result<(), String> {
+        self.renderer.update_buffer(buffer, offset, data)
+    }
+
+    fn destroy_buffer(&mut self, buffer: BufferId) {
+        self.renderer.destroy_buffer(buffer);
     }
 
     fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
