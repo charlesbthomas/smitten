@@ -5,7 +5,9 @@ use smitten_core::backend::{
     BoundTexture, ColorMask, DrawCall, MAX_TARGETS, MeshDraw, Pass, Scissor, ShaderId, TargetSlice,
     TextureId, Vertex,
 };
-use smitten_core::{BlendAlphaMode, BlendMode, Color, Filter, StencilMode, VertexWinding};
+use smitten_core::{
+    BlendAlphaMode, BlendMode, Color, DepthMode, Filter, StencilMode, VertexWinding,
+};
 
 use super::stats::FrameCounts;
 
@@ -52,6 +54,7 @@ impl Targets {
             extra_clears: [None; MAX_TARGETS - 1],
             slices: self.slices,
             clear_stencil: None,
+            clear_depth: None,
             first_call,
             call_count: 0,
         }
@@ -77,6 +80,7 @@ pub(crate) struct Batch {
     pub stencil: StencilMode,
     pub stencil_value: u8,
     pub color_mask: ColorMask,
+    pub depth: DepthMode,
     pub wireframe: bool,
     /// The on-screen winding of triangles to leave out.
     pub cull: Option<VertexWinding>,
@@ -153,26 +157,41 @@ impl Batch {
     }
 
     /// Fills the current targets with `color`, replacing their contents,
-    /// and resets the stencil values to zero.
+    /// resets the stencil values to zero and the depth values to 1.
     pub fn clear_target(&mut self, color: Color) {
-        self.clear_target_ex(Some(color), Some(0));
+        self.clear_target_ex(Some(color), Some(0), Some(1.0));
     }
 
-    /// Fills the current targets with `color` and sets the stencil values
-    /// to `stencil`, each only if given.
-    pub fn clear_target_ex(&mut self, color: Option<Color>, stencil: Option<u8>) {
-        self.clear_targets([color; MAX_TARGETS], stencil);
+    /// Fills the current targets with `color`, sets the stencil values to
+    /// `stencil` and the depth values to `depth`, each only if given.
+    pub fn clear_target_ex(
+        &mut self,
+        color: Option<Color>,
+        stencil: Option<u8>,
+        depth: Option<f32>,
+    ) {
+        self.clear_targets([color; MAX_TARGETS], stencil, depth);
     }
 
-    /// Fills each current target with its own color, and sets the
-    /// stencil values to `stencil`, each only if given. `colors[0]` is
-    /// for the first target.
-    pub fn clear_targets(&mut self, colors: [Option<Color>; MAX_TARGETS], stencil: Option<u8>) {
+    /// Fills each current target with its own color, sets the stencil
+    /// values to `stencil` and the depth values to `depth`, each only if
+    /// given. `colors[0]` is for the first target.
+    pub fn clear_targets(
+        &mut self,
+        colors: [Option<Color>; MAX_TARGETS],
+        stencil: Option<u8>,
+        depth: Option<f32>,
+    ) {
+        let depth = depth.map(|depth| depth.clamp(0.0, 1.0));
         let in_use = 1 + self.target.extra.iter().flatten().count();
         let colors_used = &colors[..in_use];
         if colors_used.iter().all(Option::is_none) {
-            if let Some(value) = stencil {
-                self.clear_stencil_to(value);
+            if stencil.is_some() || depth.is_some() {
+                self.passes.push(Pass {
+                    clear_stencil: stencil,
+                    clear_depth: depth,
+                    ..self.target.pass(self.calls.len() as u32)
+                });
             }
             return;
         }
@@ -195,6 +214,7 @@ impl Batch {
             clear: colors[0],
             extra_clears,
             clear_stencil: stencil,
+            clear_depth: depth,
             ..self.target.pass(self.calls.len() as u32)
         });
     }
@@ -232,6 +252,7 @@ impl Batch {
             self.shader.take(),
             std::mem::take(&mut self.color_mask),
             std::mem::take(&mut self.wireframe),
+            std::mem::take(&mut self.depth),
         );
         self.push(texture, filter, triangles);
         (
@@ -242,6 +263,7 @@ impl Batch {
             self.shader,
             self.color_mask,
             self.wireframe,
+            self.depth,
         ) = saved;
     }
 
@@ -295,6 +317,7 @@ impl Batch {
                     && last.stencil == self.stencil
                     && last.stencil_value == self.stencil_value
                     && last.color_mask == self.color_mask
+                    && last.depth == self.depth
                     && last.wireframe == self.wireframe
                     && last.cull == self.cull
                     && last.shader == self.shader
@@ -314,6 +337,7 @@ impl Batch {
                 stencil: self.stencil,
                 stencil_value: self.stencil_value,
                 color_mask: self.color_mask,
+                depth: self.depth,
                 wireframe: self.wireframe,
                 cull: self.cull,
                 shader: self.shader,
@@ -355,6 +379,7 @@ impl Batch {
             stencil: self.stencil,
             stencil_value: self.stencil_value,
             color_mask: self.color_mask,
+            depth: self.depth,
             wireframe: self.wireframe,
             cull: self.cull,
             shader: self.shader,
@@ -821,5 +846,41 @@ mod tests {
         let mut batch = Batch::default();
         batch.set_target(Some(TextureId(7)));
         batch.push(Some(TextureId(7)), Filter::Linear, &TRIANGLE);
+    }
+
+    #[test]
+    fn a_depth_mode_starts_a_new_call_that_plain_draws_ignore() {
+        let mut batch = Batch::default();
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.depth = DepthMode {
+            compare: smitten_core::CompareMode::Less,
+            write: true,
+        };
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.push_plain(None, Filter::Linear, BlendMode::Alpha, &TRIANGLE);
+
+        let depths: Vec<bool> = batch
+            .calls
+            .iter()
+            .map(|call| call.depth.is_used())
+            .collect();
+        assert_eq!(depths, [false, true, false]);
+        assert!(batch.depth.write);
+    }
+
+    #[test]
+    fn clearing_resets_depth_and_can_clear_it_alone() {
+        let mut batch = Batch::default();
+        batch.clear_target(Color::BLACK);
+        assert_eq!(batch.passes[0].clear_depth, Some(1.0));
+        batch.push(None, Filter::Linear, &TRIANGLE);
+        batch.clear_target_ex(None, None, Some(2.0));
+        batch.clear_target_ex(None, None, None);
+
+        assert_eq!(batch.passes.len(), 2);
+        // Out-of-range depths are clamped, and the picture is kept.
+        assert_eq!(batch.passes[1].clear_depth, Some(1.0));
+        assert_eq!(batch.passes[1].clear, None);
+        assert_eq!(batch.passes[1].clear_stencil, None);
     }
 }

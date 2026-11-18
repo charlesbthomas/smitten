@@ -12,9 +12,10 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, FullscreenType,
-    GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind,
-    MouseButton, PixelFormat, PowerInfo, StencilMode, TouchId, VertexWinding, WindowState, Wrap,
+    BlendAlphaMode, BlendMode, Color, Cursor, DepthMode, DisplayOrientation, Filter,
+    FullscreenType, GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key,
+    MessageBoxKind, MouseButton, PixelFormat, PowerInfo, StencilMode, TouchId, VertexWinding,
+    WindowState, Wrap,
 };
 
 /// What [`Backend::create_render_target_with`] makes.
@@ -640,6 +641,8 @@ pub struct DrawCall {
     pub stencil_value: u8,
     /// The color channels the draw may change.
     pub color_mask: ColorMask,
+    /// How the draw tests and writes depth.
+    pub depth: DepthMode,
     /// Whether to draw only the edges of the triangles, one pixel wide,
     /// for debugging.
     pub wireframe: bool,
@@ -694,6 +697,10 @@ pub struct Pass {
     /// to keep them. Each target has its own stencil values, kept until
     /// cleared.
     pub clear_stencil: Option<u8>,
+    /// The depth to reset the target's depth values to first, from 0 to
+    /// 1, or `None` to keep them. Like stencil values, each target has its
+    /// own, kept until cleared.
+    pub clear_depth: Option<f32>,
     /// Index into [`Frame::calls`] of the first call.
     pub first_call: u32,
     pub call_count: u32,
