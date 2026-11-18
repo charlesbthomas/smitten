@@ -449,6 +449,11 @@ pub trait Backend {
     /// Returns the next pending event, if any, without blocking.
     fn poll_event(&mut self) -> Option<BackendEvent>;
 
+    /// Waits for the next event and returns it. `timeout_ms` limits the
+    /// wait, and `None` waits as long as it takes. Returns `None` if the
+    /// time ran out first.
+    fn wait_event(&mut self, timeout_ms: Option<u32>) -> Option<BackendEvent>;
+
     /// Uploads an image and returns a handle to it.
     ///
     /// `rgba` holds `width * height` pixels, four bytes each, in rows from

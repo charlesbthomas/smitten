@@ -235,6 +235,34 @@ impl Backend for SdlBackend {
         }
     }
 
+    fn wait_event(&mut self, timeout_ms: Option<u32>) -> Option<BackendEvent> {
+        // SAFETY: SDL_GetTicks is a plain query.
+        let deadline = timeout_ms.map(|ms| unsafe { SDL_GetTicks() } + u64::from(ms));
+        // SAFETY: SDL_WaitEventTimeout fills the event it is given.
+        unsafe {
+            let mut event: SDL_Event = std::mem::zeroed();
+            loop {
+                let wait = match deadline {
+                    None => -1,
+                    Some(deadline) => {
+                        let left = deadline.saturating_sub(SDL_GetTicks());
+                        left.min(i32::MAX as u64) as i32
+                    }
+                };
+                if !SDL_WaitEventTimeout(&mut event, wait) {
+                    return None;
+                }
+                if let Some(translated) = self.translate(&event) {
+                    return Some(translated);
+                }
+                // Not surfaced; wait on for one that is, unless time is up.
+                if deadline.is_some_and(|deadline| SDL_GetTicks() >= deadline) {
+                    return None;
+                }
+            }
+        }
+    }
+
     fn start_audio(&mut self, fill: AudioFill) -> Result<(), String> {
         if self.audio.is_some() {
             return Err("audio is already running".to_string());
