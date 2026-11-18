@@ -1,5 +1,8 @@
 # Plan for the rest of LÖVE parity
 
+> **Done.** Every workstream below has landed, the last in #90 to #94.
+> [love-parity.md](love-parity.md) lists what is left out on purpose.
+
 This plan covers everything still listed in [love-parity.md](love-parity.md)
 as of `main` at 6efed54, except what that file lists as left out on
 purpose. It groups the gaps into workstreams, puts them in dependency
