@@ -304,6 +304,25 @@ pub struct PreSolve {
     /// fixtures' own. Changes last for this update only.
     pub friction: f32,
     pub restitution: f32,
+    /// What `friction` and `restitution` started as.
+    fixture_friction: f32,
+    fixture_restitution: f32,
+}
+
+impl PreSolve {
+    /// Puts [`PreSolve::friction`] back to the value mixed from the two
+    /// fixtures, the equivalent of `Contact:resetFriction`. Changes only
+    /// ever last one update here, so this undoes one made earlier in the
+    /// same callback.
+    pub fn reset_friction(&mut self) {
+        self.friction = self.fixture_friction;
+    }
+
+    /// Puts [`PreSolve::restitution`] back to the value mixed from the
+    /// two fixtures, the equivalent of `Contact:resetRestitution`.
+    pub fn reset_restitution(&mut self) {
+        self.restitution = self.fixture_restitution;
+    }
 }
 
 /// Two fixtures about to be checked for a collision, handed to the
@@ -422,6 +441,8 @@ impl PhysicsHooks for Hooks {
                 enabled: true,
                 friction: *manifold.friction,
                 restitution: *manifold.restitution,
+                fixture_friction: *manifold.friction,
+                fixture_restitution: *manifold.restitution,
             };
             callback(&mut contact);
             if contact.enabled {
