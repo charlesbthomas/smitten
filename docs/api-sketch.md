@@ -160,7 +160,7 @@ fn main() {
 | `body:getInertia()` | `body.inertia()` | |
 | *(tables keyed by body)* | `HashMap<Body, T>` | `Body`, `Fixture` and `Joint` are `Eq + Hash`. |
 | `world:rayCast(...)` / `queryBoundingBox` | `world.ray_cast(x1, y1, x2, y2)` / `world.fixtures_at(x, y)` | `ray_cast_all` for every hit, nearest first. |
-| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring, distance, prismatic, wheel, mouse, friction and motor joints. Gear and pulley joints are missing. |
+| `love.physics.newRevoluteJoint(a, b, x, y)` | `world.new_revolute_joint(&a, &b, x, y, collide)` | Also weld, rope, spring, distance, prismatic, wheel, mouse, friction, motor, gear and pulley joints. |
 | `love.graphics.ellipse("fill", x, y, rx, ry)` | `graphics::ellipse(DrawMode::Fill, x, y, rx, ry)` | |
 | `love.graphics.arc("line", "open", x, y, r, a1, a2)` | `graphics::arc(DrawMode::Line, ArcType::Open, x, y, r, a1, a2)` | `Pie`, `Open` or `Closed`. |
 | `love.graphics.rectangle("fill", x, y, w, h, rx, ry)` | `graphics::rounded_rectangle(DrawMode::Fill, x, y, w, h, rx, ry)` | |
