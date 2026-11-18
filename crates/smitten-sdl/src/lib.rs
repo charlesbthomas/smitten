@@ -792,7 +792,7 @@ impl Backend for SdlBackend {
     }
 
     fn validate_shader(&self, source: &str) -> Result<(), String> {
-        shader::compile(source).map(|_| ())
+        shader::check(source)
     }
 
     fn renderer_info(&self) -> RendererInfo {

@@ -14,11 +14,10 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 25 of LÖVE's 900 functions and methods are still missing, plus 9
+About 24 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **97% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
-GPU features: depth buffers, instancing, custom vertex formats, vertex
-shaders and canvas formats.
+GPU features: depth buffers, instancing and canvas formats.
 
 | Module | LÖVE functions and methods | Missing | Coverage |
 |---|---|---|---|
@@ -27,7 +26,7 @@ shaders and canvas formats.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 24 | 91% |
+| graphics | 268 | 23 | 91% |
 | image | 17 | 0 | 100% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
@@ -63,12 +62,6 @@ shaders and canvas formats.
   canvases). Color formats, `readable` and MSAA are done.
 - `Texture:getTextureType`, `getDepth`, `getDepthSampleMode`,
   `setDepthSampleMode`.
-
-### Shader
-
-- A vertex stage (LÖVE's `position` function). Smitten shaders are
-  fragment-only.
-- `Shader:getWarnings`. `validate_shader` exists.
 
 ### SpriteBatch
 

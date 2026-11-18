@@ -95,6 +95,60 @@ use crate::{Color, context};
 /// A canvas past the last member of `Outputs` gets transparent black, and
 /// a member past the last canvas is left out.
 ///
+/// # Vertex shaders
+///
+/// A shader can also move the vertices of what it draws by defining
+/// `position`, the equivalent of LÖVE's vertex shader. It is given the
+/// matrix that takes the vertex to the screen and the vertex's position,
+/// and returns where on the screen it goes:
+///
+/// ```wgsl
+/// struct Params { time: f32 }
+///
+/// fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+///     let wave = sin(params.time + vertex_position.x * 0.05) * 4.0;
+///     return transform_projection * (vertex_position + vec4<f32>(0.0, wave, 0.0, 0.0));
+/// }
+/// ```
+///
+/// A shader with `position` and no `effect` colors pixels as the built-in
+/// shader does. `params` and the shader's own textures can be read in both
+/// functions, but `position` must sample with `textureSampleLevel`.
+///
+/// A [`Mesh`](super::Mesh) is given in its own coordinates, with the
+/// drawing transform in `transform_projection`. Everything else, such as
+/// images, shapes and text, is placed on the CPU first, so its
+/// `vertex_position` is already in pixels of the target and
+/// `transform_projection` only takes pixels to the screen.
+///
+/// To read a mesh's own vertex attributes, declare a struct named
+/// `Attributes` and read it through `attributes`. Each member is filled
+/// from the attribute of the same name, such as `VertexColor` or one
+/// attached with [`Mesh::attach_attribute`](super::Mesh::attach_attribute),
+/// and must be `f32` or `vec2<f32>` to `vec4<f32>`. One that the vertices
+/// lack reads as (0, 0, 0, 1), as in LÖVE.
+///
+/// To pass values from `position` to `effect`, declare a struct named
+/// `Varyings`, write it through `varyings` in `position` and read it in
+/// `effect`. Members may be `f32`, `i32` or `u32`, or vectors of them, at
+/// most 14. Floats are blended between the vertices of each triangle;
+/// integers are taken from one of its vertices.
+///
+/// ```wgsl
+/// struct Attributes { Offset: vec2<f32> }
+/// struct Varyings { height: f32 }
+///
+/// fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+///     let moved = vertex_position + vec4<f32>(attributes.Offset, 0.0, 0.0);
+///     varyings.height = moved.y / 100.0;
+///     return transform_projection * moved;
+/// }
+///
+/// fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+///     return textureSample(image, image_sampler, uv) * color * varyings.height;
+/// }
+/// ```
+///
 /// Cloning is cheap and gives another handle to the same shader.
 #[derive(Clone)]
 pub struct Shader {
@@ -355,6 +409,13 @@ impl Shader {
         self.inner.kept.borrow_mut()[index] = Some(keep);
         context::with(|ctx| ctx.gfx.refresh_shader(self));
         Ok(())
+    }
+
+    /// Returns the compiler's warnings about the shader, as LÖVE's
+    /// `Shader:getWarnings`. The WGSL compiler reports problems only as
+    /// errors, from [`Shader::new`], so this is always empty.
+    pub fn warnings(&self) -> String {
+        String::new()
     }
 
     /// Returns whether the shader declares a texture called `name`.
