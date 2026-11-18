@@ -7,6 +7,8 @@
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use smitten::MouseClick;
+use smitten::Vec2;
 use smitten::graphics::EmissionArea;
 use smitten::graphics::{AreaSpreadDistribution, Image, ParticleSystem};
 use smitten::{BlendMode, Color, Config, Game, Key, MouseButton, event, graphics, mouse};
@@ -142,7 +144,12 @@ impl Game for Particles {
         );
     }
 
-    fn mouse_pressed(&mut self, x: f32, y: f32, button: MouseButton, _presses: u32) {
+    fn mouse_pressed(&mut self, click: MouseClick) {
+        let MouseClick {
+            position: Vec2 { x, y },
+            button,
+            ..
+        } = click;
         if button == MouseButton::Left {
             self.sparks.set_position((x, y));
             self.sparks.emit(150);

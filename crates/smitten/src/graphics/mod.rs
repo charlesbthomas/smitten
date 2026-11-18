@@ -1054,15 +1054,6 @@ pub fn clear_canvases(colors: &[Option<Color>], stencil: Option<u8>, depth: Opti
     context::with(|ctx| ctx.gfx.batch.clear_targets(each, stencil, depth));
 }
 
-/// Tells the GPU that the contents of the screen, or of the active
-/// canvas, are no longer needed, the equivalent of `love.graphics.discard`.
-///
-/// LÖVE offers this as a speed hint for mobile GPUs: what is there
-/// afterwards is undefined until it is drawn over or cleared. Smitten's
-/// targets always keep their contents, so this does nothing, and code
-/// ported from LÖVE can keep calling it.
-pub fn discard() {}
-
 /// Sets the color every frame is cleared to before `draw` runs.
 pub fn set_background_color(color: Color) {
     context::with(|ctx| ctx.gfx.background = color);
@@ -1906,11 +1897,6 @@ pub(crate) fn present_frame() {
 pub fn is_active() -> bool {
     context::with(|ctx| !ctx.window_closed)
 }
-
-/// Does nothing, the equivalent of `love.graphics.flushBatch`. Smitten
-/// sends a whole frame to the GPU at once when it is presented, and keeps
-/// draws in order without help, so there is nothing to flush early.
-pub fn flush_batch() {}
 
 /// Whether colors are blended in linear light, the equivalent of
 /// `love.graphics.isGammaCorrect`. True when

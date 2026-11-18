@@ -10,6 +10,8 @@
 //! - Escape asks whether to quit, in a message box with two buttons.
 //!   The gamepad's Start button quits straight away.
 
+use smitten::MouseClick;
+use smitten::Vec2;
 use smitten::graphics::{DrawMode, ImageData};
 use smitten::{
     Color, Config, Cursor, Game, GamepadAxis, GamepadButton, Joystick, Key, MessageBoxKind,
@@ -159,7 +161,12 @@ impl Game for Input {
         self.update_title();
     }
 
-    fn mouse_pressed(&mut self, x: f32, y: f32, button: MouseButton, _presses: u32) {
+    fn mouse_pressed(&mut self, click: MouseClick) {
+        let MouseClick {
+            position: Vec2 { x, y },
+            button,
+            ..
+        } = click;
         match button {
             MouseButton::Left => self.dots.push((x, y)),
             MouseButton::Right => self.dots.clear(),

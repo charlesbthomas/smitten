@@ -23,6 +23,7 @@ use smitten::{
     BlendMode, Color, CompareMode, Config, Game, Key, MouseButton, event, graphics, keyboard, math,
     mouse, timer,
 };
+use smitten::{MouseClick, Vec2};
 
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 520;
@@ -325,7 +326,12 @@ impl Game for Lighting {
         );
     }
 
-    fn mouse_pressed(&mut self, x: f32, y: f32, button: MouseButton, _presses: u32) {
+    fn mouse_pressed(&mut self, click: MouseClick) {
+        let MouseClick {
+            position: Vec2 { x, y },
+            button,
+            ..
+        } = click;
         if button == MouseButton::Left {
             let hue = math::random() * TAU;
             self.placed.push(Light {

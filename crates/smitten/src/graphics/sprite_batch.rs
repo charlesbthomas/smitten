@@ -158,11 +158,6 @@ impl SpriteBatch {
         self.draw_range = range;
     }
 
-    /// Does nothing: a batch's sprites are read straight from it each time
-    /// it is drawn. LÖVE's `SpriteBatch:flush` sends changed sprites to
-    /// the GPU early, so ported code can keep calling this.
-    pub fn flush(&self) {}
-
     /// Adds the whole image placed by `params` and returns the sprite's
     /// index, for use with the `set` methods. A position is enough for
     /// `params`; see [`DrawParams`] for the rest.

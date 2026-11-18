@@ -79,6 +79,7 @@ pub mod video;
 pub mod window;
 
 pub use error::{ErrorReport, reset_error_handler, set_error_handler};
+pub use event::{MouseClick, MouseMotion, TouchPoint};
 pub use joystick::Joystick;
 pub use main_loop::{MainLoop, run_loop};
 pub use math::{Vec2, Vec3};
@@ -143,52 +144,32 @@ pub trait Game: Sized + 'static {
     /// the finished text.
     fn text_edited(&mut self, _text: &str, _start: usize, _length: usize) {}
 
-    /// Called when the pointer moves to `(x, y)`, having moved `(dx, dy)`.
-    fn mouse_moved(&mut self, _x: f32, _y: f32, _dx: f32, _dy: f32) {}
+    /// Called when the pointer moves.
+    fn mouse_moved(&mut self, _motion: MouseMotion) {}
 
     /// Called when a mouse button goes down. `presses` is 2 for a double
     /// click.
-    fn mouse_pressed(&mut self, _x: f32, _y: f32, _button: MouseButton, _presses: u32) {}
+    fn mouse_pressed(&mut self, _click: MouseClick) {}
 
     /// Called when a mouse button is released.
-    fn mouse_released(&mut self, _x: f32, _y: f32, _button: MouseButton, _presses: u32) {}
+    fn mouse_released(&mut self, _click: MouseClick) {}
 
     /// Called when the mouse wheel moves. Positive `dy` is away from the
     /// user, which usually means scroll up.
     fn wheel_moved(&mut self, _dx: f32, _dy: f32) {}
 
-    /// Called when a finger touches the screen at `(x, y)`. `pressure`
-    /// runs from 0.0 to 1.0, and is 1.0 on screens that cannot measure it.
+    /// Called when a finger touches the screen.
     ///
     /// The platform also reports the first finger as a mouse, so a game
     /// that only needs taps can use `mouse_pressed` alone.
-    fn touch_pressed(
-        &mut self,
-        _id: TouchId,
-        _x: f32,
-        _y: f32,
-        _dx: f32,
-        _dy: f32,
-        _pressure: f32,
-    ) {
-    }
+    fn touch_pressed(&mut self, _touch: TouchPoint) {}
 
-    /// Called when a finger on the screen moves to `(x, y)`, having moved
-    /// `(dx, dy)`.
-    fn touch_moved(&mut self, _id: TouchId, _x: f32, _y: f32, _dx: f32, _dy: f32, _pressure: f32) {}
+    /// Called when a finger on the screen moves.
+    fn touch_moved(&mut self, _touch: TouchPoint) {}
 
     /// Called when a finger leaves the screen. Its id is not reported
     /// again.
-    fn touch_released(
-        &mut self,
-        _id: TouchId,
-        _x: f32,
-        _y: f32,
-        _dx: f32,
-        _dy: f32,
-        _pressure: f32,
-    ) {
-    }
+    fn touch_released(&mut self, _touch: TouchPoint) {}
 
     /// Called when a joystick or gamepad is plugged in, and once at
     /// startup for each one that was already connected.
@@ -459,44 +440,13 @@ fn dispatch<G: Game>(game: &mut G, event: event::Event) {
             start,
             length,
         } => game.text_edited(&text, start, length),
-        Event::MouseMoved { x, y, dx, dy } => game.mouse_moved(x, y, dx, dy),
-        Event::MousePressed {
-            x,
-            y,
-            button,
-            presses,
-        } => game.mouse_pressed(x, y, button, presses),
-        Event::MouseReleased {
-            x,
-            y,
-            button,
-            presses,
-        } => game.mouse_released(x, y, button, presses),
+        Event::MouseMoved(motion) => game.mouse_moved(motion),
+        Event::MousePressed(click) => game.mouse_pressed(click),
+        Event::MouseReleased(click) => game.mouse_released(click),
         Event::WheelMoved { dx, dy } => game.wheel_moved(dx, dy),
-        Event::TouchPressed {
-            id,
-            x,
-            y,
-            dx,
-            dy,
-            pressure,
-        } => game.touch_pressed(id, x, y, dx, dy, pressure),
-        Event::TouchMoved {
-            id,
-            x,
-            y,
-            dx,
-            dy,
-            pressure,
-        } => game.touch_moved(id, x, y, dx, dy, pressure),
-        Event::TouchReleased {
-            id,
-            x,
-            y,
-            dx,
-            dy,
-            pressure,
-        } => game.touch_released(id, x, y, dx, dy, pressure),
+        Event::TouchPressed(touch) => game.touch_pressed(touch),
+        Event::TouchMoved(touch) => game.touch_moved(touch),
+        Event::TouchReleased(touch) => game.touch_released(touch),
         Event::JoystickAdded(joystick) => game.joystick_added(joystick),
         Event::JoystickRemoved(joystick) => game.joystick_removed(joystick),
         Event::GamepadPressed { joystick, button } => game.gamepad_pressed(joystick, button),

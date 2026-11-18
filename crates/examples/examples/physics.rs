@@ -8,6 +8,8 @@
 //! Space clears everything you added, D shows what the simulation sees,
 //! and Escape quits.
 
+use smitten::MouseClick;
+use smitten::Vec2;
 use smitten::graphics::DrawMode;
 use smitten::physics::{Body, BodyType, World};
 use smitten::{Color, Config, Game, Key, MouseButton, event, graphics, math, mouse, timer};
@@ -238,7 +240,12 @@ impl Game for Physics {
         );
     }
 
-    fn mouse_pressed(&mut self, x: f32, y: f32, button: MouseButton, _presses: u32) {
+    fn mouse_pressed(&mut self, click: MouseClick) {
+        let MouseClick {
+            position: Vec2 { x, y },
+            button,
+            ..
+        } = click;
         match button {
             MouseButton::Left => self.drop_something(x, y),
             MouseButton::Right => {
@@ -253,7 +260,8 @@ impl Game for Physics {
         }
     }
 
-    fn mouse_released(&mut self, _x: f32, _y: f32, button: MouseButton, _presses: u32) {
+    fn mouse_released(&mut self, click: MouseClick) {
+        let button = click.button;
         if button == MouseButton::Right {
             self.dragged = None;
         }

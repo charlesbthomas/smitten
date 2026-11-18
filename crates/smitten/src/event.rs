@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 
+use glam::Vec2;
+
 use smitten_core::backend::BackendEvent;
 
 use crate::context::{self, Context};
@@ -57,6 +59,45 @@ impl fmt::Debug for CustomEvent {
 /// Something that happened, as [`poll`] and [`wait`] hand it over. Each
 /// variant matches the [`crate::Game`] callback of the same name, with the
 /// same values, already in units.
+/// The pointer moving, for [`Game::mouse_moved`](crate::Game::mouse_moved)
+/// and [`Event::MouseMoved`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MouseMotion {
+    /// Where the pointer is now.
+    pub position: Vec2,
+    /// How far it moved since the last report.
+    pub delta: Vec2,
+}
+
+/// A mouse button going down or up, for
+/// [`Game::mouse_pressed`](crate::Game::mouse_pressed) and
+/// [`Game::mouse_released`](crate::Game::mouse_released).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MouseClick {
+    /// Where the pointer is.
+    pub position: Vec2,
+    /// Which button.
+    pub button: MouseButton,
+    /// 1 for a single click, 2 for a double click, and so on.
+    pub presses: u32,
+}
+
+/// A finger on a touch screen, for
+/// [`Game::touch_pressed`](crate::Game::touch_pressed) and the other touch
+/// callbacks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchPoint {
+    /// Which finger, the same from when it touches to when it leaves.
+    pub id: TouchId,
+    /// Where the finger is.
+    pub position: Vec2,
+    /// How far it moved since the last report.
+    pub delta: Vec2,
+    /// How hard it presses, from 0.0 to 1.0, and 1.0 on screens that
+    /// cannot measure it.
+    pub pressure: f32,
+}
+
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event {
@@ -81,52 +122,16 @@ pub enum Event {
         start: usize,
         length: usize,
     },
-    MouseMoved {
-        x: f32,
-        y: f32,
-        dx: f32,
-        dy: f32,
-    },
-    MousePressed {
-        x: f32,
-        y: f32,
-        button: MouseButton,
-        presses: u32,
-    },
-    MouseReleased {
-        x: f32,
-        y: f32,
-        button: MouseButton,
-        presses: u32,
-    },
+    MouseMoved(MouseMotion),
+    MousePressed(MouseClick),
+    MouseReleased(MouseClick),
     WheelMoved {
         dx: f32,
         dy: f32,
     },
-    TouchPressed {
-        id: TouchId,
-        x: f32,
-        y: f32,
-        dx: f32,
-        dy: f32,
-        pressure: f32,
-    },
-    TouchMoved {
-        id: TouchId,
-        x: f32,
-        y: f32,
-        dx: f32,
-        dy: f32,
-        pressure: f32,
-    },
-    TouchReleased {
-        id: TouchId,
-        x: f32,
-        y: f32,
-        dx: f32,
-        dy: f32,
-        pressure: f32,
-    },
+    TouchPressed(TouchPoint),
+    TouchMoved(TouchPoint),
+    TouchReleased(TouchPoint),
     JoystickAdded(Joystick),
     JoystickRemoved(Joystick),
     GamepadPressed {
@@ -197,29 +202,30 @@ impl Event {
                 start,
                 length,
             },
-            BackendEvent::MouseMoved { x, y, dx, dy } => Event::MouseMoved { x, y, dx, dy },
+            BackendEvent::MouseMoved { x, y, dx, dy } => Event::MouseMoved(MouseMotion {
+                position: Vec2::new(x, y),
+                delta: Vec2::new(dx, dy),
+            }),
             BackendEvent::MousePressed {
                 x,
                 y,
                 button,
                 presses,
-            } => Event::MousePressed {
-                x,
-                y,
+            } => Event::MousePressed(MouseClick {
+                position: Vec2::new(x, y),
                 button,
                 presses,
-            },
+            }),
             BackendEvent::MouseReleased {
                 x,
                 y,
                 button,
                 presses,
-            } => Event::MouseReleased {
-                x,
-                y,
+            } => Event::MouseReleased(MouseClick {
+                position: Vec2::new(x, y),
                 button,
                 presses,
-            },
+            }),
             BackendEvent::WheelMoved { dx, dy } => Event::WheelMoved { dx, dy },
             BackendEvent::TouchPressed {
                 id,
@@ -228,14 +234,12 @@ impl Event {
                 dx,
                 dy,
                 pressure,
-            } => Event::TouchPressed {
+            } => Event::TouchPressed(TouchPoint {
                 id,
-                x,
-                y,
-                dx,
-                dy,
+                position: Vec2::new(x, y),
+                delta: Vec2::new(dx, dy),
                 pressure,
-            },
+            }),
             BackendEvent::TouchMoved {
                 id,
                 x,
@@ -243,14 +247,12 @@ impl Event {
                 dx,
                 dy,
                 pressure,
-            } => Event::TouchMoved {
+            } => Event::TouchMoved(TouchPoint {
                 id,
-                x,
-                y,
-                dx,
-                dy,
+                position: Vec2::new(x, y),
+                delta: Vec2::new(dx, dy),
                 pressure,
-            },
+            }),
             BackendEvent::TouchReleased {
                 id,
                 x,
@@ -258,14 +260,12 @@ impl Event {
                 dx,
                 dy,
                 pressure,
-            } => Event::TouchReleased {
+            } => Event::TouchReleased(TouchPoint {
                 id,
-                x,
-                y,
-                dx,
-                dy,
+                position: Vec2::new(x, y),
+                delta: Vec2::new(dx, dy),
                 pressure,
-            },
+            }),
             BackendEvent::JoystickAdded { id, .. } => Event::JoystickAdded(Joystick::new(id)),
             BackendEvent::JoystickRemoved { id } => Event::JoystickRemoved(Joystick::new(id)),
             BackendEvent::GamepadPressed { id, button } => Event::GamepadPressed {
