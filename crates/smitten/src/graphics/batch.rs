@@ -4,7 +4,7 @@
 use smitten_core::backend::{
     BoundTexture, ColorMask, DrawCall, Pass, Scissor, ShaderId, TextureId, Vertex,
 };
-use smitten_core::{BlendMode, Color, Filter, StencilMode};
+use smitten_core::{BlendAlphaMode, BlendMode, Color, Filter, StencilMode};
 
 use super::stats::FrameCounts;
 
@@ -20,6 +20,7 @@ pub(crate) struct Batch {
     target: Option<TextureId>,
     /// Applied to everything queued from now on.
     pub blend: BlendMode,
+    pub blend_alpha: BlendAlphaMode,
     pub scissor: Option<Scissor>,
     pub stencil: StencilMode,
     pub stencil_value: u8,
@@ -157,6 +158,7 @@ impl Batch {
     ) {
         let saved = (
             std::mem::replace(&mut self.blend, blend),
+            std::mem::replace(&mut self.blend_alpha, blend.default_alpha_mode()),
             self.scissor.take(),
             std::mem::replace(&mut self.stencil, StencilMode::Off),
             self.shader.take(),
@@ -166,6 +168,7 @@ impl Batch {
         self.push(texture, filter, triangles);
         (
             self.blend,
+            self.blend_alpha,
             self.scissor,
             self.stencil,
             self.shader,
@@ -245,6 +248,7 @@ impl Batch {
                     && last.layer == layer
                     && last.filter == filter
                     && last.blend == self.blend
+                    && last.blend_alpha == self.blend_alpha
                     && last.scissor == self.scissor
                     && last.stencil == self.stencil
                     && last.stencil_value == self.stencil_value
@@ -272,6 +276,7 @@ impl Batch {
                     layer,
                     filter,
                     blend: self.blend,
+                    blend_alpha: self.blend_alpha,
                     scissor: self.scissor,
                     stencil: self.stencil,
                     stencil_value: self.stencil_value,

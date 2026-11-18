@@ -152,8 +152,27 @@ fn disk_path(root: &Path, parts: &[String]) -> PathBuf {
         .fold(root.to_path_buf(), |path, part| path.join(part))
 }
 
-fn find_on_disk(root: &Path, parts: &[String]) -> Option<(Location, FileInfo)> {
+fn find_on_disk(root: &Path, parts: &[String], follow: bool) -> Option<(Location, FileInfo)> {
     let path = disk_path(root, parts);
+    if !follow {
+        // A symbolic link anywhere on the way hides what is behind it,
+        // and one at the end is reported as a link.
+        let mut step = root.to_path_buf();
+        for (index, part) in parts.iter().enumerate() {
+            step.push(part);
+            let metadata = std::fs::symlink_metadata(&step).ok()?;
+            if metadata.file_type().is_symlink() {
+                return (index + 1 == parts.len()).then(|| {
+                    let info = FileInfo {
+                        kind: FileType::Symlink,
+                        size: 0,
+                        modified: metadata.modified().ok(),
+                    };
+                    (Location::Disk(path.clone()), info)
+                });
+            }
+        }
+    }
     let info = info_of(&path)?;
     Some((Location::Disk(path), info))
 }
@@ -169,11 +188,11 @@ pub(crate) fn list_directory(directory: &Path, names: &mut BTreeSet<String>) {
 }
 
 impl Mount {
-    fn find(&self, parts: &[String]) -> Option<(Location, FileInfo)> {
+    fn find(&self, parts: &[String], follow: bool) -> Option<(Location, FileInfo)> {
         match within(&self.point, parts) {
             Within::Above { .. } => Some((Location::Directory, DIRECTORY)),
             Within::Inside { rest } => match &self.source {
-                Source::Directory(root) => find_on_disk(root, rest),
+                Source::Directory(root) => find_on_disk(root, rest, follow),
                 Source::Archive(archive) => archive.find(rest),
             },
             Within::Outside => None,
@@ -224,15 +243,37 @@ enum Place<'a> {
 pub(crate) struct Found {
     pub location: Location,
     slot: Option<Slot>,
+    /// The save or asset directory it was found in, if neither a mount.
+    root: Option<PathBuf>,
     pub info: FileInfo,
 }
 
-#[derive(Default)]
 pub(crate) struct SearchPath {
     /// Looked at before the game's own files, the newest first.
     first: Vec<Mount>,
     /// Looked at after the game's own files, the oldest first.
     last: Vec<Mount>,
+    /// Whether symbolic links on disk are followed.
+    pub follow_symlinks: bool,
+}
+
+impl Default for SearchPath {
+    fn default() -> Self {
+        Self {
+            first: Vec::new(),
+            last: Vec::new(),
+            follow_symlinks: true,
+        }
+    }
+}
+
+/// The error for reading through a symbolic link while they are turned
+/// off.
+pub(crate) fn symlink_refused() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "that path is a symbolic link, and symbolic links are turned off",
+    )
 }
 
 impl SearchPath {
@@ -270,20 +311,37 @@ impl SearchPath {
 
     /// The first place that has something at `parts`.
     pub fn find(&self, save: Option<&Path>, assets: &Path, parts: &[String]) -> Option<Found> {
+        let follow = self.follow_symlinks;
         self.places(save, assets)
             .into_iter()
             .find_map(|place| match place {
-                Place::Disk(root) => find_on_disk(root, parts).map(|(location, info)| Found {
-                    location,
-                    slot: None,
-                    info,
-                }),
-                Place::Mount(slot, mount) => mount.find(parts).map(|(location, info)| Found {
-                    location,
-                    slot: Some(slot),
-                    info,
-                }),
+                Place::Disk(root) => {
+                    find_on_disk(root, parts, follow).map(|(location, info)| Found {
+                        location,
+                        slot: None,
+                        root: Some(root.to_path_buf()),
+                        info,
+                    })
+                }
+                Place::Mount(slot, mount) => {
+                    mount.find(parts, follow).map(|(location, info)| Found {
+                        location,
+                        slot: Some(slot),
+                        root: None,
+                        info,
+                    })
+                }
             })
+    }
+
+    /// The directory or archive on disk that what `find` returned is in:
+    /// the save directory, the asset directory, or a mounted file.
+    pub fn real_directory(&self, found: &Found) -> PathBuf {
+        match (&found.root, found.slot) {
+            (Some(root), _) => root.clone(),
+            (None, Some(slot)) => self.mount(slot).file.clone(),
+            (None, None) => unreachable!("a lookup is found on disk or in a mount"),
+        }
     }
 
     /// A path on disk for what `find` returned. A file inside an archive
@@ -301,6 +359,9 @@ impl SearchPath {
 
     /// Reads the file `find` returned.
     pub fn read(&mut self, found: &Found) -> io::Result<Vec<u8>> {
+        if found.info.kind == FileType::Symlink {
+            return Err(symlink_refused());
+        }
         match (&found.location, found.slot) {
             (Location::Disk(path), _) => std::fs::read(path),
             (Location::Archive { index }, Some(slot)) => {

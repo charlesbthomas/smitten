@@ -12,9 +12,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
-    JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, StencilMode, TouchId,
-    WindowState, Wrap,
+    BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis,
+    GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton,
+    PowerInfo, StencilMode, TouchId, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -206,18 +206,43 @@ pub enum UniformKind {
     Vec3,
     /// `vec4<f32>`
     Vec4,
+    /// `vec2<i32>`
+    IVec2,
+    /// `vec3<i32>`
+    IVec3,
+    /// `vec4<i32>`
+    IVec4,
+    /// `vec2<u32>`
+    UVec2,
+    /// `vec3<u32>`
+    UVec3,
+    /// `vec4<u32>`
+    UVec4,
+    /// `mat2x2<f32>`: two columns of `vec2<f32>`, 8 bytes apart.
+    Mat2,
+    /// `mat3x3<f32>`: three columns of `vec3<f32>`, 16 bytes apart.
+    Mat3,
+    /// `mat4x4<f32>`: four columns of `vec4<f32>`, 16 bytes apart.
+    Mat4,
 }
 
 impl UniformKind {
-    /// How many bytes a value of this type occupies.
+    /// How many bytes a value of this type occupies, padding between
+    /// matrix columns included.
     pub fn size(self) -> usize {
         match self {
             UniformKind::Float | UniformKind::Int | UniformKind::Uint => 4,
-            UniformKind::Vec2 => 8,
-            UniformKind::Vec3 => 12,
-            UniformKind::Vec4 => 16,
+            UniformKind::Vec2 | UniformKind::IVec2 | UniformKind::UVec2 => 8,
+            UniformKind::Vec3 | UniformKind::IVec3 | UniformKind::UVec3 => 12,
+            UniformKind::Vec4 | UniformKind::IVec4 | UniformKind::UVec4 => 16,
+            UniformKind::Mat2 => 16,
+            UniformKind::Mat3 => 48,
+            UniformKind::Mat4 => 64,
         }
     }
+
+    /// The largest [`UniformKind::size`].
+    pub const MAX_SIZE: usize = 64;
 }
 
 /// One named value in a shader's `Params` struct.
@@ -226,8 +251,34 @@ pub struct UniformField {
     pub name: String,
     /// Where the value starts in the shader's uniform bytes.
     pub offset: u32,
-    /// `None` for a type that cannot be sent yet, such as a matrix.
+    /// `None` for a type that cannot be sent, such as a nested struct. For
+    /// an array, the type of each element.
     pub kind: Option<UniformKind>,
+    /// Set when the member is a fixed-size array of `kind`.
+    pub array: Option<UniformArray>,
+}
+
+/// The shape of an array member of a shader's `Params` struct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UniformArray {
+    /// How many elements it holds.
+    pub count: u32,
+    /// How many bytes apart the elements start.
+    pub stride: u32,
+}
+
+impl UniformField {
+    /// How many bytes the whole member spans.
+    pub fn span(&self) -> usize {
+        let Some(kind) = self.kind else { return 0 };
+        match self.array {
+            Some(array) if array.count > 0 => {
+                (array.count as usize - 1) * array.stride as usize + kind.size()
+            }
+            Some(_) => 0,
+            None => kind.size(),
+        }
+    }
 }
 
 /// The shape of a texture.
@@ -362,6 +413,9 @@ pub struct DrawCall {
     pub layer: u32,
     pub filter: Filter,
     pub blend: BlendMode,
+    /// Whether the colors drawn are already multiplied by their alpha.
+    /// Ignored for the modes that are always premultiplied.
+    pub blend_alpha: BlendAlphaMode,
     /// Pixels outside this rectangle are left untouched. `None` draws
     /// anywhere on the target.
     pub scissor: Option<Scissor>,
