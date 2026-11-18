@@ -12,11 +12,12 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, RendererInfo, Scissor, ShaderId,
-    ShaderInfo, TextureId, TextureKind, Vertex,
+    BoundTexture, ColorMask, CompressedFormat, DrawCall, Frame, RenderTargetDesc, RendererInfo,
+    Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex,
 };
 use smitten_core::{
-    BlendAlphaMode, BlendMode, CompareMode, Filter, StencilAction, StencilMode, VertexWinding, Wrap,
+    BlendAlphaMode, BlendMode, CompareMode, Filter, PixelFormat, StencilAction, StencilMode,
+    VertexWinding, Wrap,
 };
 
 use crate::{sdl_error, shader};
@@ -329,17 +330,23 @@ impl Renderer {
         Ok(renderer)
     }
 
+    /// Creates a texture from `pixels` in `format`.
     pub fn create_texture(
         &mut self,
+        format: PixelFormat,
         width: u32,
         height: u32,
-        rgba: &[u8],
+        pixels: &[u8],
         mipmapped: bool,
     ) -> Result<TextureId, String> {
         if width == 0 || height == 0 {
             return Err("an image must be at least 1x1 pixels".to_string());
         }
-        check_pixel_count(width, height, rgba)?;
+        if !self.supports_pixel_format(format, false) {
+            return Err(format!("this GPU cannot use {format} images"));
+        }
+        let format = sdl_pixel_format(format);
+        check_pixel_count(width, height, pixels, format)?;
         let levels = if mipmapped {
             mipmap_levels(width, height)
         } else {
@@ -352,10 +359,9 @@ impl Renderer {
         if let Some(mipmaps) = mipmaps {
             self.ensure_samplers((Wrap::Clamp, Wrap::Clamp), Some(mipmaps))?;
         }
-        // SAFETY: the device is alive and `rgba` was just checked to cover
-        // the whole texture.
-        let format = DEFAULT_TEXTURE_FORMAT;
-        let handle = unsafe { new_texture(self.device, format, width, height, levels, rgba)? };
+        // SAFETY: the device is alive and `pixels` was just checked to
+        // cover the whole texture.
+        let handle = unsafe { new_texture(self.device, format, width, height, levels, pixels)? };
         let id = self.next_texture_id;
         self.next_texture_id += 1;
         self.textures.insert(
@@ -390,6 +396,26 @@ impl Renderer {
                 compressed_format(format),
                 SDL_GPU_TEXTURETYPE_2D,
                 SDL_GPU_TEXTUREUSAGE_SAMPLER,
+            )
+        }
+    }
+
+    /// Whether the GPU can sample textures in `format`, and with
+    /// `render_target`, draw to them too.
+    pub fn supports_pixel_format(&self, format: PixelFormat, render_target: bool) -> bool {
+        let usage = match (format.is_depth(), render_target) {
+            (true, true) => SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+            (true, false) => return false,
+            (false, true) => SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+            (false, false) => SDL_GPU_TEXTUREUSAGE_SAMPLER,
+        };
+        // SAFETY: the device is alive.
+        unsafe {
+            SDL_GPUTextureSupportsFormat(
+                self.device,
+                sdl_pixel_format(format),
+                SDL_GPU_TEXTURETYPE_2D,
+                usage,
             )
         }
     }
@@ -504,7 +530,7 @@ impl Renderer {
             let [layer] = layers else {
                 return Err("a flat texture has exactly one layer".to_string());
             };
-            return self.create_texture(width, height, layer, false);
+            return self.create_texture(PixelFormat::Rgba8, width, height, layer, false);
         }
         if width == 0 || height == 0 {
             return Err("an image must be at least 1x1 pixels".to_string());
@@ -516,7 +542,7 @@ impl Renderer {
             return Err("a cube needs six square faces".to_string());
         }
         for layer in layers {
-            check_pixel_count(width, height, layer)?;
+            check_pixel_count(width, height, layer, DEFAULT_TEXTURE_FORMAT)?;
         }
         // SAFETY: the device is alive and every layer was just checked to
         // cover the whole texture.
@@ -549,20 +575,28 @@ impl Renderer {
         Ok(TextureId(id))
     }
 
-    /// Creates a render target, with a full chain of mipmaps unless
-    /// `mipmaps` is `None`. `Some(true)` makes them again whenever the
-    /// target has been drawn to.
-    /// With `samples` above 1 it is multisampled, with as many samples as
-    /// the GPU allows up to that.
-    pub fn create_render_target(
-        &mut self,
-        width: u32,
-        height: u32,
-        mipmaps: Option<bool>,
-        samples: u32,
-    ) -> Result<TextureId, String> {
+    /// Creates a render target as `desc` describes: with a full chain of
+    /// mipmaps unless `desc.mipmaps` is `None` (`Some(true)` makes them
+    /// again whenever the target has been drawn to), and multisampled
+    /// with as many samples as the GPU allows up to `desc.samples`.
+    pub fn create_render_target(&mut self, desc: &RenderTargetDesc) -> Result<TextureId, String> {
+        let &RenderTargetDesc {
+            width,
+            height,
+            format,
+            mipmaps,
+            samples,
+        } = desc;
         if width == 0 || height == 0 {
             return Err("a canvas must be at least 1x1 pixels".to_string());
+        }
+        if format.is_depth() {
+            return Err(format!(
+                "a {format} canvas cannot be drawn to as a color canvas"
+            ));
+        }
+        if !self.supports_pixel_format(format, true) {
+            return Err(format!("this GPU cannot draw to {format} canvases"));
         }
         let levels = if mipmaps.is_some() {
             mipmap_levels(width, height)
@@ -576,7 +610,7 @@ impl Renderer {
         if let Some(blend) = blend {
             self.ensure_samplers((Wrap::Clamp, Wrap::Clamp), Some(blend))?;
         }
-        let format = DEFAULT_TEXTURE_FORMAT;
+        let format = sdl_pixel_format(format);
         // SAFETY: the device is alive, and the passes are begun, ended and
         // submitted in the order SDL requires.
         let handle = unsafe {
@@ -707,7 +741,7 @@ impl Renderer {
                 target.width, target.height
             ));
         }
-        check_pixel_count(width, height, rgba)?;
+        check_pixel_count(width, height, rgba, target.format)?;
         // SAFETY: the texture is alive, the region was checked to lie inside
         // it, and `rgba` was checked to cover the region.
         unsafe {
@@ -1254,10 +1288,12 @@ impl Renderer {
         let Some(&source) = self.textures.get(&texture.0) else {
             return Err("the texture no longer exists".to_string());
         };
-        if source.format != DEFAULT_TEXTURE_FORMAT {
-            return Err("only an RGBA8 texture can be read back".to_string());
+        if source.compressed || is_depth_format(source.format) {
+            return Err("only a color texture can be read back".to_string());
         }
-        let length = source.width as usize * source.height as usize * 4;
+        let length = source.width as usize
+            * source.height as usize
+            * bytes_per_pixel(source.format) as usize;
         let size = u32::try_from(length).map_err(|_| "the image is too large".to_string())?;
         // SAFETY: the transfer buffer is `size` bytes, exactly what the
         // texture holds, it is only read once the GPU has filled it, and it
@@ -2050,7 +2086,8 @@ unsafe fn create_sampler(
         Filter::Nearest => SDL_GPU_FILTER_NEAREST,
     };
     let address_mode = |wrap: Wrap| match wrap {
-        Wrap::Clamp => SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        // SDL has no border colors, so clampzero falls back to clamp.
+        Wrap::Clamp | Wrap::ClampZero => SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
         Wrap::Repeat => SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
         Wrap::MirroredRepeat => SDL_GPU_SAMPLERADDRESSMODE_MIRRORED_REPEAT,
     };
@@ -2153,16 +2190,60 @@ unsafe fn generate_mipmaps(
     Ok(())
 }
 
-fn check_pixel_count(width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
-    let expected = width as usize * height as usize * 4;
-    if rgba.len() == expected {
+fn check_pixel_count(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    format: SDL_GPUTextureFormat,
+) -> Result<(), String> {
+    let expected = width as usize * height as usize * bytes_per_pixel(format) as usize;
+    if pixels.len() == expected {
         Ok(())
     } else {
         Err(format!(
-            "{width}x{height} pixels need {expected} bytes of RGBA data, got {}",
-            rgba.len()
+            "{width}x{height} pixels need {expected} bytes, got {}",
+            pixels.len()
         ))
     }
+}
+
+/// The SDL format for a pixel format.
+fn sdl_pixel_format(format: PixelFormat) -> SDL_GPUTextureFormat {
+    use PixelFormat::*;
+    match format {
+        R8 => SDL_GPU_TEXTUREFORMAT_R8_UNORM,
+        Rg8 => SDL_GPU_TEXTUREFORMAT_R8G8_UNORM,
+        Rgba8 => SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+        Srgba8 => SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB,
+        R16 => SDL_GPU_TEXTUREFORMAT_R16_UNORM,
+        Rg16 => SDL_GPU_TEXTUREFORMAT_R16G16_UNORM,
+        Rgba16 => SDL_GPU_TEXTUREFORMAT_R16G16B16A16_UNORM,
+        R16f => SDL_GPU_TEXTUREFORMAT_R16_FLOAT,
+        Rg16f => SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT,
+        Rgba16f => SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+        R32f => SDL_GPU_TEXTUREFORMAT_R32_FLOAT,
+        Rg32f => SDL_GPU_TEXTUREFORMAT_R32G32_FLOAT,
+        Rgba32f => SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
+        Rgb10a2 => SDL_GPU_TEXTUREFORMAT_R10G10B10A2_UNORM,
+        Rg11b10f => SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT,
+        Depth16 => SDL_GPU_TEXTUREFORMAT_D16_UNORM,
+        Depth24 => SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+        Depth32f => SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+        Depth24Stencil8 => SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+        Depth32fStencil8 => SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
+    }
+}
+
+/// Whether `format` holds depth, and maybe stencil, rather than colors.
+fn is_depth_format(format: SDL_GPUTextureFormat) -> bool {
+    [
+        SDL_GPU_TEXTUREFORMAT_D16_UNORM,
+        SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+        SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+        SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+        SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
+    ]
+    .contains(&format)
 }
 
 /// Creates a texture and fills it with `rgba`.

@@ -1,8 +1,8 @@
 use std::fmt;
 use std::ops::Deref;
 
-use smitten_core::Filter;
-use smitten_core::backend::Backend;
+use smitten_core::backend::{Backend, RenderTargetDesc};
+use smitten_core::{Filter, PixelFormat};
 
 use super::stats::Kind;
 use super::{Image, ImageData};
@@ -49,6 +49,52 @@ pub enum MipmapMode {
     Manual,
 }
 
+/// Options for making a canvas, the equivalent of the settings table
+/// LÖVE's `newCanvas` takes. Start from the default and change what is
+/// needed:
+///
+/// ```no_run
+/// # use smitten::graphics::{Canvas, CanvasSettings};
+/// # use smitten::PixelFormat;
+/// let hdr = Canvas::with_settings(320, 180, CanvasSettings {
+///     format: PixelFormat::Rgba16f,
+///     ..CanvasSettings::default()
+/// });
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasSettings {
+    /// How many pixels the canvas holds for each unit in each direction.
+    /// `None` makes it as sharp as the screen.
+    pub dpi_scale: Option<f32>,
+    /// How the canvas stores its pixels. [`PixelFormat::Rgba8`] unless
+    /// changed. A floating-point format such as
+    /// [`PixelFormat::Rgba16f`] holds colors brighter than white, for HDR
+    /// effects. [`graphics::canvas_formats`](super::canvas_formats) lists
+    /// what the GPU can draw to.
+    pub format: PixelFormat,
+    /// Whether the canvas has mipmaps and when they are made.
+    pub mipmaps: MipmapMode,
+    /// How many samples each pixel holds; 0 or 1 for no multisampling.
+    pub msaa: u32,
+    /// Whether the canvas will be drawn or sampled, as well as drawn to.
+    /// `None` means yes. LÖVE draws a canvas made with `Some(false)` faster
+    /// on some GPUs; smitten records the setting for
+    /// [`Image::is_readable`] but draws it the same way.
+    pub readable: Option<bool>,
+}
+
+impl Default for CanvasSettings {
+    fn default() -> Self {
+        Self {
+            dpi_scale: None,
+            format: PixelFormat::Rgba8,
+            mipmaps: MipmapMode::None,
+            msaa: 0,
+            readable: None,
+        }
+    }
+}
+
 impl Canvas {
     /// Creates a transparent canvas of `width` by `height` units.
     ///
@@ -56,27 +102,21 @@ impl Canvas {
     /// holds more pixels than units, as in LÖVE. Use
     /// [`Canvas::with_dpi_scale`] to choose the sharpness instead.
     pub fn new(width: u32, height: u32) -> Result<Canvas, String> {
-        let scale = context::with(|ctx| ctx.gfx.screen.draw_scale());
-        Canvas::with_dpi_scale(width, height, scale)
+        Canvas::with_settings(width, height, CanvasSettings::default())
     }
 
     /// Creates a transparent canvas of `width` by `height` units that
     /// holds `dpi_scale` pixels for each unit in each direction. A scale
     /// of 1.0 gives exactly `width` by `height` pixels.
     pub fn with_dpi_scale(width: u32, height: u32, dpi_scale: f32) -> Result<Canvas, String> {
-        if !(dpi_scale.is_finite() && dpi_scale > 0.0) {
-            return Err(format!("the DPI scale must be positive, got {dpi_scale}"));
-        }
-        context::with(|ctx| {
-            Canvas::create(
-                &mut *ctx.backend,
-                width,
-                height,
-                dpi_scale,
-                ctx.gfx.default_filter,
-                MipmapMode::None,
-            )
-        })
+        Canvas::with_settings(
+            width,
+            height,
+            CanvasSettings {
+                dpi_scale: Some(dpi_scale),
+                ..CanvasSettings::default()
+            },
+        )
     }
 
     /// Creates a transparent canvas of `width` by `height` units, as sharp
@@ -85,16 +125,14 @@ impl Canvas {
     /// [`MipmapMode`] for when they are made, and
     /// [`Image::set_mipmap_filter`] for how they blend.
     pub fn with_mipmaps(width: u32, height: u32, mode: MipmapMode) -> Result<Canvas, String> {
-        context::with(|ctx| {
-            Canvas::create(
-                &mut *ctx.backend,
-                width,
-                height,
-                ctx.gfx.screen.draw_scale(),
-                ctx.gfx.default_filter,
-                mode,
-            )
-        })
+        Canvas::with_settings(
+            width,
+            height,
+            CanvasSettings {
+                mipmaps: mode,
+                ..CanvasSettings::default()
+            },
+        )
     }
 
     /// Creates a transparent canvas of `width` by `height` units, as sharp
@@ -105,22 +143,48 @@ impl Canvas {
     /// The GPU may give fewer samples than asked for; [`Canvas::msaa`]
     /// says how many. A multisampled canvas has no mipmaps.
     pub fn with_msaa(width: u32, height: u32, samples: u32) -> Result<Canvas, String> {
+        Canvas::with_settings(
+            width,
+            height,
+            CanvasSettings {
+                msaa: samples,
+                ..CanvasSettings::default()
+            },
+        )
+    }
+
+    /// Creates a transparent canvas of `width` by `height` units as
+    /// `settings` describe, the equivalent of
+    /// `love.graphics.newCanvas(width, height, settings)`.
+    ///
+    /// Fails for a depth format, which is not yet supported, for a format
+    /// the GPU cannot draw to, and for multisampling with mipmaps.
+    pub fn with_settings(
+        width: u32,
+        height: u32,
+        settings: CanvasSettings,
+    ) -> Result<Canvas, String> {
+        if let Some(scale) = settings.dpi_scale
+            && !(scale.is_finite() && scale > 0.0)
+        {
+            return Err(format!("the DPI scale must be positive, got {scale}"));
+        }
         context::with(|ctx| {
-            let scale = ctx.gfx.screen.draw_scale();
-            let pixels = Canvas::pixels_for(width, height, scale);
-            let texture = ctx
-                .backend
-                .create_msaa_render_target(pixels.0, pixels.1, samples)?;
-            let msaa = ctx.backend.texture_msaa(texture);
-            let image =
-                Image::from_texture(texture, width, height, ctx.gfx.default_filter, Kind::Canvas);
-            Ok(Canvas {
-                image,
-                pixels,
-                scale,
-                mipmaps: MipmapMode::None,
-                msaa,
-            })
+            let settings = CanvasSettings {
+                dpi_scale: Some(
+                    settings
+                        .dpi_scale
+                        .unwrap_or_else(|| ctx.gfx.screen.draw_scale()),
+                ),
+                ..settings
+            };
+            Canvas::create(
+                &mut *ctx.backend,
+                width,
+                height,
+                ctx.gfx.default_filter,
+                settings,
+            )
         })
     }
 
@@ -137,32 +201,49 @@ impl Canvas {
         )
     }
 
+    /// Makes a canvas. `settings.dpi_scale` must be set.
     pub(crate) fn create(
         backend: &mut dyn Backend,
         width: u32,
         height: u32,
-        scale: f32,
         filter: Filter,
-        mipmaps: MipmapMode,
+        settings: CanvasSettings,
     ) -> Result<Canvas, String> {
+        let scale = settings.dpi_scale.unwrap_or(1.0);
+        let samples = settings.msaa.max(1);
+        if samples > 1 && settings.mipmaps != MipmapMode::None {
+            return Err("a multisampled canvas cannot have mipmaps".to_string());
+        }
+        if settings.format.is_depth() {
+            return Err(format!(
+                "{} canvases are not supported yet; only color formats are",
+                settings.format
+            ));
+        }
         let pixels = Canvas::pixels_for(width, height, scale);
-        let texture = match mipmaps {
-            MipmapMode::None => backend.create_render_target(pixels.0, pixels.1)?,
-            MipmapMode::Auto => backend.create_mipmapped_render_target(pixels.0, pixels.1, true)?,
-            MipmapMode::Manual => {
-                backend.create_mipmapped_render_target(pixels.0, pixels.1, false)?
-            }
-        };
+        let texture = backend.create_render_target_with(&RenderTargetDesc {
+            width: pixels.0,
+            height: pixels.1,
+            format: settings.format,
+            mipmaps: match settings.mipmaps {
+                MipmapMode::None => None,
+                MipmapMode::Auto => Some(true),
+                MipmapMode::Manual => Some(false),
+            },
+            samples,
+        })?;
+        let msaa = backend.texture_msaa(texture);
         let image = Image::from_texture(texture, width, height, filter, Kind::Canvas);
-        if mipmaps != MipmapMode::None {
+        image.set_storage(settings.format, settings.readable.unwrap_or(true));
+        if settings.mipmaps != MipmapMode::None {
             image.mark_mipmapped(32 - pixels.0.max(pixels.1).max(1).leading_zeros());
         }
         Ok(Canvas {
             image,
             pixels,
             scale,
-            mipmaps,
-            msaa: 1,
+            mipmaps: settings.mipmaps,
+            msaa,
         })
     }
 
@@ -200,7 +281,8 @@ impl Canvas {
 
     /// Copies the canvas's pixels back from the GPU, as LÖVE's
     /// `Canvas:newImageData` does. The result is
-    /// [`pixel_dimensions`](Canvas::pixel_dimensions) in size.
+    /// [`pixel_dimensions`](Canvas::pixel_dimensions) in size, in the
+    /// canvas's [`format`](Image::format).
     ///
     /// Everything drawn to the canvas so far is included. Colors come back
     /// as the canvas stores them, multiplied by their alpha, so they only

@@ -14,8 +14,39 @@ use std::path::PathBuf;
 use crate::{
     BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, FullscreenType,
     GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind,
-    MouseButton, PowerInfo, StencilMode, TouchId, VertexWinding, WindowState, Wrap,
+    MouseButton, PixelFormat, PowerInfo, StencilMode, TouchId, VertexWinding, WindowState, Wrap,
 };
+
+/// What [`Backend::create_render_target_with`] makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderTargetDesc {
+    pub width: u32,
+    pub height: u32,
+    /// A color format that [`Backend::supports_pixel_format`] allows for
+    /// render targets.
+    pub format: PixelFormat,
+    /// `None` for no mipmaps. With `Some(true)` they are made again
+    /// whenever a frame has drawn to the target, and with `Some(false)`
+    /// only by [`Backend::generate_mipmaps`]. They start out blended as
+    /// those of `create_mipmapped_texture` do.
+    pub mipmaps: Option<bool>,
+    /// Above 1, it is multisampled with as many samples per pixel as the
+    /// GPU allows up to this.
+    pub samples: u32,
+}
+
+impl RenderTargetDesc {
+    /// An RGBA8 target with no mipmaps or multisampling.
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            format: PixelFormat::Rgba8,
+            mipmaps: None,
+            samples: 1,
+        }
+    }
+}
 
 /// Something that happened on the platform since the last poll.
 #[derive(Debug, Clone, PartialEq)]
@@ -598,10 +629,33 @@ pub trait Backend {
         layers: &[&[u8]],
     ) -> Result<TextureId, String>;
 
+    /// As `create_texture` or `create_mipmapped_texture`, with `pixels`
+    /// in `format`: [`PixelFormat::bytes_per_pixel`] bytes each, with
+    /// multi-byte channels little-endian. `format` must be a color format
+    /// that [`Backend::supports_pixel_format`] allows for images.
+    fn create_texture_in(
+        &mut self,
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+        mipmapped: bool,
+    ) -> Result<TextureId, String>;
+
+    /// Whether the GPU can sample textures in `format`, and with
+    /// `render_target`, also draw to them.
+    fn supports_pixel_format(&self, format: PixelFormat, render_target: bool) -> bool;
+
     /// Creates a texture that can be drawn to by naming it as a
-    /// [`Pass::target`], and sampled like any other. It starts out
-    /// transparent, and keeps its contents between frames.
-    fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String>;
+    /// [`Pass::target`], and sampled like any other, as `desc` describes.
+    /// It starts out transparent, and keeps its contents between frames.
+    fn create_render_target_with(&mut self, desc: &RenderTargetDesc) -> Result<TextureId, String>;
+
+    /// Creates an RGBA8 render target as
+    /// [`Backend::create_render_target_with`] does.
+    fn create_render_target(&mut self, width: u32, height: u32) -> Result<TextureId, String> {
+        self.create_render_target_with(&RenderTargetDesc::new(width, height))
+    }
 
     /// Creates a render target as [`Backend::create_render_target`] does,
     /// multisampled with as many samples per pixel as the GPU allows up
@@ -611,7 +665,12 @@ pub trait Backend {
         width: u32,
         height: u32,
         samples: u32,
-    ) -> Result<TextureId, String>;
+    ) -> Result<TextureId, String> {
+        self.create_render_target_with(&RenderTargetDesc {
+            samples,
+            ..RenderTargetDesc::new(width, height)
+        })
+    }
 
     /// How many samples each pixel of a render target holds, 1 if it is
     /// not multisampled.
@@ -634,7 +693,12 @@ pub trait Backend {
         width: u32,
         height: u32,
         automatic: bool,
-    ) -> Result<TextureId, String>;
+    ) -> Result<TextureId, String> {
+        self.create_render_target_with(&RenderTargetDesc {
+            mipmaps: Some(automatic),
+            ..RenderTargetDesc::new(width, height)
+        })
+    }
 
     /// Makes a render target's mipmaps again from what it holds. Draws
     /// still waiting in a frame are not included, so the caller renders
@@ -682,8 +746,10 @@ pub trait Backend {
     fn render_offscreen(&mut self, frame: &Frame);
 
     /// Copies a texture's pixels back from the GPU as
-    /// `(width, height, rgba)`: four bytes a pixel, in rows from the top.
-    /// This waits for the GPU, so it is slow.
+    /// `(width, height, pixels)`, in rows from the top, in the texture's
+    /// format: four bytes a pixel for RGBA8, and laid out as
+    /// `create_texture_in` takes them otherwise. This waits for the GPU,
+    /// so it is slow.
     fn read_texture(&mut self, texture: TextureId) -> Result<(u32, u32, Vec<u8>), String>;
 
     /// Monotonic time in nanoseconds.

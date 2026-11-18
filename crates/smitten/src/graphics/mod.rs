@@ -37,7 +37,7 @@ use std::path::Path;
 use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId, Vertex};
 
 use crate::context;
-use smitten_core::StencilMode;
+use smitten_core::{PixelFormat, StencilMode};
 
 use crate::{
     BlendAlphaMode, BlendMode, Color, CompareMode, CullMode, Filter, StencilAction, VertexWinding,
@@ -52,7 +52,7 @@ pub(crate) mod reloading {
     pub(crate) use super::text::{Inner as FontInner, reload as reload_font};
 }
 
-pub use canvas::{Canvas, MipmapMode};
+pub use canvas::{Canvas, CanvasSettings, MipmapMode};
 pub use compressed::CompressedImageData;
 pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::{ImageData, ImageFormat, is_compressed};
@@ -173,9 +173,11 @@ impl GraphicsState {
                 backend,
                 width,
                 height,
-                1.0,
                 Filter::Nearest,
-                MipmapMode::None,
+                CanvasSettings {
+                    dpi_scale: Some(1.0),
+                    ..CanvasSettings::default()
+                },
             )
             .ok();
         }
@@ -306,7 +308,8 @@ impl GraphicsState {
     ) -> Result<ImageData, String> {
         self.flush_canvases(backend);
         let (width, height, pixels) = backend.read_texture(canvas.texture())?;
-        Ok(ImageData::from_rgba(width, height, pixels))
+        ImageData::from_raw(width, height, canvas.format(), pixels)
+            .map_err(|error| error.to_string())
     }
 
     /// Called after `finish_frame`: hands a copy of the frame to everyone
@@ -2120,6 +2123,84 @@ pub fn new_compressed_data(path: impl AsRef<Path>) -> CompressedImageData {
 /// equivalent of `love.graphics.getImageFormats`.
 pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
     context::with(|ctx| ctx.backend.supports_compressed_format(format))
+}
+
+/// Whether the GPU can draw images in `format`, made with
+/// [`Image::from_image_data`]. The uncompressed half of
+/// `love.graphics.getImageFormats`.
+pub fn is_image_format_supported(format: PixelFormat) -> bool {
+    context::with(|ctx| ctx.backend.supports_pixel_format(format, false))
+}
+
+/// The uncompressed formats images can have on this GPU, in the order
+/// [`PixelFormat::ALL`] lists them.
+pub fn image_formats() -> Vec<PixelFormat> {
+    PixelFormat::ALL
+        .into_iter()
+        .filter(|&format| is_image_format_supported(format))
+        .collect()
+}
+
+/// Whether a canvas can be made in `format` on this GPU, the equivalent
+/// of looking `format` up in `love.graphics.getCanvasFormats`. With
+/// `readable`, it must also be drawable and readable by shaders, as a
+/// canvas usually is.
+///
+/// Depth formats are reported as the GPU allows them, but
+/// [`Canvas::with_settings`] does not make depth canvases yet.
+pub fn is_canvas_format_supported(format: PixelFormat, readable: bool) -> bool {
+    context::with(|ctx| {
+        ctx.backend.supports_pixel_format(format, true)
+            && (!readable || ctx.backend.supports_pixel_format(format, false))
+    })
+}
+
+/// The formats canvases can have on this GPU, the equivalent of
+/// `love.graphics.getCanvasFormats(readable)`, in the order
+/// [`PixelFormat::ALL`] lists them.
+pub fn canvas_formats(readable: bool) -> Vec<PixelFormat> {
+    PixelFormat::ALL
+        .into_iter()
+        .filter(|&format| is_canvas_format_supported(format, readable))
+        .collect()
+}
+
+/// An optional graphics feature, the equivalent of LÖVE's
+/// `GraphicsFeature`. Ask about one with [`is_supported`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum GraphicsFeature {
+    /// [`Wrap::ClampZero`](crate::Wrap::ClampZero) as its own mode, rather
+    /// than falling back to [`Wrap::Clamp`](crate::Wrap::Clamp).
+    ClampZero,
+    /// The [`BlendMode::Lighten`](crate::BlendMode::Lighten) and
+    /// [`BlendMode::Darken`](crate::BlendMode::Darken) blend modes.
+    Lighten,
+    /// Drawing to several canvases at once that have different formats.
+    MultiCanvasFormats,
+    /// Textures whose sides are not powers of two, with mipmaps and every
+    /// wrap mode.
+    FullNpot,
+    /// Full-precision floats in fragment shaders.
+    PixelShaderHighp,
+    /// The derivative functions in shaders, such as `dpdx`.
+    ShaderDerivatives,
+}
+
+/// Whether the GPU supports `feature`, the equivalent of the table
+/// `love.graphics.getSupported` returns.
+pub fn is_supported(feature: GraphicsFeature) -> bool {
+    match feature {
+        // SDL's GPU API has no border colors to build it from.
+        GraphicsFeature::ClampZero => false,
+        // Not until several canvases can be drawn to at once.
+        GraphicsFeature::MultiCanvasFormats => false,
+        // Every GPU SDL's GPU API runs on has these.
+        GraphicsFeature::Lighten
+        | GraphicsFeature::FullNpot
+        | GraphicsFeature::PixelShaderHighp
+        | GraphicsFeature::ShaderDerivatives => true,
+    }
 }
 
 /// Loads a [`CubeImage`] from one image file holding all six faces, the
