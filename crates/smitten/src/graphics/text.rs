@@ -10,8 +10,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use smitten_core::Filter;
 use smitten_core::backend::{Backend, TextureId};
+use smitten_core::{Filter, PixelFormat};
 
 use super::stats::{Counted, Kind};
 use crate::reload::Asset;
@@ -613,6 +613,27 @@ fn decode_image_font(
     Ok((face, bitmaps))
 }
 
+/// Puts a page of glyphs on the GPU. Like an image, it is stored
+/// sRGB-encoded with gamma-correct rendering, so the colors of a bitmap
+/// font's pictures come out as they do drawn as an image. The coverage
+/// of a TrueType glyph is in alpha, which is never encoded.
+fn new_page(
+    backend: &mut dyn Backend,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<TextureId, String> {
+    match page_format(backend.is_gamma_correct()) {
+        Some(format) => backend.create_texture_in(format, width, height, rgba, false),
+        None => backend.create_texture(width, height, rgba),
+    }
+}
+
+/// The format of a page of glyphs, or `None` for the default RGBA8.
+fn page_format(gamma_correct: bool) -> Option<PixelFormat> {
+    gamma_correct.then_some(PixelFormat::Srgba8)
+}
+
 /// Where one character of a bitmap font is in its pages, in pixels, and
 /// how it sits against the pen.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -643,7 +664,7 @@ impl Bitmaps {
     fn upload(&self, backend: &mut dyn Backend) -> Result<Atlas, String> {
         let mut pages: Vec<Page> = Vec::new();
         for image in &self.pages {
-            match backend.create_texture(image.width(), image.height(), image.as_raw()) {
+            match new_page(backend, image.width(), image.height(), image.as_raw()) {
                 Ok(texture) => pages.push(Page::full(texture, image.width(), image.height())),
                 Err(error) => {
                     for page in &pages {
@@ -1474,9 +1495,7 @@ impl Atlas {
         }
 
         let blank = vec![0; self.page_size as usize * self.page_size as usize * 4];
-        let texture = backend
-            .create_texture(self.page_size, self.page_size, &blank)
-            .ok()?;
+        let texture = new_page(backend, self.page_size, self.page_size, &blank).ok()?;
         self.pages.push(Page {
             texture,
             cursor_x: padded_width,
