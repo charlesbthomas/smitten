@@ -1534,9 +1534,12 @@ fn all_keys() -> impl Iterator<Item = (SDL_Scancode, Key)> {
 }
 
 fn scancode_from_key(key: Key) -> SDL_Scancode {
-    all_keys()
-        .find(|&(_, known)| known == key)
-        .map_or(SDL_SCANCODE_UNKNOWN, |(scancode, _)| scancode)
+    static SCANCODES: std::sync::OnceLock<HashMap<Key, SDL_Scancode>> = std::sync::OnceLock::new();
+    SCANCODES
+        .get_or_init(|| all_keys().map(|(scancode, key)| (key, scancode)).collect())
+        .get(&key)
+        .copied()
+        .unwrap_or(SDL_SCANCODE_UNKNOWN)
 }
 
 /// The keycode a US layout gives the key. Keys that type a character use
@@ -1568,6 +1571,22 @@ fn keycode_from_key(key: Key) -> SDL_Keycode {
         Comma => Some(b','),
         Period => Some(b'.'),
         Slash => Some(b'/'),
+        Exclaim => Some(b'!'),
+        DoubleQuote => Some(b'"'),
+        Hash => Some(b'#'),
+        Dollar => Some(b'$'),
+        Ampersand => Some(b'&'),
+        LeftParen => Some(b'('),
+        RightParen => Some(b')'),
+        Asterisk => Some(b'*'),
+        Plus => Some(b'+'),
+        Colon => Some(b':'),
+        Less => Some(b'<'),
+        Greater => Some(b'>'),
+        Question => Some(b'?'),
+        At => Some(b'@'),
+        Caret => Some(b'^'),
+        Underscore => Some(b'_'),
         _ => None,
     };
     match character {
@@ -1580,10 +1599,40 @@ fn key_from_keycode(keycode: SDL_Keycode) -> Option<Key> {
     if keycode.0 == 0 {
         return None;
     }
+    // Keys that type no character carry their scancode.
+    if keycode.0 & SDLK_SCANCODE_MASK.0 != 0 {
+        let key = key_from_scancode(SDL_Scancode((keycode.0 & !SDLK_SCANCODE_MASK.0) as _))?;
+        return (keycode_from_key(key) == keycode).then_some(key);
+    }
     all_keys()
         .map(|(_, key)| key)
+        .chain(LAYOUT_ONLY_KEYS)
         .find(|&key| keycode_from_key(key) == keycode)
 }
+
+/// Keys that some layouts have but no US key sits where they do, so they
+/// have no scancode and are found only by their keycode.
+const LAYOUT_ONLY_KEYS: [Key; 16] = {
+    use Key::*;
+    [
+        Exclaim,
+        DoubleQuote,
+        Hash,
+        Dollar,
+        Ampersand,
+        LeftParen,
+        RightParen,
+        Asterisk,
+        Plus,
+        Colon,
+        Less,
+        Greater,
+        Question,
+        At,
+        Caret,
+        Underscore,
+    ]
+};
 
 fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
     use Key::*;
@@ -1594,6 +1643,23 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
     // SDL orders the digit row 1 through 9 and then 0.
     const DIGITS: [Key; 10] = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0];
     const FUNCTION: [Key; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
+    const MORE_FUNCTION: [Key; 12] = [F13, F14, F15, F16, F17, F18, F19, F20, F21, F22, F23, F24];
+    // Like the digit row, SDL orders the keypad digits 1 through 9 and then 0.
+    const KEYPAD_DIGITS: [Key; 10] = [Kp1, Kp2, Kp3, Kp4, Kp5, Kp6, Kp7, Kp8, Kp9, Kp0];
+    const INTERNATIONAL: [Key; 9] = [
+        International1,
+        International2,
+        International3,
+        International4,
+        International5,
+        International6,
+        International7,
+        International8,
+        International9,
+    ];
+    const LANG: [Key; 9] = [
+        Lang1, Lang2, Lang3, Lang4, Lang5, Lang6, Lang7, Lang8, Lang9,
+    ];
 
     let code = scancode.0;
     let in_run = |first: SDL_Scancode, keys: &[Key]| {
@@ -1604,6 +1670,10 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
     if let Some(key) = in_run(SDL_SCANCODE_A, &LETTERS)
         .or_else(|| in_run(SDL_SCANCODE_1, &DIGITS))
         .or_else(|| in_run(SDL_SCANCODE_F1, &FUNCTION))
+        .or_else(|| in_run(SDL_SCANCODE_F13, &MORE_FUNCTION))
+        .or_else(|| in_run(SDL_SCANCODE_KP_1, &KEYPAD_DIGITS))
+        .or_else(|| in_run(SDL_SCANCODE_INTERNATIONAL1, &INTERNATIONAL))
+        .or_else(|| in_run(SDL_SCANCODE_LANG1, &LANG))
     {
         return Some(key);
     }
@@ -1644,6 +1714,52 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
         (SDL_SCANCODE_PAGEDOWN, PageDown),
         (SDL_SCANCODE_LGUI, LeftGui),
         (SDL_SCANCODE_RGUI, RightGui),
+        (SDL_SCANCODE_KP_PERIOD, KpPeriod),
+        (SDL_SCANCODE_KP_COMMA, KpComma),
+        (SDL_SCANCODE_KP_DIVIDE, KpDivide),
+        (SDL_SCANCODE_KP_MULTIPLY, KpMultiply),
+        (SDL_SCANCODE_KP_MINUS, KpMinus),
+        (SDL_SCANCODE_KP_PLUS, KpPlus),
+        (SDL_SCANCODE_KP_ENTER, KpEnter),
+        (SDL_SCANCODE_KP_EQUALS, KpEquals),
+        (SDL_SCANCODE_NUMLOCKCLEAR, NumLock),
+        (SDL_SCANCODE_SCROLLLOCK, ScrollLock),
+        (SDL_SCANCODE_PRINTSCREEN, PrintScreen),
+        (SDL_SCANCODE_SYSREQ, SysReq),
+        (SDL_SCANCODE_PAUSE, Pause),
+        (SDL_SCANCODE_APPLICATION, Application),
+        (SDL_SCANCODE_MENU, Menu),
+        (SDL_SCANCODE_CLEAR, Clear),
+        (SDL_SCANCODE_HELP, Help),
+        (SDL_SCANCODE_POWER, Power),
+        (SDL_SCANCODE_MODE, Mode),
+        (SDL_SCANCODE_EXECUTE, Execute),
+        (SDL_SCANCODE_SELECT, Select),
+        (SDL_SCANCODE_STOP, Stop),
+        (SDL_SCANCODE_AGAIN, Again),
+        (SDL_SCANCODE_UNDO, Undo),
+        (SDL_SCANCODE_CUT, Cut),
+        (SDL_SCANCODE_COPY, Copy),
+        (SDL_SCANCODE_PASTE, Paste),
+        (SDL_SCANCODE_FIND, Find),
+        (SDL_SCANCODE_CANCEL, Cancel),
+        (SDL_SCANCODE_MUTE, Mute),
+        (SDL_SCANCODE_VOLUMEUP, VolumeUp),
+        (SDL_SCANCODE_VOLUMEDOWN, VolumeDown),
+        (SDL_SCANCODE_MEDIA_PLAY_PAUSE, MediaPlayPause),
+        (SDL_SCANCODE_MEDIA_STOP, MediaStop),
+        (SDL_SCANCODE_MEDIA_NEXT_TRACK, MediaNextTrack),
+        (SDL_SCANCODE_MEDIA_PREVIOUS_TRACK, MediaPreviousTrack),
+        (SDL_SCANCODE_MEDIA_SELECT, MediaSelect),
+        (SDL_SCANCODE_MEDIA_EJECT, MediaEject),
+        (SDL_SCANCODE_AC_SEARCH, AppSearch),
+        (SDL_SCANCODE_AC_HOME, AppHome),
+        (SDL_SCANCODE_AC_BACK, AppBack),
+        (SDL_SCANCODE_AC_FORWARD, AppForward),
+        (SDL_SCANCODE_AC_REFRESH, AppRefresh),
+        (SDL_SCANCODE_AC_BOOKMARKS, AppBookmarks),
+        (SDL_SCANCODE_NONUSBACKSLASH, NonUsBackslash),
+        (SDL_SCANCODE_NONUSHASH, NonUsHash),
     ];
     named
         .iter()
@@ -1654,6 +1770,40 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_key_has_one_scancode_and_one_keycode() {
+        let keys: Vec<Key> = all_keys().map(|(_, key)| key).collect();
+        let distinct: std::collections::HashSet<Key> = keys.iter().copied().collect();
+        assert_eq!(keys.len(), distinct.len(), "two scancodes share a key");
+        for (scancode, key) in all_keys() {
+            assert_eq!(scancode_from_key(key).0, scancode.0, "{key:?}");
+            assert_eq!(
+                key_from_keycode(keycode_from_key(key)),
+                Some(key),
+                "{key:?}"
+            );
+        }
+        for key in LAYOUT_ONLY_KEYS {
+            assert_eq!(scancode_from_key(key).0, SDL_SCANCODE_UNKNOWN.0, "{key:?}");
+            assert_eq!(
+                key_from_keycode(keycode_from_key(key)),
+                Some(key),
+                "{key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keypad_keys_are_their_own_keys() {
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_0), Some(Key::Kp0));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_1), Some(Key::Kp1));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_9), Some(Key::Kp9));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_ENTER), Some(Key::KpEnter));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_F15), Some(Key::F15));
+        assert_eq!(key_from_keycode(SDLK_KP_PLUS), Some(Key::KpPlus));
+        assert_eq!(key_from_keycode(SDLK_EXCLAIM), Some(Key::Exclaim));
+    }
 
     #[test]
     fn locales_are_named_as_in_love() {

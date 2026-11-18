@@ -301,6 +301,26 @@ impl Source {
         self.mixer().tell(self.id)
     }
 
+    /// Moves playback to `sample`, counted in sample frames of the sound
+    /// at its own rate, as LÖVE's `Source:seek(sample, "samples")`. A
+    /// queueable source cannot seek.
+    pub fn seek_samples(&self, sample: u64) {
+        self.mixer().seek_frame(self.id, sample);
+    }
+
+    /// Returns the playback position in sample frames of the sound at its
+    /// own rate, as LÖVE's `Source:tell("samples")`.
+    pub fn tell_samples(&self) -> u64 {
+        self.mixer().tell_frame(self.id)
+    }
+
+    /// Returns the sound's length in sample frames, as LÖVE's
+    /// `Source:getDuration("samples")`. `None` when
+    /// [`duration`](Self::duration) is.
+    pub fn sample_count(&self) -> Option<u64> {
+        self.mixer().frame_count(self.id)
+    }
+
     /// Returns the sound's length in seconds. A few streamed formats only
     /// learn their length by playing to the end, and give `None` until then.
     pub fn duration(&self) -> Option<f64> {
@@ -428,6 +448,23 @@ impl Source {
         (placement.min_volume, placement.max_volume)
     }
 
+    /// Makes the air muffle the sound the farther it is from the listener,
+    /// as LÖVE's `Source:setAirAbsorption`. `amount` runs from 0.0, the
+    /// default, which leaves the sound alone, to 10.0. At 1.0 the high
+    /// frequencies lose about 0.05 dB per unit of distance, as in OpenAL,
+    /// which is what real air does if a unit is a metre.
+    ///
+    /// Like the rest of positioning, it only affects mono sounds. It
+    /// applies to what goes to effects as well as to the speakers.
+    pub fn set_air_absorption(&self, amount: f32) {
+        self.change_placement(|placement| placement.air_absorption = amount.clamp(0.0, 10.0));
+    }
+
+    /// Returns the air absorption.
+    pub fn air_absorption(&self) -> f32 {
+        self.placement().air_absorption
+    }
+
     /// Filters the sound, or with `None` removes the filter. The filter
     /// affects what goes straight to the speakers, not what is sent to
     /// effects.
@@ -447,6 +484,14 @@ impl Source {
     /// Returns `false`, and does nothing, if there is no such effect.
     pub fn set_effect(&self, name: &str, filter: Option<Filter>) -> bool {
         self.mixer().set_send(self.id, name, filter)
+    }
+
+    /// Returns whether the sound is sent through the effect called `name`
+    /// and, if it is, the filter on what is sent, as LÖVE's
+    /// `Source:getEffect`. `None` means the sound is not sent there;
+    /// `Some(None)` means it is sent unfiltered.
+    pub fn effect(&self, name: &str) -> Option<Option<Filter>> {
+        self.mixer().send_filter(self.id, name)
     }
 
     /// Stops sending the sound through the effect called `name`.
@@ -661,6 +706,18 @@ pub fn volume() -> f32 {
     lock(&shared_mixer()).master_volume()
 }
 
+/// Starts or resumes every source in `sources` at the same moment, the
+/// equivalent of `love.audio.play` with several sources. Calling
+/// [`Source::play`] on each in turn could let the audio thread mix a
+/// buffer between two of them, putting them a few milliseconds apart.
+pub fn play(sources: &[&Source]) {
+    let mixer = shared_mixer();
+    let mut mixer = lock(&mixer);
+    for source in sources {
+        mixer.play(source.id);
+    }
+}
+
 /// Pauses every playing source. Each resumes from where it was when its
 /// `play` is called.
 pub fn pause() {
@@ -773,6 +830,36 @@ pub fn effect(name: &str) -> Option<Effect> {
 /// Returns `false` if there was no such effect.
 pub fn remove_effect(name: &str) -> bool {
     lock(&shared_mixer()).remove_effect(name)
+}
+
+/// Whether effects work, the equivalent of `love.audio.isEffectsSupported`.
+/// Smitten mixes effects itself, so they always do.
+pub fn is_effects_supported() -> bool {
+    true
+}
+
+/// How many effects can be defined at once, the equivalent of
+/// `love.audio.getMaxSceneEffects`. Smitten's own mixer has no limit
+/// other than the time it takes to run them, so this is `usize::MAX`.
+/// LÖVE's OpenAL usually allows a few dozen.
+pub fn max_scene_effects() -> usize {
+    usize::MAX
+}
+
+/// How many effects one source can be sent through at once, the
+/// equivalent of `love.audio.getMaxSourceEffects`. There is no limit, as
+/// with [`max_scene_effects`]; OpenAL usually allows 2 to 4.
+pub fn max_source_effects() -> usize {
+    usize::MAX
+}
+
+/// Asks to mix with music other apps are playing, the equivalent of
+/// `love.audio.setMixWithSystem`. Only phones and tablets can choose, and
+/// Smitten does not run on them yet, so this returns `false` and changes
+/// nothing, as LÖVE does on desktop systems.
+pub fn set_mix_with_system(mix: bool) -> bool {
+    let _ = mix;
+    false
 }
 
 /// Returns the names of every effect defined, in alphabetical order.

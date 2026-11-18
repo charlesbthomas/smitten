@@ -241,7 +241,7 @@ pub fn dimensions() -> (u32, u32) {
     context::with(|ctx| ctx.gfx.screen.window_size())
 }
 
-/// Sets the window's icon from an image file (PNG or JPEG), looked up like
+/// Sets the window's icon from an image file (PNG, JPEG or TGA), looked up like
 /// any other asset. To set it from the start, use [`crate::Config::icon`].
 ///
 /// Panics with the file name if it cannot be loaded. Use [`try_set_icon`]
