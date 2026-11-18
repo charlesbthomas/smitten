@@ -2,17 +2,19 @@
 //!
 //! - A fire follows the mouse, with smoke rising from it.
 //! - Click for a burst of sparks that fall under gravity.
+//! - A ring of embers swirls around a point, pulled in as it turns.
 //! - Escape quits.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
-use smitten::graphics::{Image, ParticleSystem};
+use smitten::graphics::{AreaSpreadDistribution, Image, ParticleSystem};
 use smitten::{BlendMode, Color, Config, Game, Key, MouseButton, event, graphics, mouse};
 
 struct Particles {
     fire: ParticleSystem,
     smoke: ParticleSystem,
     sparks: ParticleSystem,
+    swirl: ParticleSystem,
 }
 
 /// A soft white dot, bright in the middle and fading to nothing at the
@@ -60,6 +62,7 @@ impl Game for Particles {
         smoke.set_speed(30.0, 60.0);
         smoke.set_linear_damping(0.2, 0.5);
         smoke.set_spin(-1.0, 1.0);
+        smoke.set_spin_variation(1.0);
         smoke.set_sizes(&[0.8, 3.0]);
         smoke.set_colors(&[
             Color::rgba(0.5, 0.5, 0.55, 0.0),
@@ -79,10 +82,30 @@ impl Game for Particles {
             Color::rgba(1.0, 0.6, 0.2, 0.0),
         ]);
 
+        // Born on a ring and pushed around it, while a pull towards the
+        // middle draws them inwards and their spin changes as they age.
+        let mut swirl = graphics::new_particle_system(&dot, 800);
+        swirl.set_position(600.0, 360.0);
+        swirl.set_emission_rate(160.0);
+        swirl.set_particle_lifetime(1.5, 2.5);
+        swirl.set_emission_area_ex(AreaSpreadDistribution::BorderEllipse, 70.0, 70.0, 0.0, true);
+        swirl.set_direction(FRAC_PI_2);
+        swirl.set_speed(40.0, 60.0);
+        swirl.set_radial_acceleration(-40.0, -20.0);
+        swirl.set_tangential_acceleration(60.0, 90.0);
+        swirl.set_sizes(&[0.1, 0.4, 0.05]);
+        swirl.set_size_variation(0.5);
+        swirl.set_colors(&[
+            Color::rgba(0.4, 0.8, 1.0, 0.0),
+            Color::rgba(0.5, 0.9, 1.0, 0.9),
+            Color::rgba(0.2, 0.3, 1.0, 0.0),
+        ]);
+
         Particles {
             fire,
             smoke,
             sparks,
+            swirl,
         }
     }
 
@@ -90,6 +113,7 @@ impl Game for Particles {
         self.fire.update(dt);
         self.smoke.update(dt);
         self.sparks.update(dt);
+        self.swirl.update(dt);
     }
 
     fn draw(&mut self) {
@@ -102,9 +126,11 @@ impl Game for Particles {
         graphics::set_blend_mode(BlendMode::Add);
         graphics::draw_particles(&self.fire, x, y);
         graphics::draw_particles(&self.sparks, 0.0, 0.0);
+        graphics::draw_particles(&self.swirl, 0.0, 0.0);
         graphics::set_blend_mode(BlendMode::Alpha);
 
-        let count = self.fire.count() + self.smoke.count() + self.sparks.count();
+        let count =
+            self.fire.count() + self.smoke.count() + self.sparks.count() + self.swirl.count();
         graphics::print(&format!("{count} particles. Click for sparks."), 16.0, 16.0);
     }
 
