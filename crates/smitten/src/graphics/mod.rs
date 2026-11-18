@@ -23,6 +23,7 @@ mod screen;
 mod shader;
 mod shapes;
 mod sprite_batch;
+mod state;
 mod stats;
 mod text;
 mod text_object;
@@ -54,11 +55,12 @@ pub use image::{Image, ImageError, ImageSettings, Quad};
 pub use image_data::ImageData;
 pub use layered::{ArrayImage, CubeImage};
 pub use mesh::{Mesh, MeshDrawMode, MeshVertex};
-pub use particles::ParticleSystem;
+pub use particles::{AreaSpreadDistribution, EmissionArea, ParticleInsertMode, ParticleSystem};
 pub use shader::{Shader, ShaderError, Texture, UniformValue};
 pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::CompressedFormat;
 pub use sprite_batch::SpriteBatch;
+pub use state::StackType;
 pub use stats::Stats;
 pub use text::{Align, Font, FontError, Hinting};
 pub use text_object::Text;
@@ -94,7 +96,7 @@ pub(crate) struct GraphicsState {
     point_size: f32,
     pub(crate) default_filter: Filter,
     transform: Transform,
-    stack: Vec<Transform>,
+    stack: Vec<state::Saved>,
     batch: Batch,
     /// The font `print` uses. Created on first use so games that never
     /// print text pay nothing for it.
@@ -573,7 +575,7 @@ impl GraphicsState {
     fn push_particles(&mut self, system: &ParticleSystem, local: &Transform) {
         let transform = self.device().then_inner(local);
         let vertices = system.vertices(&transform, self.color);
-        let image = system.image();
+        let image = system.texture();
         self.batch
             .push(Some(image.texture()), image.filter(), &vertices);
     }
@@ -997,6 +999,35 @@ pub fn clear_scissor() {
     });
 }
 
+/// Limits drawing to the part of the current scissor that is also inside
+/// the given rectangle, the equivalent of `love.graphics.intersectScissor`.
+/// With no scissor set, it is the same as [`set_scissor`].
+///
+/// This suits nested panels: each can narrow where it draws without
+/// knowing where its parent allows.
+pub fn intersect_scissor(x: i32, y: i32, width: u32, height: u32) {
+    context::with(|ctx| {
+        let rect = (x, y, width, height);
+        ctx.gfx.scissor = Some(match ctx.gfx.scissor {
+            Some(current) => intersect(current, rect),
+            None => rect,
+        });
+        ctx.gfx.apply_scissor();
+    });
+}
+
+/// The overlap of two rectangles, empty at the corner of the first one's
+/// overlap if they do not meet.
+fn intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> (i32, i32, u32, u32) {
+    let right = |(x, _, w, _): (i32, i32, u32, u32)| i64::from(x) + i64::from(w);
+    let bottom = |(_, y, _, h): (i32, i32, u32, u32)| i64::from(y) + i64::from(h);
+    let left = a.0.max(b.0);
+    let top = a.1.max(b.1);
+    let width = (right(a).min(right(b)) - i64::from(left)).max(0) as u32;
+    let height = (bottom(a).min(bottom(b)) - i64::from(top)).max(0) as u32;
+    (left, top, width, height)
+}
+
 /// Returns the scissor rectangle as `(x, y, width, height)`, if one is set.
 pub fn scissor() -> Option<(i32, i32, u32, u32)> {
     context::with(|ctx| ctx.gfx.scissor)
@@ -1089,25 +1120,77 @@ pub fn default_filter() -> Filter {
 // ---------------------------------------------------------------------------
 // Transform stack
 
+/// The most [`push`]es that can wait for a [`pop`] at once, the size of
+/// LÖVE's stack.
+pub const MAX_STACK_DEPTH: usize = 64;
+
 /// Saves the current transform so [`pop`] can restore it.
+///
+/// Panics if more than [`MAX_STACK_DEPTH`] pushes are waiting for a
+/// [`pop`], which is almost always a missing `pop` in the game.
 pub fn push() {
+    push_ex(StackType::Transform);
+}
+
+/// Saves the transform and every other drawing setting so [`pop`] can
+/// restore them, the equivalent of `love.graphics.push("all")`.
+///
+/// That is the color, the background color, the font, the blend mode,
+/// the shader, the canvas, the scissor, the stencil test, the line width,
+/// join and style, the point size, the color mask, wireframe drawing and
+/// the default filter. A helper can then change any of them without the
+/// caller having to put them back.
+///
+/// ```no_run
+/// use smitten::{graphics, BlendMode, Color};
+///
+/// fn draw_glow() {
+///     graphics::push_all();
+///     graphics::set_blend_mode(BlendMode::Add);
+///     graphics::set_color(Color::rgb(1.0, 0.8, 0.3));
+///     // ... draw ...
+///     graphics::pop();
+/// }
+/// ```
+pub fn push_all() {
+    push_ex(StackType::All);
+}
+
+/// Saves what `kind` says, for [`pop`] to restore: [`push`] and
+/// [`push_all`] in one function, as LÖVE's `push(stacktype)`.
+pub fn push_ex(kind: StackType) {
     context::with(|ctx| {
-        let current = ctx.gfx.transform;
-        ctx.gfx.stack.push(current);
+        assert!(
+            ctx.gfx.stack.len() < MAX_STACK_DEPTH,
+            "graphics::push was called more than {MAX_STACK_DEPTH} times without a graphics::pop"
+        );
+        ctx.gfx.push_state(kind);
     });
 }
 
-/// Restores the transform saved by the matching [`push`].
+/// Restores what the matching [`push`] or [`push_all`] saved.
 ///
 /// Panics if there is no matching `push`, which is always a bug in the game.
 pub fn pop() {
-    context::with(|ctx| {
-        ctx.gfx.transform = ctx
-            .gfx
-            .stack
-            .pop()
-            .expect("graphics::pop was called without a matching graphics::push");
-    });
+    context::with(|ctx| ctx.gfx.pop_state());
+}
+
+/// How many [`push`]es are waiting for a [`pop`], the equivalent of
+/// `love.graphics.getStackDepth`. It is 0 at the start of every `draw`.
+pub fn stack_depth() -> usize {
+    context::with(|ctx| ctx.gfx.stack.len())
+}
+
+/// Puts every drawing setting back to how a game starts, the equivalent
+/// of `love.graphics.reset`.
+///
+/// The color becomes white and the background black, drawing goes back to
+/// the screen with the built-in shader and font, the scissor and stencil
+/// test are removed, the blend mode, line and point settings, color mask,
+/// wireframe drawing and default filter go back to their defaults, and the
+/// transform to the origin. What [`push`] saved is kept.
+pub fn reset() {
+    context::with(|ctx| ctx.gfx.reset_state());
 }
 
 /// Moves everything drawn afterwards by `(dx, dy)`.
@@ -1934,4 +2017,27 @@ pub fn printf_colored_with(
             transform,
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::intersect;
+
+    #[test]
+    fn scissors_intersect_to_their_overlap() {
+        assert_eq!(
+            intersect((0, 0, 100, 100), (50, 20, 100, 30)),
+            (50, 20, 50, 30)
+        );
+        assert_eq!(
+            intersect((10, 10, 20, 20), (0, 0, 100, 100)),
+            (10, 10, 20, 20)
+        );
+    }
+
+    #[test]
+    fn scissors_that_do_not_meet_leave_nothing() {
+        let (_, _, width, height) = intersect((0, 0, 10, 10), (20, 20, 10, 10));
+        assert_eq!((width, height), (0, 0));
+    }
 }
