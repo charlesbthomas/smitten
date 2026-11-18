@@ -59,7 +59,6 @@ pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};
 /// Panics if the two belong to different worlds or either was destroyed.
 pub fn distance(a: &Fixture, b: &Fixture) -> (f32, (f32, f32), (f32, f32)) {
     use rapier2d::parry::query::{self, ClosestPoints};
-    use rapier2d::prelude::*;
 
     assert!(
         std::rc::Rc::ptr_eq(&a.world, &b.world),
