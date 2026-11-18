@@ -83,6 +83,20 @@ a frame, so the graphics card sets the limit.
 SDL3 is built from source on the first build, which needs CMake and a C
 compiler.
 
+The quickest way to get these is [just](https://github.com/casey/just)
+1.44 or newer (`winget install Casey.Just`, `cargo install just`, or your
+package manager), then from the workspace root:
+
+```sh
+just setup
+```
+
+On Windows this installs the Visual Studio Build Tools with the C++
+workload, CMake and rustup through winget. On Linux it installs CMake, a C
+compiler and SDL's build dependencies with apt, dnf or pacman, plus rustup.
+On macOS it checks for the Xcode command line tools and installs CMake with
+Homebrew. To do it by hand instead:
+
 - **Windows:** Visual Studio Build Tools with the C++ workload, plus CMake.
   The Build Tools include a copy of CMake that is only on the path inside
   "Developer PowerShell for VS 2022", so run cargo from there or install
