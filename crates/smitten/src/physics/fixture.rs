@@ -84,6 +84,7 @@ impl Fixture {
     pub fn destroy(&self) {
         let mut inner = self.world.borrow_mut();
         inner.held_density.remove(&self.handle);
+        inner.ghosts.remove(&self.handle);
         inner.world.remove_collider(self.handle);
     }
 
@@ -218,7 +219,7 @@ impl Fixture {
 
     /// A copy of the fixture's shape, measured from its body's origin.
     pub fn shape(&self) -> Shape {
-        self.read(|collider| {
+        let shape = self.read(|collider| {
             Shape::new(
                 collider.shared_shape().clone(),
                 collider
@@ -226,7 +227,24 @@ impl Fixture {
                     .copied()
                     .unwrap_or(Pose::IDENTITY),
             )
-        })
+        });
+        let ghosts = self.world.borrow().ghosts.get(&self.handle).copied();
+        match ghosts {
+            Some(ghosts) => shape.with_ghosts(ghosts),
+            None => shape,
+        }
+    }
+
+    /// Keeps the ghost vertices of `shape` for this fixture, or forgets
+    /// them if it has none.
+    pub(super) fn set_ghosts(&self, shape: &Shape) {
+        let ghosts = shape.ghosts();
+        let mut inner = self.world.borrow_mut();
+        if ghosts == super::ghost::Ghosts::default() {
+            inner.ghosts.remove(&self.handle);
+        } else {
+            inner.ghosts.insert(self.handle, ghosts);
+        }
     }
 
     /// Gives the fixture a new shape, keeping everything else about it,
@@ -252,6 +270,7 @@ impl Fixture {
             .bodies
             .propagate_modified_body_positions_to_colliders(&mut world.colliders);
         drop(inner);
+        self.set_ghosts(shape);
         self
     }
 

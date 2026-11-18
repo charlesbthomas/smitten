@@ -38,6 +38,7 @@
 mod body;
 mod coupling;
 mod fixture;
+mod ghost;
 mod joint;
 mod shape;
 mod world;
