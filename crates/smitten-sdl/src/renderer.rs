@@ -28,8 +28,63 @@ static ARRAY_FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite_array.fra
 
 const VERTEX_SIZE: u32 = size_of::<Vertex>() as u32;
 const INITIAL_VERTEX_CAPACITY: u32 = 4096;
-/// The format of images and render targets. The screen may differ.
-const TEXTURE_FORMAT: SDL_GPUTextureFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+/// The format images and render targets are made in unless asked for
+/// another. The screen may differ.
+const DEFAULT_TEXTURE_FORMAT: SDL_GPUTextureFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+/// The most color targets one pass can draw to, as SDL allows.
+const MAX_COLOR_TARGETS: usize = 4;
+
+/// What a pipeline draws to: the format of each color target, how many
+/// samples each pixel holds, and the depth and stencil format.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct TargetDesc {
+    /// The format of each color target in order. Only the first
+    /// `color_count` are used; the rest stay invalid.
+    colors: [SDL_GPUTextureFormat; MAX_COLOR_TARGETS],
+    color_count: u8,
+    /// How many samples each pixel of every target holds.
+    samples: u32,
+    depth_stencil: SDL_GPUTextureFormat,
+}
+
+impl TargetDesc {
+    /// A single color target.
+    fn single(
+        color: SDL_GPUTextureFormat,
+        samples: u32,
+        depth_stencil: SDL_GPUTextureFormat,
+    ) -> Self {
+        let mut colors = [SDL_GPU_TEXTUREFORMAT_INVALID; MAX_COLOR_TARGETS];
+        colors[0] = color;
+        Self {
+            colors,
+            color_count: 1,
+            samples,
+            depth_stencil,
+        }
+    }
+
+    /// The formats of the color targets in use.
+    fn colors(&self) -> &[SDL_GPUTextureFormat] {
+        &self.colors[..usize::from(self.color_count)]
+    }
+}
+
+/// Which arrangement of vertex buffers and attributes a pipeline reads.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct VertexLayoutId(u32);
+
+impl VertexLayoutId {
+    /// One buffer of [`Vertex`], already in screen pixels, which is what
+    /// every draw uses today.
+    const STANDARD: Self = Self(0);
+}
+
+/// The vertex buffers and attributes a pipeline reads.
+struct VertexInput {
+    buffers: Vec<SDL_GPUVertexBufferDescription>,
+    attributes: Vec<SDL_GPUVertexAttribute>,
+}
 
 /// Everything that needs its own pipeline.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,15 +93,15 @@ struct PipelineKey {
     shader: Option<u32>,
     /// Whether the built-in shader draws a layer of an array texture.
     layered: bool,
-    /// Whether it draws to a render target rather than the screen.
-    to_target: bool,
+    /// What the pipeline draws to.
+    target: TargetDesc,
+    /// How the pipeline reads its vertices.
+    layout: VertexLayoutId,
     blend: BlendMode,
     blend_alpha: BlendAlphaMode,
     stencil: StencilMode,
     color_mask: ColorMask,
     wireframe: bool,
-    /// How many samples each pixel of the target holds.
-    samples: u32,
     /// The on-screen winding of the triangles to leave out.
     cull: Option<VertexWinding>,
 }
@@ -54,6 +109,8 @@ struct PipelineKey {
 #[derive(Clone, Copy)]
 struct Texture {
     handle: *mut SDL_GPUTexture,
+    /// The format of `handle`, and of `msaa` if there is one.
+    format: SDL_GPUTextureFormat,
     width: u32,
     height: u32,
     /// Whether it can be drawn to as well as sampled.
@@ -229,24 +286,44 @@ impl Renderer {
             let common = PipelineKey {
                 shader: None,
                 layered: false,
-                to_target: false,
+                target: TargetDesc::single(screen_format, 1, renderer.stencil_format),
+                layout: VertexLayoutId::STANDARD,
                 blend: BlendMode::Alpha,
                 blend_alpha: BlendAlphaMode::AlphaMultiply,
                 stencil: StencilMode::Off,
                 color_mask: ColorMask::ALL,
                 wireframe: false,
-                samples: 1,
                 cull: None,
             };
             let pipeline = renderer.create_pipeline(common)?;
             renderer.pipelines.insert(common, pipeline);
             renderer.linear = create_sampler(device, SamplerKey::clamped(Filter::Linear))?;
             renderer.nearest = create_sampler(device, SamplerKey::clamped(Filter::Nearest))?;
-            renderer.white = new_texture(device, 1, 1, 1, &[255, 255, 255, 255])?;
+            renderer.white = new_texture(
+                device,
+                DEFAULT_TEXTURE_FORMAT,
+                1,
+                1,
+                1,
+                &[255, 255, 255, 255],
+            )?;
             let white: &[u8] = &[255; 4];
-            renderer.white_array = new_layered_texture(device, TextureKind::Array, 1, 1, &[white])?;
-            renderer.white_cube =
-                new_layered_texture(device, TextureKind::Cube, 1, 1, &[white; 6])?;
+            renderer.white_array = new_layered_texture(
+                device,
+                DEFAULT_TEXTURE_FORMAT,
+                TextureKind::Array,
+                1,
+                1,
+                &[white],
+            )?;
+            renderer.white_cube = new_layered_texture(
+                device,
+                DEFAULT_TEXTURE_FORMAT,
+                TextureKind::Cube,
+                1,
+                1,
+                &[white; 6],
+            )?;
         }
         renderer.reserve_vertices(INITIAL_VERTEX_CAPACITY)?;
         Ok(renderer)
@@ -277,13 +354,15 @@ impl Renderer {
         }
         // SAFETY: the device is alive and `rgba` was just checked to cover
         // the whole texture.
-        let handle = unsafe { new_texture(self.device, width, height, levels, rgba)? };
+        let format = DEFAULT_TEXTURE_FORMAT;
+        let handle = unsafe { new_texture(self.device, format, width, height, levels, rgba)? };
         let id = self.next_texture_id;
         self.next_texture_id += 1;
         self.textures.insert(
             id,
             Texture {
                 handle,
+                format,
                 width,
                 height,
                 is_target: false,
@@ -292,7 +371,7 @@ impl Renderer {
                 msaa: ptr::null_mut(),
                 samples: 1,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: mipmap_bytes(width, height, levels),
+                bytes: mipmap_bytes(format, width, height, levels),
                 levels,
                 mipmaps,
                 kind: TextureKind::Flat,
@@ -345,6 +424,7 @@ impl Renderer {
             return Err(format!("this GPU cannot read {format:?} images"));
         }
         let level_count = levels.len() as u32;
+        let format = compressed_format(format);
         let mipmaps = (level_count > 1).then_some(Mipmaps {
             filter: Filter::Linear,
             sharpness: 0f32.to_bits(),
@@ -359,7 +439,7 @@ impl Renderer {
                 self.device,
                 &SDL_GPUTextureCreateInfo {
                     r#type: SDL_GPU_TEXTURETYPE_2D,
-                    format: compressed_format(format),
+                    format,
                     usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
                     width,
                     height,
@@ -393,6 +473,7 @@ impl Renderer {
             id,
             Texture {
                 handle,
+                format,
                 width,
                 height,
                 is_target: false,
@@ -439,13 +520,16 @@ impl Renderer {
         }
         // SAFETY: the device is alive and every layer was just checked to
         // cover the whole texture.
-        let handle = unsafe { new_layered_texture(self.device, kind, width, height, layers)? };
+        let format = DEFAULT_TEXTURE_FORMAT;
+        let handle =
+            unsafe { new_layered_texture(self.device, format, kind, width, height, layers)? };
         let id = self.next_texture_id;
         self.next_texture_id += 1;
         self.textures.insert(
             id,
             Texture {
                 handle,
+                format,
                 width,
                 height,
                 is_target: false,
@@ -454,7 +538,7 @@ impl Renderer {
                 msaa: ptr::null_mut(),
                 samples: 1,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: u64::from(width) * u64::from(height) * 4 * layers.len() as u64,
+                bytes: mipmap_bytes(format, width, height, 1) * layers.len() as u64,
                 levels: 1,
                 mipmaps: None,
                 kind,
@@ -492,6 +576,7 @@ impl Renderer {
         if let Some(blend) = blend {
             self.ensure_samplers((Wrap::Clamp, Wrap::Clamp), Some(blend))?;
         }
+        let format = DEFAULT_TEXTURE_FORMAT;
         // SAFETY: the device is alive, and the passes are begun, ended and
         // submitted in the order SDL requires.
         let handle = unsafe {
@@ -499,7 +584,7 @@ impl Renderer {
                 self.device,
                 &SDL_GPUTextureCreateInfo {
                     r#type: SDL_GPU_TEXTURETYPE_2D,
-                    format: TEXTURE_FORMAT,
+                    format,
                     usage: SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
                     width,
                     height,
@@ -533,11 +618,10 @@ impl Renderer {
             }
             handle
         };
-        let samples = self.supported_samples(TEXTURE_FORMAT, samples);
+        let samples = self.supported_samples(format, samples);
         let msaa = if samples > 1 {
             // SAFETY: the device is alive.
-            let msaa =
-                unsafe { new_msaa_texture(self.device, TEXTURE_FORMAT, width, height, samples) };
+            let msaa = unsafe { new_msaa_texture(self.device, format, width, height, samples) };
             if msaa.is_null() {
                 let message = format!("could not create a multisampled canvas: {}", sdl_error());
                 // SAFETY: the texture came from this device.
@@ -573,6 +657,7 @@ impl Renderer {
             id,
             Texture {
                 handle,
+                format,
                 width,
                 height,
                 is_target: true,
@@ -581,8 +666,8 @@ impl Renderer {
                 msaa,
                 samples,
                 wrap: (Wrap::Clamp, Wrap::Clamp),
-                bytes: mipmap_bytes(width, height, levels)
-                    + u64::from(width) * u64::from(height) * 4 * u64::from(samples.max(1) - 1),
+                bytes: mipmap_bytes(format, width, height, levels)
+                    + mipmap_bytes(format, width, height, 1) * u64::from(samples.max(1) - 1),
                 levels,
                 mipmaps: blend,
                 kind: TextureKind::Flat,
@@ -774,14 +859,6 @@ impl Renderer {
             .map_or(1, |texture| texture.samples)
     }
 
-    /// How many samples each pixel of a pass's target holds.
-    fn target_samples(&self, target: Option<TextureId>) -> u32 {
-        match target {
-            None => self.screen_samples,
-            Some(id) => self.texture_msaa(id),
-        }
-    }
-
     /// The graphics API, driver and GPU, as SDL reports them.
     pub fn renderer_info(&self) -> RendererInfo {
         let text = |pointer: *const std::ffi::c_char| {
@@ -881,21 +958,32 @@ impl Renderer {
                     .fragment
             }
         };
-        let format = if key.to_target {
-            TEXTURE_FORMAT
-        } else {
-            self.screen_format
-        };
+        let (vertex, input) = self.vertex_stage(key.layout)?;
         // SAFETY: the device and both shaders are alive.
-        unsafe {
-            create_pipeline(
-                self.device,
-                self.vertex_shader,
-                fragment,
-                format,
-                self.stencil_format,
-                key,
-            )
+        unsafe { create_pipeline(self.device, vertex, fragment, &input, key) }
+    }
+
+    /// The vertex shader and vertex input for a layout.
+    fn vertex_stage(
+        &self,
+        layout: VertexLayoutId,
+    ) -> Result<(*mut SDL_GPUShader, VertexInput), String> {
+        match layout {
+            VertexLayoutId::STANDARD => Ok((self.vertex_shader, standard_vertex_input())),
+            other => Err(format!("there is no vertex layout {other:?}")),
+        }
+    }
+
+    /// What a pass to `target`, or to the screen for `None`, draws to.
+    fn target_desc(&self, target: Option<TextureId>) -> TargetDesc {
+        match target.and_then(|id| self.textures.get(&id.0)) {
+            None if target.is_none() => {
+                TargetDesc::single(self.screen_format, self.screen_samples, self.stencil_format)
+            }
+            None => TargetDesc::single(DEFAULT_TEXTURE_FORMAT, 1, self.stencil_format),
+            Some(texture) => {
+                TargetDesc::single(texture.format, texture.samples, self.stencil_format)
+            }
         }
     }
 
@@ -926,8 +1014,9 @@ impl Renderer {
                 .checked_add(pass.call_count as usize)
                 .and_then(|end| frame.calls.get(pass.first_call as usize..end))
                 .unwrap_or(&[]);
+            let target = self.target_desc(pass.target);
             for call in calls {
-                let key = self.pipeline_key(call, pass.target);
+                let key = self.pipeline_key(call, target);
                 if !self.pipelines.contains_key(&key)
                     && let Ok(pipeline) = self.create_pipeline(key)
                 {
@@ -938,8 +1027,7 @@ impl Renderer {
     }
 
     /// The pipeline `call` draws with.
-    fn pipeline_key(&self, call: &DrawCall, target: Option<TextureId>) -> PipelineKey {
-        let to_target = target.is_some();
+    fn pipeline_key(&self, call: &DrawCall, target: TargetDesc) -> PipelineKey {
         let layered = call.shader.is_none()
             && call
                 .texture
@@ -948,13 +1036,13 @@ impl Renderer {
         PipelineKey {
             shader: call.shader.map(|id| id.0),
             layered,
-            to_target,
+            target,
+            layout: VertexLayoutId::STANDARD,
             blend: call.blend,
             blend_alpha: call.blend_alpha,
             stencil: call.stencil,
             color_mask: call.color_mask,
             wireframe: call.wireframe,
-            samples: self.target_samples(target),
             cull: call.cull,
         }
     }
@@ -1166,6 +1254,9 @@ impl Renderer {
         let Some(&source) = self.textures.get(&texture.0) else {
             return Err("the texture no longer exists".to_string());
         };
+        if source.format != DEFAULT_TEXTURE_FORMAT {
+            return Err("only an RGBA8 texture can be read back".to_string());
+        }
         let length = source.width as usize * source.height as usize * 4;
         let size = u32::try_from(length).map_err(|_| "the image is too large".to_string())?;
         // SAFETY: the transfer buffer is `size` bytes, exactly what the
@@ -1403,6 +1494,7 @@ impl Renderer {
         let mut bound_pipeline = ptr::null_mut();
         let mut bound_reference = None;
         let mut bound_scissor = None;
+        let target_desc = self.target_desc(target);
 
         // SAFETY: every handle bound here is alive, and each draw is checked
         // to stay inside the uploaded vertices.
@@ -1463,7 +1555,7 @@ impl Renderer {
                 let Some(scissor) = clip_scissor(call.scissor, width, height) else {
                     continue;
                 };
-                let key = self.pipeline_key(call, target);
+                let key = self.pipeline_key(call, target_desc);
                 // A pipeline that could not be built draws nothing.
                 let Some(&pipeline) = self.pipelines.get(&key) else {
                     continue;
@@ -1663,13 +1755,12 @@ unsafe fn create_pipeline(
     device: *mut SDL_GPUDevice,
     vertex_shader: *mut SDL_GPUShader,
     fragment_shader: *mut SDL_GPUShader,
-    format: SDL_GPUTextureFormat,
-    stencil_format: SDL_GPUTextureFormat,
+    input: &VertexInput,
     key: PipelineKey,
 ) -> Result<*mut SDL_GPUGraphicsPipeline, String> {
     let PipelineKey {
+        target,
         blend,
-        samples,
         blend_alpha,
         stencil,
         color_mask,
@@ -1680,36 +1771,6 @@ unsafe fn create_pipeline(
     // SAFETY: all pointers in the create-info structs outlive the calls
     // that read them.
     unsafe {
-        let buffers = [SDL_GPUVertexBufferDescription {
-            slot: 0,
-            pitch: VERTEX_SIZE,
-            input_rate: SDL_GPU_VERTEXINPUTRATE_VERTEX,
-            instance_step_rate: 0,
-        }];
-        let attribute = |location, format, offset: usize| SDL_GPUVertexAttribute {
-            location,
-            buffer_slot: 0,
-            format,
-            offset: offset as u32,
-        };
-        let attributes = [
-            attribute(
-                0,
-                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
-                std::mem::offset_of!(Vertex, position),
-            ),
-            attribute(
-                1,
-                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
-                std::mem::offset_of!(Vertex, uv),
-            ),
-            attribute(
-                2,
-                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
-                std::mem::offset_of!(Vertex, color),
-            ),
-        ];
-
         let mut blend_state = blend_state(blend, blend_alpha);
         // Writing to the stencil leaves the picture itself untouched.
         if matches!(stencil, StencilMode::Write(_)) {
@@ -1730,23 +1791,27 @@ unsafe fn create_pipeline(
             blend_state.enable_color_write_mask = true;
             blend_state.color_write_mask = SDL_GPUColorComponentFlags(flags);
         }
-        let targets = [SDL_GPUColorTargetDescription {
-            format,
-            blend_state,
-        }];
+        let targets: Vec<_> = target
+            .colors()
+            .iter()
+            .map(|&format| SDL_GPUColorTargetDescription {
+                format,
+                blend_state,
+            })
+            .collect();
 
         let info = SDL_GPUGraphicsPipelineCreateInfo {
             vertex_shader,
             fragment_shader,
             vertex_input_state: SDL_GPUVertexInputState {
-                vertex_buffer_descriptions: buffers.as_ptr(),
-                num_vertex_buffers: buffers.len() as u32,
-                vertex_attributes: attributes.as_ptr(),
-                num_vertex_attributes: attributes.len() as u32,
+                vertex_buffer_descriptions: input.buffers.as_ptr(),
+                num_vertex_buffers: input.buffers.len() as u32,
+                vertex_attributes: input.attributes.as_ptr(),
+                num_vertex_attributes: input.attributes.len() as u32,
             },
             primitive_type: SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
             multisample_state: SDL_GPUMultisampleState {
-                sample_count: sample_count(samples),
+                sample_count: sample_count(target.samples),
                 ..Default::default()
             },
             rasterizer_state: SDL_GPURasterizerState {
@@ -1771,8 +1836,8 @@ unsafe fn create_pipeline(
             target_info: SDL_GPUGraphicsPipelineTargetInfo {
                 color_target_descriptions: targets.as_ptr(),
                 num_color_targets: targets.len() as u32,
-                depth_stencil_format: stencil_format,
-                has_depth_stencil_target: true,
+                depth_stencil_format: target.depth_stencil,
+                has_depth_stencil_target: target.depth_stencil != SDL_GPU_TEXTUREFORMAT_INVALID,
                 ..Default::default()
             },
             depth_stencil_state: stencil_state(stencil),
@@ -1787,6 +1852,41 @@ unsafe fn create_pipeline(
             ));
         }
         Ok(pipeline)
+    }
+}
+
+/// The single buffer of [`Vertex`] that ordinary draws use.
+fn standard_vertex_input() -> VertexInput {
+    let attribute = |location, format, offset: usize| SDL_GPUVertexAttribute {
+        location,
+        buffer_slot: 0,
+        format,
+        offset: offset as u32,
+    };
+    VertexInput {
+        buffers: vec![SDL_GPUVertexBufferDescription {
+            slot: 0,
+            pitch: VERTEX_SIZE,
+            input_rate: SDL_GPU_VERTEXINPUTRATE_VERTEX,
+            instance_step_rate: 0,
+        }],
+        attributes: vec![
+            attribute(
+                0,
+                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                std::mem::offset_of!(Vertex, position),
+            ),
+            attribute(
+                1,
+                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                std::mem::offset_of!(Vertex, uv),
+            ),
+            attribute(
+                2,
+                SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+                std::mem::offset_of!(Vertex, color),
+            ),
+        ],
     }
 }
 
@@ -2014,11 +2114,21 @@ fn mipmap_levels(width: u32, height: u32) -> u32 {
     32 - width.max(height).max(1).leading_zeros()
 }
 
-/// The bytes of `levels` mipmap levels of a `width` by `height` texture.
-fn mipmap_bytes(width: u32, height: u32, levels: u32) -> u64 {
+/// The bytes of `levels` mipmap levels of a `width` by `height` texture in
+/// an uncompressed `format`.
+fn mipmap_bytes(format: SDL_GPUTextureFormat, width: u32, height: u32, levels: u32) -> u64 {
+    let pixel = u64::from(bytes_per_pixel(format));
     (0..levels)
-        .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
+        .map(|level| {
+            u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * pixel
+        })
         .sum()
+}
+
+/// How many bytes one pixel of an uncompressed `format` takes.
+fn bytes_per_pixel(format: SDL_GPUTextureFormat) -> u32 {
+    // SAFETY: SDL only reads the value.
+    unsafe { SDL_GPUTextureFormatTexelBlockSize(format) }
 }
 
 /// Fills every smaller mipmap level of `texture` from the full-size one.
@@ -2061,6 +2171,7 @@ fn check_pixel_count(width: u32, height: u32, rgba: &[u8]) -> Result<(), String>
 /// `device` must be alive and `rgba` must hold `width * height * 4` bytes.
 unsafe fn new_texture(
     device: *mut SDL_GPUDevice,
+    format: SDL_GPUTextureFormat,
     width: u32,
     height: u32,
     levels: u32,
@@ -2079,7 +2190,7 @@ unsafe fn new_texture(
             device,
             &SDL_GPUTextureCreateInfo {
                 r#type: SDL_GPU_TEXTURETYPE_2D,
-                format: TEXTURE_FORMAT,
+                format,
                 usage,
                 width,
                 height,
@@ -2114,6 +2225,7 @@ unsafe fn new_texture(
 /// hold `width * height * 4` bytes.
 unsafe fn new_layered_texture(
     device: *mut SDL_GPUDevice,
+    format: SDL_GPUTextureFormat,
     kind: TextureKind,
     width: u32,
     height: u32,
@@ -2130,7 +2242,7 @@ unsafe fn new_layered_texture(
             device,
             &SDL_GPUTextureCreateInfo {
                 r#type,
-                format: TEXTURE_FORMAT,
+                format,
                 usage: SDL_GPU_TEXTUREUSAGE_SAMPLER,
                 width,
                 height,
