@@ -51,8 +51,15 @@ mod tests;
 
 pub use body::{Body, BodyType};
 pub use fixture::Fixture;
-pub use joint::{Joint, JointType};
-pub use shape::{Shape, ShapeType};
+pub use joint::{
+    AnyJoint, DistanceJoint, FrictionJoint, GearJoint, Joint, JointOf, JointType, MotorJoint,
+    MouseJoint, PrismaticJoint, PulleyJoint, RevoluteJoint, RopeJoint, SpringJoint, WeldJoint,
+    WheelJoint, joint_kind,
+};
+pub use shape::{
+    AnyShape, ChainShape, CircleShape, EdgeShape, PolygonShape, Shape, ShapeOf, ShapeType,
+    shape_kind,
+};
 pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};
 
 /// How far apart two fixtures are, and the closest points of each, as

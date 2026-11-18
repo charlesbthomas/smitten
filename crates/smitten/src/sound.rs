@@ -243,7 +243,7 @@ pub const DEFAULT_DECODER_BUFFER_SIZE: usize = 4_096;
 ///
 /// Each call to [`Decoder::decode`] returns the next piece as a
 /// [`SoundData`], which suits analysing a long sound or feeding a
-/// [queueable source](crate::audio::Source::queueable) with sound that
+/// [queueable source](crate::audio::QueueableSource) with sound that
 /// has been changed on the way.
 pub struct Decoder {
     bytes: Arc<[u8]>,

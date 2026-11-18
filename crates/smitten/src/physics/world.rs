@@ -8,8 +8,12 @@ use rapier2d::prelude::*;
 
 use super::coupling::{self, Coupling};
 use super::ghost::{self, Ghosts};
-use super::joint::{self, JointType, MOTOR_DAMPING};
-use super::{Body, BodyType, Fixture, Joint};
+use super::joint::{self, JointOf, JointType, MOTOR_DAMPING, joint_kind};
+use super::{
+    Body, BodyType, DistanceJoint, Fixture, FrictionJoint, GearJoint, Joint, MotorJoint,
+    MouseJoint, PrismaticJoint, PulleyJoint, RevoluteJoint, RopeJoint, SpringJoint, WeldJoint,
+    WheelJoint,
+};
 
 /// LÖVE's default: 30 units to a meter.
 const DEFAULT_METER: f32 = 30.0;
@@ -969,14 +973,14 @@ impl World {
     /// the two bodies still collide with each other.
     ///
     /// The joint can have a motor and limits; see
-    /// [`Joint::set_motor_enabled`] and [`Joint::set_limits`].
+    /// [`JointOf::set_motor_enabled`] and [`JointOf::set_limits`].
     pub fn new_revolute_joint(
         &self,
         a: &Body,
         b: &Body,
         position: impl Into<Vec2>,
         collide: bool,
-    ) -> Joint {
+    ) -> RevoluteJoint {
         let Vec2 { x, y } = position.into();
         let anchor = Vector::new(x, y);
         let (pose_a, pose_b) = (a.pose(), b.pose());
@@ -990,11 +994,11 @@ impl World {
         // Box2D, so limits mean the same whichever way they started.
         joint.local_frame2.rotation = pose_b.rotation.inverse() * pose_a.rotation;
         idle_motor(&mut joint, JointAxis::AngX);
-        self.insert_joint(a, b, joint, JointType::Revolute)
+        self.insert_joint::<joint_kind::Revolute>(a, b, joint)
     }
 
     /// Glues two bodies together so they move as one.
-    pub fn new_weld_joint(&self, a: &Body, b: &Body, collide: bool) -> Joint {
+    pub fn new_weld_joint(&self, a: &Body, b: &Body, collide: bool) -> WeldJoint {
         // Both bodies hold on to the same frame in the world: the first
         // body's own.
         let (pose_a, pose_b) = (a.pose(), b.pose());
@@ -1004,7 +1008,7 @@ impl World {
             .contacts_enabled(collide)
             .build()
             .data;
-        self.insert_joint(a, b, joint, JointType::Weld)
+        self.insert_joint::<joint_kind::Weld>(a, b, joint)
     }
 
     /// Ties `(x1, y1)` on the first body to `(x2, y2)` on the second with
@@ -1019,7 +1023,7 @@ impl World {
         anchor2: impl Into<Vec2>,
         max_length: f32,
         collide: bool,
-    ) -> Joint {
+    ) -> RopeJoint {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
         let joint = RopeJointBuilder::new(max_length)
@@ -1028,7 +1032,7 @@ impl World {
             .contacts_enabled(collide)
             .build()
             .data;
-        self.insert_joint(a, b, joint, JointType::Rope)
+        self.insert_joint::<joint_kind::Rope>(a, b, joint)
     }
 
     /// Holds `(x1, y1)` on the first body and `(x2, y2)` on the second at
@@ -1042,7 +1046,7 @@ impl World {
         anchor1: impl Into<Vec2>,
         anchor2: impl Into<Vec2>,
         collide: bool,
-    ) -> Joint {
+    ) -> DistanceJoint {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
         let (first, second) = (Vector::new(x1, y1), Vector::new(x2, y2));
@@ -1057,7 +1061,7 @@ impl World {
             .build()
             .data;
         joint.set_motor_position(JointAxis::LinX, length, stiffness, damping);
-        self.insert_joint(a, b, joint, JointType::Distance)
+        self.insert_joint::<joint_kind::Distance>(a, b, joint)
     }
 
     /// Connects `(x1, y1)` on the first body to `(x2, y2)` on the second
@@ -1073,7 +1077,7 @@ impl World {
         anchor2: impl Into<Vec2>,
         stiffness: f32,
         damping: f32,
-    ) -> Joint {
+    ) -> SpringJoint {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
         let (first, second) = (Vector::new(x1, y1), Vector::new(x2, y2));
@@ -1082,7 +1086,7 @@ impl World {
             .local_anchor2(b.pose().inverse_transform_point(second))
             .build()
             .data;
-        self.insert_joint(a, b, joint, JointType::Spring)
+        self.insert_joint::<joint_kind::Spring>(a, b, joint)
     }
 
     /// Lets the second body slide along a line through `(x, y)` in the
@@ -1090,7 +1094,7 @@ impl World {
     /// turning, like a piston or a lift.
     ///
     /// The joint can have a motor and limits; see
-    /// [`Joint::set_motor_enabled`] and [`Joint::set_limits`].
+    /// [`JointOf::set_motor_enabled`] and [`JointOf::set_limits`].
     #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newPrismaticJoint.
     pub fn new_prismatic_joint(
         &self,
@@ -1099,7 +1103,7 @@ impl World {
         position: impl Into<Vec2>,
         axis: impl Into<Vec2>,
         collide: bool,
-    ) -> Joint {
+    ) -> PrismaticJoint {
         let Vec2 { x, y } = position.into();
         let Vec2 {
             x: axis_x,
@@ -1121,7 +1125,7 @@ impl World {
                 .data;
         joint.set_local_axis2(pose_b.rotation.inverse().transform_vector(axis));
         idle_motor(&mut joint, JointAxis::LinX);
-        self.insert_joint(a, b, joint, JointType::Prismatic)
+        self.insert_joint::<joint_kind::Prismatic>(a, b, joint)
     }
 
     /// Puts the second body on the first as a wheel at `(x, y)`: it turns
@@ -1130,8 +1134,8 @@ impl World {
     /// car.
     ///
     /// The wheel can be driven by a motor (see
-    /// [`Joint::set_motor_enabled`]), and the suspension tuned with
-    /// [`Joint::set_frequency`] and [`Joint::set_damping_ratio`].
+    /// [`JointOf::set_motor_enabled`]), and the suspension tuned with
+    /// [`JointOf::set_frequency`] and [`JointOf::set_damping_ratio`].
     #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newWheelJoint.
     pub fn new_wheel_joint(
         &self,
@@ -1140,7 +1144,7 @@ impl World {
         position: impl Into<Vec2>,
         axis: impl Into<Vec2>,
         collide: bool,
-    ) -> Joint {
+    ) -> WheelJoint {
         let Vec2 { x, y } = position.into();
         let Vec2 {
             x: axis_x,
@@ -1163,14 +1167,14 @@ impl World {
             .motor_position(JointAxis::LinX, 0.0, stiffness, damping)
             .build();
         idle_motor(&mut joint, JointAxis::AngX);
-        self.insert_joint(a, b, joint, JointType::Wheel)
+        self.insert_joint::<joint_kind::Wheel>(a, b, joint)
     }
 
     /// Pulls the point `(x, y)` on `body` towards a target, which starts
     /// there, like a rubber band. Move the target with
-    /// [`Joint::set_target`] to drag the body around with the mouse, and
+    /// [`JointOf::set_target`] to drag the body around with the mouse, and
     /// destroy the joint to let go.
-    pub fn new_mouse_joint(&self, body: &Body, position: impl Into<Vec2>) -> Joint {
+    pub fn new_mouse_joint(&self, body: &Body, position: impl Into<Vec2>) -> MouseJoint {
         let Vec2 { x, y } = position.into();
         let ground = self.ground();
         let (stiffness, damping) = joint::spring(5.0, 0.7);
@@ -1183,12 +1187,12 @@ impl World {
             joint.set_motor_position(axis, 0.0, stiffness, damping);
             joint.set_motor_max_force(axis, max_force);
         }
-        self.insert_joint(&ground, body, joint, JointType::Mouse)
+        self.insert_joint::<joint_kind::Mouse>(&ground, body, joint)
     }
 
     /// Slows the movement and turning of the second body relative to the
-    /// first, up to a [maximum force](Joint::set_max_force) and
-    /// [torque](Joint::set_max_torque), which start at 0. This is
+    /// first, up to a [maximum force](JointOf::set_max_force) and
+    /// [torque](JointOf::set_max_torque), which start at 0. This is
     /// friction for games seen from above: join each thing to the ground
     /// at its center.
     pub fn new_friction_joint(
@@ -1197,7 +1201,7 @@ impl World {
         b: &Body,
         position: impl Into<Vec2>,
         collide: bool,
-    ) -> Joint {
+    ) -> FrictionJoint {
         let Vec2 { x, y } = position.into();
         let anchor = Vector::new(x, y);
         let mut joint = GenericJointBuilder::new(JointAxesMask::empty())
@@ -1209,14 +1213,14 @@ impl World {
             idle_motor(&mut joint, axis);
             joint.motor_axes |= axis.into();
         }
-        self.insert_joint(a, b, joint, JointType::Friction)
+        self.insert_joint::<joint_kind::Friction>(a, b, joint)
     }
 
     /// Holds the second body where it is now relative to the first, and
     /// pulls it back when it moves away, with no more than a
-    /// [maximum force](Joint::set_max_force) and
-    /// [torque](Joint::set_max_torque). Change where it is held with
-    /// [`Joint::set_linear_offset`] and [`Joint::set_angular_offset`] to
+    /// [maximum force](JointOf::set_max_force) and
+    /// [torque](JointOf::set_max_torque). Change where it is held with
+    /// [`JointOf::set_linear_offset`] and [`JointOf::set_angular_offset`] to
     /// steer it. `correction_factor`, from 0.0 to 1.0, says how quickly it
     /// is pulled back; LÖVE uses 0.3.
     pub fn new_motor_joint(
@@ -1225,7 +1229,7 @@ impl World {
         b: &Body,
         correction_factor: f32,
         collide: bool,
-    ) -> Joint {
+    ) -> MotorJoint {
         let (stiffness, damping) = joint::correction_spring(correction_factor);
         let mut joint = GenericJointBuilder::new(JointAxesMask::empty())
             .local_frame1(a.pose().inverse() * b.pose())
@@ -1235,7 +1239,7 @@ impl World {
         for axis in [JointAxis::LinX, JointAxis::LinY, JointAxis::AngX] {
             joint.set_motor_position(axis, 0.0, stiffness, damping);
         }
-        self.insert_joint(a, b, joint, JointType::Motor)
+        self.insert_joint::<joint_kind::Motor>(a, b, joint)
     }
 
     /// Hangs two bodies from a rope over two fixed pulleys, at
@@ -1262,7 +1266,7 @@ impl World {
         anchor2: impl Into<Vec2>,
         ratio: f32,
         collide: bool,
-    ) -> Joint {
+    ) -> PulleyJoint {
         let Vec2 {
             x: ground_x1,
             y: ground_y1,
@@ -1288,7 +1292,7 @@ impl World {
             .local_anchor2(b.pose().inverse_transform_point(second))
             .contacts_enabled(collide)
             .build();
-        let joint = self.insert_joint(a, b, data, JointType::Pulley);
+        let joint = self.insert_joint::<joint_kind::Pulley>(a, b, data);
         self.inner.borrow_mut().couplings.insert(
             joint.handle,
             Coupling::Pulley {
@@ -1322,7 +1326,7 @@ impl World {
         joint_b: &Joint,
         ratio: f32,
         collide: bool,
-    ) -> Joint {
+    ) -> GearJoint {
         assert!(
             ratio.is_finite() && ratio != 0.0,
             "a gear's ratio must be a number other than 0, got {ratio}"
@@ -1371,7 +1375,7 @@ impl World {
             Body::new(&self.inner, body_a),
             Body::new(&self.inner, body_b),
         );
-        let joint = self.insert_joint(&a, &b, data, JointType::Gear);
+        let joint = self.insert_joint::<joint_kind::Gear>(&a, &b, data);
         self.inner.borrow_mut().couplings.insert(
             joint.handle,
             Coupling::Gear {
@@ -1399,18 +1403,23 @@ impl World {
         Body::new(&self.inner, handle)
     }
 
-    fn insert_joint(&self, a: &Body, b: &Body, mut joint: GenericJoint, kind: JointType) -> Joint {
+    fn insert_joint<K: joint_kind::Kind>(
+        &self,
+        a: &Body,
+        b: &Body,
+        mut joint: GenericJoint,
+    ) -> JointOf<K> {
         assert!(
             Rc::ptr_eq(&self.inner, &a.world) && Rc::ptr_eq(&self.inner, &b.world),
             "both bodies of a joint must belong to this world"
         );
-        joint::tag(&mut joint, kind);
+        joint::tag(&mut joint, K::TYPE);
         let handle = self
             .inner
             .borrow_mut()
             .world
             .insert_impulse_joint(a.handle, b.handle, joint);
-        Joint::new(&self.inner, handle)
+        JointOf::wrap(Joint::new(&self.inner, handle))
     }
 
     /// Draws the outline of every fixture in the current color, for

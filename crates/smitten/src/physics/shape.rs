@@ -1,5 +1,7 @@
 use glam::Vec2;
 use rapier2d::prelude::*;
+use std::marker::PhantomData;
+use std::ops::Deref;
 
 /// What kind of outline a [`Shape`] is, the equivalent of LÖVE's
 /// `ShapeType`.
@@ -32,14 +34,15 @@ pub enum ShapeType {
 /// [`Fixture::set_shape`]: super::Fixture::set_shape
 ///
 /// ```
-/// use smitten::physics::{BodyType, Shape, World};
+/// use smitten::physics::{BodyType, Shape, World, shape_kind};
 ///
 /// let world = World::new((0.0, 0.0));
 /// let body = world.new_body((100.0, 100.0), BodyType::Dynamic);
 /// let fixture = body.add_shape(&Shape::circle(10.0));
 ///
 /// // Grow the circle.
-/// fixture.set_shape(&fixture.shape().with_radius(20.0));
+/// let circle = fixture.shape().downcast::<shape_kind::Circle>().unwrap();
+/// fixture.set_shape(&circle.with_radius(20.0));
 /// assert_eq!(fixture.shape().radius(), 20.0);
 /// ```
 #[derive(Clone)]
@@ -65,26 +68,26 @@ impl Shape {
 
     /// A circle centered on the body's origin. LÖVE's
     /// `newCircleShape(radius)`.
-    pub fn circle(radius: f32) -> Shape {
+    pub fn circle(radius: f32) -> CircleShape {
         Shape::circle_at((0.0, 0.0), radius)
     }
 
     /// A circle centered `(x, y)` from the body's origin.
-    pub fn circle_at(position: impl Into<Vec2>, radius: f32) -> Shape {
+    pub fn circle_at(position: impl Into<Vec2>, radius: f32) -> CircleShape {
         let Vec2 { x, y } = position.into();
         assert!(
             radius > 0.0,
             "a circle needs a positive radius, got {radius}"
         );
-        Shape::new(
+        ShapeOf::wrap(Shape::new(
             SharedShape::ball(radius),
             Pose::from_translation(Vector::new(x, y)),
-        )
+        ))
     }
 
     /// A rectangle of `width` by `height` centered on the body's origin.
     /// LÖVE's `newRectangleShape(width, height)`. It is a polygon.
-    pub fn rectangle(size: impl Into<Vec2>) -> Shape {
+    pub fn rectangle(size: impl Into<Vec2>) -> PolygonShape {
         let Vec2 {
             x: width,
             y: height,
@@ -94,7 +97,11 @@ impl Shape {
 
     /// A rectangle centered `(x, y)` from the body's origin and turned by
     /// `angle` radians.
-    pub fn rectangle_at(position: impl Into<Vec2>, size: impl Into<Vec2>, angle: f32) -> Shape {
+    pub fn rectangle_at(
+        position: impl Into<Vec2>,
+        size: impl Into<Vec2>,
+        angle: f32,
+    ) -> PolygonShape {
         let Vec2 { x, y } = position.into();
         let Vec2 {
             x: width,
@@ -104,10 +111,10 @@ impl Shape {
             width > 0.0 && height > 0.0,
             "a rectangle needs a positive size, got {width} by {height}"
         );
-        Shape::new(
+        ShapeOf::wrap(Shape::new(
             SharedShape::cuboid(width / 2.0, height / 2.0),
             Pose::new(Vector::new(x, y), angle),
-        )
+        ))
     }
 
     /// A polygon with these corners, measured from the body's origin. A
@@ -115,30 +122,30 @@ impl Shape {
     /// LÖVE's `newPolygonShape`.
     ///
     /// Panics if the points do not span an area.
-    pub fn polygon(points: &[impl Into<Vec2> + Copy]) -> Shape {
+    pub fn polygon(points: &[impl Into<Vec2> + Copy]) -> PolygonShape {
         let points = crate::math::tuples(points);
         let points = &points[..];
         let points: Vec<Vector> = points.iter().map(|&(x, y)| Vector::new(x, y)).collect();
         let shape = SharedShape::convex_hull(&points)
             .expect("a polygon needs at least three corners that are not in a line");
-        Shape::new(shape, Pose::IDENTITY)
+        ShapeOf::wrap(Shape::new(shape, Pose::IDENTITY))
     }
 
     /// A thin line from `(x1, y1)` to `(x2, y2)`. LÖVE's `newEdgeShape`.
-    pub fn edge(anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Shape {
+    pub fn edge(anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> EdgeShape {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
-        Shape::new(
+        ShapeOf::wrap(Shape::new(
             SharedShape::segment(Vector::new(x1, y1), Vector::new(x2, y2)),
             Pose::IDENTITY,
-        )
+        ))
     }
 
     /// Lines through these points, joined back to the start if `closed`.
     /// LÖVE's `newChainShape`.
     ///
     /// Panics with fewer than two points.
-    pub fn chain(points: &[impl Into<Vec2> + Copy], closed: bool) -> Shape {
+    pub fn chain(points: &[impl Into<Vec2> + Copy], closed: bool) -> ChainShape {
         let points = crate::math::tuples(points);
         let points = &points[..];
         assert!(points.len() >= 2, "a chain needs at least two points");
@@ -148,38 +155,10 @@ impl Shape {
         if closed && count > 2 {
             indices.push([count - 1, 0]);
         }
-        Shape::new(
+        ShapeOf::wrap(Shape::new(
             SharedShape::polyline(vertices, Some(indices)),
             Pose::IDENTITY,
-        )
-    }
-
-    /// Tells an edge, or the start of a chain, what comes before it, the
-    /// equivalent of `EdgeShape:setPreviousVertex` and
-    /// `ChainShape:setPreviousVertex`. The point is measured from the
-    /// body's origin like the shape's own.
-    ///
-    /// Nothing collides with this ghost vertex. It lets a body sliding
-    /// over the start of the line pass onto it smoothly from the line
-    /// before, where it would otherwise catch on the join. A chain's own
-    /// joins are smooth already; this is for where one edge or chain
-    /// meets another.
-    ///
-    /// Panics if this is not an edge or a chain.
-    pub fn set_previous_vertex(&mut self, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.check_lines("set_previous_vertex");
-        self.previous = Some((x, y));
-    }
-
-    /// Tells an edge, or the end of a chain, what comes after it, the
-    /// equivalent of `setNextVertex`. See [`Shape::set_previous_vertex`].
-    ///
-    /// Panics if this is not an edge or a chain.
-    pub fn set_next_vertex(&mut self, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.check_lines("set_next_vertex");
-        self.next = Some((x, y));
+        ))
     }
 
     /// The ghost vertex before an edge or chain, if one was set, the
@@ -192,14 +171,6 @@ impl Shape {
     /// equivalent of `getNextVertex`. Other shapes have none.
     pub fn next_vertex(&self) -> Option<Vec2> {
         self.next.map(Vec2::from)
-    }
-
-    fn check_lines(&self, method: &str) {
-        assert!(
-            matches!(self.kind(), ShapeType::Edge | ShapeType::Chain),
-            "a {:?} shape has no ghost vertices, so it cannot {method}; only edges and chains do",
-            self.kind()
-        );
     }
 
     /// The ghost vertices in the space of the shape itself, without the
@@ -223,6 +194,12 @@ impl Shape {
         self
     }
 
+    /// Where a circle's center is on the body.
+    fn center(&self) -> Vec2 {
+        let center = self.offset.translation;
+        Vec2::new(center.x, center.y)
+    }
+
     /// What kind of shape this is.
     pub fn kind(&self) -> ShapeType {
         let shape = &self.shape;
@@ -240,43 +217,6 @@ impl Shape {
     /// A circle's radius. Other shapes have none and give 0.
     pub fn radius(&self) -> f32 {
         self.shape.as_ball().map_or(0.0, |ball| ball.radius)
-    }
-
-    /// The same circle with another radius. LÖVE's
-    /// `CircleShape:setRadius`, on a copy.
-    ///
-    /// Panics if this is not a circle.
-    pub fn with_radius(&self, radius: f32) -> Shape {
-        let Vec2 { x, y } = self.point();
-        Shape::circle_at((x, y), radius)
-    }
-
-    /// A circle's center, measured from the body's origin. LÖVE's
-    /// `CircleShape:getPoint`.
-    ///
-    /// Panics if this is not a circle.
-    pub fn point(&self) -> Vec2 {
-        assert!(
-            self.kind() == ShapeType::Circle,
-            "a {:?} shape has no center point; only circles do",
-            self.kind()
-        );
-        let center = self.offset.translation;
-        (center.x, center.y).into()
-    }
-
-    /// The same circle moved to be centered `(x, y)` from the body's
-    /// origin. LÖVE's `CircleShape:setPoint`, on a copy.
-    ///
-    /// Panics if this is not a circle.
-    pub fn with_point(&self, position: impl Into<Vec2>) -> Shape {
-        let Vec2 { x, y } = position.into();
-        assert!(
-            self.kind() == ShapeType::Circle,
-            "a {:?} shape has no center point; only circles do",
-            self.kind()
-        );
-        Shape::circle_at((x, y), self.radius())
     }
 
     /// The corners of a polygon, the two ends of an edge, or the points
@@ -320,31 +260,6 @@ impl Shape {
         self.shape
             .as_polyline()
             .map_or(1, |chain| chain.indices().len())
-    }
-
-    /// One line of a chain, counted from 0, as an edge. LÖVE's
-    /// `ChainShape:getChildEdge`.
-    ///
-    /// Panics if this is not a chain or it has no such line.
-    pub fn child_edge(&self, index: usize) -> Shape {
-        let chain = self.shape.as_polyline().unwrap_or_else(|| {
-            panic!(
-                "a {:?} shape has no child edges; only chains do",
-                self.kind()
-            )
-        });
-        let segment = chain.indices().get(index).unwrap_or_else(|| {
-            panic!(
-                "this chain has {} edges, so there is no edge {index}",
-                chain.indices().len()
-            )
-        });
-        let vertices = chain.vertices();
-        let (a, b) = (
-            self.offset.transform_point(vertices[segment[0] as usize]),
-            self.offset.transform_point(vertices[segment[1] as usize]),
-        );
-        Shape::edge((a.x, a.y), (b.x, b.y))
     }
 
     /// Where the shape would be on a body at `(x, y)` turned by `angle`.
@@ -427,7 +342,7 @@ impl std::fmt::Debug for Shape {
         out.field("kind", &self.kind());
         match self.kind() {
             ShapeType::Circle => out
-                .field("point", &self.point())
+                .field("point", &self.center())
                 .field("radius", &self.radius()),
             _ => out.field("points", &self.points()),
         };
@@ -442,6 +357,225 @@ impl PartialEq for Shape {
         self.kind() == other.kind()
             && self.radius() == other.radius()
             && self.points() == other.points()
-            && (self.kind() != ShapeType::Circle || self.point() == other.point())
+            && (self.kind() != ShapeType::Circle || self.center() == other.center())
+    }
+}
+
+/// A shape of one kind, `K` from [`shape_kind`], such as a
+/// [`CircleShape`]. It has the methods that kind of shape has, and derefs
+/// to [`Shape`] for the ones every shape has.
+pub struct ShapeOf<K> {
+    inner: Shape,
+    kind: PhantomData<K>,
+}
+
+impl<K: shape_kind::Kind> ShapeOf<K> {
+    fn wrap(inner: Shape) -> Self {
+        debug_assert_eq!(inner.kind(), K::TYPE);
+        ShapeOf {
+            inner,
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<K> Deref for ShapeOf<K> {
+    type Target = Shape;
+
+    fn deref(&self) -> &Shape {
+        &self.inner
+    }
+}
+
+impl<K> AsRef<Shape> for ShapeOf<K> {
+    fn as_ref(&self) -> &Shape {
+        &self.inner
+    }
+}
+
+impl<K> From<ShapeOf<K>> for Shape {
+    fn from(shape: ShapeOf<K>) -> Shape {
+        shape.inner
+    }
+}
+
+impl<K> Clone for ShapeOf<K> {
+    fn clone(&self) -> Self {
+        ShapeOf {
+            inner: self.inner.clone(),
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<K> PartialEq for ShapeOf<K> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<K> PartialEq<Shape> for ShapeOf<K> {
+    fn eq(&self, other: &Shape) -> bool {
+        self.inner == *other
+    }
+}
+
+impl<K> PartialEq<ShapeOf<K>> for Shape {
+    fn eq(&self, other: &ShapeOf<K>) -> bool {
+        *self == other.inner
+    }
+}
+
+impl<K> std::fmt::Debug for ShapeOf<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+/// The kinds of shape, as types for [`ShapeOf`].
+pub mod shape_kind {
+    use super::ShapeType;
+
+    mod sealed {
+        pub trait Sealed {}
+    }
+
+    /// A kind of shape.
+    pub trait Kind: sealed::Sealed {
+        /// The kind as a value.
+        const TYPE: ShapeType;
+    }
+
+    /// Edges and chains, which can have ghost vertices.
+    pub trait Lines: Kind {}
+
+    macro_rules! kinds {
+        ($($name:ident: $($has:ident),*;)*) => {$(
+            #[doc = concat!("The kind of a [`ShapeType::", stringify!($name), "`] shape.")]
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum $name {}
+            impl sealed::Sealed for $name {}
+            impl Kind for $name {
+                const TYPE: ShapeType = ShapeType::$name;
+            }
+            $(impl $has for $name {})*
+        )*};
+    }
+
+    kinds! {
+        Circle: ;
+        Polygon: ;
+        Edge: Lines;
+        Chain: Lines;
+    }
+}
+
+/// A circle, the equivalent of LÖVE's `CircleShape`.
+pub type CircleShape = ShapeOf<shape_kind::Circle>;
+/// A convex polygon, rectangles included, the equivalent of LÖVE's
+/// `PolygonShape`.
+pub type PolygonShape = ShapeOf<shape_kind::Polygon>;
+/// A single line, the equivalent of LÖVE's `EdgeShape`.
+pub type EdgeShape = ShapeOf<shape_kind::Edge>;
+/// Lines joined end to end, the equivalent of LÖVE's `ChainShape`.
+pub type ChainShape = ShapeOf<shape_kind::Chain>;
+
+/// A shape as its own type, from [`Shape::typed`], to match on.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
+pub enum AnyShape {
+    Circle(CircleShape),
+    Polygon(PolygonShape),
+    Edge(EdgeShape),
+    Chain(ChainShape),
+}
+
+impl Shape {
+    /// The shape as its own type, to match on.
+    pub fn typed(&self) -> AnyShape {
+        let shape = self.clone();
+        match self.kind() {
+            ShapeType::Circle => AnyShape::Circle(ShapeOf::wrap(shape)),
+            ShapeType::Polygon => AnyShape::Polygon(ShapeOf::wrap(shape)),
+            ShapeType::Edge => AnyShape::Edge(ShapeOf::wrap(shape)),
+            ShapeType::Chain => AnyShape::Chain(ShapeOf::wrap(shape)),
+        }
+    }
+
+    /// The shape as a shape of kind `K`, or `None` if it is another kind.
+    pub fn downcast<K: shape_kind::Kind>(&self) -> Option<ShapeOf<K>> {
+        (self.kind() == K::TYPE).then(|| ShapeOf::wrap(self.clone()))
+    }
+}
+
+/// Circles.
+impl CircleShape {
+    /// The same circle with another radius. LÖVE's
+    /// `CircleShape:setRadius`, on a copy.
+    pub fn with_radius(&self, radius: f32) -> CircleShape {
+        Shape::circle_at(self.point(), radius)
+    }
+
+    /// A circle's center, measured from the body's origin. LÖVE's
+    /// `CircleShape:getPoint`.
+    pub fn point(&self) -> Vec2 {
+        self.center()
+    }
+
+    /// The same circle moved to be centered `(x, y)` from the body's
+    /// origin. LÖVE's `CircleShape:setPoint`, on a copy.
+    pub fn with_point(&self, position: impl Into<Vec2>) -> CircleShape {
+        Shape::circle_at(position, self.radius())
+    }
+}
+
+/// Edges and chains: their ghost vertices.
+impl<K: shape_kind::Lines> ShapeOf<K> {
+    /// Tells an edge, or the start of a chain, what comes before it, the
+    /// equivalent of `EdgeShape:setPreviousVertex` and
+    /// `ChainShape:setPreviousVertex`. The point is measured from the
+    /// body's origin like the shape's own.
+    ///
+    /// Nothing collides with this ghost vertex. It lets a body sliding
+    /// over the start of the line pass onto it smoothly from the line
+    /// before, where it would otherwise catch on the join. A chain's own
+    /// joins are smooth already; this is for where one edge or chain
+    /// meets another.
+    pub fn set_previous_vertex(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        self.inner.previous = Some((x, y));
+    }
+
+    /// Tells an edge, or the end of a chain, what comes after it, the
+    /// equivalent of `setNextVertex`. See [`set_previous_vertex`](Self::set_previous_vertex).
+    pub fn set_next_vertex(&mut self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        self.inner.next = Some((x, y));
+    }
+}
+
+/// Chains.
+impl ChainShape {
+    /// One line of a chain, counted from 0, as an edge. LÖVE's
+    /// `ChainShape:getChildEdge`.
+    ///
+    /// Panics if the chain has no such line.
+    pub fn child_edge(&self, index: usize) -> EdgeShape {
+        let chain = self
+            .shape
+            .as_polyline()
+            .expect("a chain shape holds a polyline");
+        let segment = chain.indices().get(index).unwrap_or_else(|| {
+            panic!(
+                "this chain has {} edges, so there is no edge {index}",
+                chain.indices().len()
+            )
+        });
+        let vertices = chain.vertices();
+        let (a, b) = (
+            self.offset.transform_point(vertices[segment[0] as usize]),
+            self.offset.transform_point(vertices[segment[1] as usize]),
+        );
+        Shape::edge((a.x, a.y), (b.x, b.y))
     }
 }

@@ -742,12 +742,15 @@ fn joints_know_their_bodies_anchors_and_data() {
 }
 
 #[test]
-#[should_panic(expected = "a Weld joint has no motor")]
-fn asking_a_joint_for_what_it_lacks_panics() {
+fn a_joint_turns_back_into_its_own_type() {
     let world = World::new((0.0, 0.0));
     let a = world.new_body((0.0, 0.0), BodyType::Dynamic);
     let b = world.new_body((10.0, 0.0), BodyType::Dynamic);
-    world.new_weld_joint(&a, &b, false).set_motor_speed(1.0);
+    let weld = world.new_weld_joint(&a, &b, false);
+    let joint: Joint = weld.clone().into();
+    assert!(joint.downcast::<joint_kind::Revolute>().is_none());
+    assert_eq!(joint.downcast::<joint_kind::Weld>(), Some(weld.clone()));
+    assert!(matches!(joint.typed(), AnyJoint::Weld(found) if found == weld));
 }
 
 #[test]
@@ -1246,14 +1249,20 @@ fn fixtures_are_made_from_shapes_and_can_change_shape() {
     assert_eq!(fixture.shape(), shape);
     let small = ball.mass();
 
-    fixture.set_shape(&fixture.shape().with_radius(20.0));
+    let circle = || {
+        fixture
+            .shape()
+            .downcast::<shape_kind::Circle>()
+            .expect("a circle")
+    };
+    fixture.set_shape(&circle().with_radius(20.0));
     assert_eq!(fixture.shape().radius(), 20.0);
     assert!((ball.mass() / small - 4.0).abs() < 1e-3);
     run(&world, 3.0);
     assert!((ball.y() - 480.0).abs() < 2.0, "rests at {}", ball.y());
 
-    fixture.set_shape(&fixture.shape().with_point((0.0, -10.0)));
-    assert_eq!(fixture.shape().point(), Vec2::new(0.0, -10.0));
+    fixture.set_shape(&circle().with_point((0.0, -10.0)));
+    assert_eq!(circle().point(), Vec2::new(0.0, -10.0));
     run(&world, 3.0);
     assert!((ball.y() - 490.0).abs() < 2.0, "rests at {}", ball.y());
 
@@ -1266,9 +1275,10 @@ fn fixtures_are_made_from_shapes_and_can_change_shape() {
 }
 
 #[test]
-#[should_panic(expected = "only circles do")]
-fn asking_a_polygon_for_its_center_point_panics() {
-    Shape::rectangle((10.0, 10.0)).point();
+fn a_shape_turns_back_into_its_own_type() {
+    let shape: Shape = Shape::rectangle((10.0, 10.0)).into();
+    assert!(shape.downcast::<shape_kind::Circle>().is_none());
+    assert!(matches!(shape.typed(), AnyShape::Polygon(_)));
 }
 
 #[test]
@@ -1344,7 +1354,13 @@ fn a_pulley_ratio_trades_distance_for_strength() {
 }
 
 /// A wheel pinned at `(x, y)` to a static body, by a revolute joint.
-fn pinned_wheel(world: &World, ground: &Body, x: f32, y: f32, radius: f32) -> (Body, Joint) {
+fn pinned_wheel(
+    world: &World,
+    ground: &Body,
+    x: f32,
+    y: f32,
+    radius: f32,
+) -> (Body, RevoluteJoint) {
     let wheel = world.new_body((x, y), BodyType::Dynamic);
     wheel.add_circle(radius);
     let pin = world.new_revolute_joint(ground, &wheel, (x, y), false);
@@ -1602,12 +1618,6 @@ fn ghost_vertices_are_kept_with_the_shape() {
     // Replacing the shape replaces its ghosts too.
     fixture.set_shape(&Shape::edge((0.0, 0.0), (5.0, 0.0)));
     assert_eq!(fixture.shape().next_vertex(), None);
-}
-
-#[test]
-#[should_panic(expected = "only edges and chains do")]
-fn a_circle_has_no_ghost_vertices() {
-    Shape::circle(5.0).set_next_vertex((0.0, 0.0));
 }
 
 #[test]

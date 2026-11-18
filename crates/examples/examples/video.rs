@@ -8,7 +8,7 @@
 //! The video is an Ogg Theora file made with FFmpeg's `mandelbrot` and
 //! `sine` sources.
 
-use smitten::audio::Source;
+use smitten::audio::QueueableSource;
 use smitten::graphics::DrawParams;
 use smitten::graphics::{DrawMode, Video};
 use smitten::sound::SoundData;
@@ -20,7 +20,7 @@ const TONE_BUFFER: usize = 1_024;
 
 struct Player {
     video: Video,
-    tone: Source,
+    tone: QueueableSource,
     tone_on: bool,
     /// Where the tone's sine wave has got to, so each buffer carries on
     /// from the last without a click.
@@ -52,7 +52,7 @@ impl Game for Player {
         video.play();
         Ok(Player {
             video,
-            tone: Source::queueable(TONE_RATE, 1, 4),
+            tone: QueueableSource::new(TONE_RATE, 1, 4),
             tone_on: false,
             phase: 0.0,
         })

@@ -74,7 +74,7 @@ pub use smitten_core::backend::{
     CompressedFormat, IndexDataType, RendererInfo, TextureKind, VertexDataType,
     VertexStep as VertexAttributeStep,
 };
-pub use sprite_batch::{SpriteBatch, SpriteBatchUsage};
+pub use sprite_batch::{BatchTexture, SpriteBatch, SpriteBatchUsage};
 use state::StackType;
 pub use stats::Stats;
 pub use text::{Align, Font, FontError, FontSettings, Hinting};
@@ -736,7 +736,7 @@ impl GraphicsState {
         // Attached attributes are only on the GPU, so the sprites are
         // drawn from GPU buffers as a mesh.
         if let Some(mesh) = sprites.attached_mesh() {
-            let (texture, filter) = sprites.texture();
+            let (texture, filter) = sprites.gpu_texture();
             let mut retired = Vec::new();
             let uploaded = mesh.upload(backend, self.frame_number, &mut retired, 1);
             self.retired_buffers.extend(retired);
@@ -781,7 +781,7 @@ impl GraphicsState {
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
         sprites.write_vertices(&transform, self.color, &mut vertices);
-        let (texture, filter) = sprites.texture();
+        let (texture, filter) = sprites.gpu_texture();
         if sprites.is_layered() {
             for (layer, range) in sprites.layer_runs() {
                 self.batch

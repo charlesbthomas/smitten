@@ -1,4 +1,6 @@
 use glam::Vec2;
+use std::marker::PhantomData;
+use std::ops::Deref;
 use std::rc::Rc;
 
 use rapier2d::prelude::*;
@@ -127,12 +129,13 @@ fn per_second(inner: &Inner) -> f32 {
 /// [`World`](super::World). It stays in place until destroyed, or until
 /// one of its bodies is.
 ///
-/// One type stands for every kind of joint, as in LÖVE's dynamic API.
-/// Methods that only some kinds have, such as
-/// [`Joint::set_motor_speed`], say which kinds in their documentation and
-/// panic when called on another kind. [`Joint::kind`] says which kind a
-/// joint is. Using a destroyed joint panics, except for
-/// [`Joint::is_destroyed`] and [`Joint::destroy`].
+/// `Joint` has what every kind of joint has. Each `new_..._joint` method
+/// returns the joint's own type, such as a [`RevoluteJoint`], which has
+/// the methods only that kind has, such as
+/// [`set_motor_speed`](JointOf::set_motor_speed), and derefs to `Joint`
+/// for the rest. [`Joint::typed`] turns a `Joint` back into its own type,
+/// as an [`AnyJoint`] to match on. Using a destroyed joint panics, except
+/// for [`Joint::is_destroyed`] and [`Joint::destroy`].
 #[derive(Clone)]
 pub struct Joint {
     pub(super) world: Shared,
@@ -338,75 +341,6 @@ impl Joint {
         }
     }
 
-    /// Whether the joint's motor is on. Revolute, prismatic and wheel
-    /// joints have one, off at first.
-    pub fn is_motor_enabled(&self) -> bool {
-        let axis = self.motor_axis("motor");
-        self.read(|joint, _| joint.data.motor_axes.contains(axis.into()))
-    }
-
-    /// Turns the joint's motor on or off. A motor turns the joint at
-    /// [`Joint::motor_speed`], with no more than its maximum torque (or
-    /// force, for a prismatic joint), which is 0 until set.
-    pub fn set_motor_enabled(&self, enabled: bool) {
-        let axis = self.motor_axis("motor");
-        self.change(|joint| joint.motor_axes.set(axis.into(), enabled));
-    }
-
-    /// The speed the motor drives the joint at: radians per second for a
-    /// revolute or wheel joint, units per second for a prismatic one.
-    pub fn motor_speed(&self) -> f32 {
-        let axis = self.motor_axis("motor");
-        self.read(|joint, _| joint.data.motors[axis as usize].target_vel)
-    }
-
-    /// Sets the speed the motor drives the joint at. Positive turns the
-    /// second body clockwise on screen, or slides it along the axis.
-    pub fn set_motor_speed(&self, speed: f32) {
-        let axis = self.motor_axis("motor");
-        self.change(|joint| joint.motors[axis as usize].target_vel = speed);
-    }
-
-    /// The most torque the motor of a revolute or wheel joint can apply.
-    pub fn max_motor_torque(&self) -> f32 {
-        self.expect(&[JointType::Revolute, JointType::Wheel], "motor torque");
-        self.read(|joint, _| joint.data.motors[JointAxis::AngX as usize].max_force)
-    }
-
-    /// Limits the torque the motor of a revolute or wheel joint can
-    /// apply. The motor does nothing until this is above 0.
-    pub fn set_max_motor_torque(&self, torque: f32) {
-        self.expect(&[JointType::Revolute, JointType::Wheel], "motor torque");
-        self.change(|joint| joint.motors[JointAxis::AngX as usize].max_force = torque.max(0.0));
-    }
-
-    /// The most force the motor of a prismatic joint can apply.
-    pub fn max_motor_force(&self) -> f32 {
-        self.expect(&[JointType::Prismatic], "motor force");
-        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].max_force)
-    }
-
-    /// Limits the force the motor of a prismatic joint can apply. The
-    /// motor does nothing until this is above 0.
-    pub fn set_max_motor_force(&self, force: f32) {
-        self.expect(&[JointType::Prismatic], "motor force");
-        self.change(|joint| joint.motors[JointAxis::LinX as usize].max_force = force.max(0.0));
-    }
-
-    /// The torque a revolute or wheel joint's motor applied during the
-    /// last update.
-    pub fn motor_torque(&self) -> f32 {
-        self.expect(&[JointType::Revolute, JointType::Wheel], "motor torque");
-        self.motor_output(JointAxis::AngX)
-    }
-
-    /// The force a prismatic joint's motor applied during the last
-    /// update.
-    pub fn motor_force(&self) -> f32 {
-        self.expect(&[JointType::Prismatic], "motor force");
-        self.motor_output(JointAxis::LinX)
-    }
-
     fn motor_output(&self, axis: JointAxis) -> f32 {
         self.read(|joint, inner| {
             if !joint.data.motor_axes.contains(axis.into()) {
@@ -425,217 +359,9 @@ impl Joint {
         }
     }
 
-    /// Whether the joint's limits are on. Revolute and prismatic joints
-    /// have them, off at first.
-    pub fn are_limits_enabled(&self) -> bool {
-        let axis = self.limit_axis();
-        self.read(|joint, _| joint.data.limit_axes.contains(axis.into()))
-    }
-
-    /// Turns the joint's limits on or off.
-    pub fn set_limits_enabled(&self, enabled: bool) {
-        let axis = self.limit_axis();
-        self.change(|joint| joint.limit_axes.set(axis.into(), enabled));
-    }
-
-    /// The joint's `(lower, upper)` limits: the angles, in radians, a
-    /// revolute joint may turn to, or the distances along its axis a
-    /// prismatic joint may slide to. Both start at 0.
-    pub fn limits(&self) -> (f32, f32) {
-        let axis = self.limit_axis();
-        self.read(|joint, _| {
-            let limits = &joint.data.limits[axis as usize];
-            (limits.min, limits.max)
-        })
-    }
-
-    /// Sets the joint's limits. They are measured from where the joint
-    /// was made, and take effect once
-    /// [enabled](Joint::set_limits_enabled).
-    pub fn set_limits(&self, lower: f32, upper: f32) {
-        assert!(
-            lower <= upper,
-            "a joint's lower limit must not be above its upper one, got {lower} and {upper}"
-        );
-        let axis = self.limit_axis();
-        self.change(|joint| {
-            let limits = &mut joint.limits[axis as usize];
-            limits.min = lower;
-            limits.max = upper;
-        });
-    }
-
-    /// Sets only the lower limit of a revolute or prismatic joint,
-    /// keeping the upper one. See [`Joint::set_limits`].
-    pub fn set_lower_limit(&self, lower: f32) {
-        let (_, upper) = self.limits();
-        self.set_limits(lower, upper.max(lower));
-    }
-
-    /// Sets only the upper limit of a revolute or prismatic joint,
-    /// keeping the lower one.
-    pub fn set_upper_limit(&self, upper: f32) {
-        let (lower, _) = self.limits();
-        self.set_limits(lower.min(upper), upper);
-    }
-
-    /// The lower limit of a revolute or prismatic joint.
-    pub fn lower_limit(&self) -> f32 {
-        self.limits().0
-    }
-
-    /// The upper limit of a revolute or prismatic joint.
-    pub fn upper_limit(&self) -> f32 {
-        self.limits().1
-    }
-
     // Where the joint is.
 
-    /// How far a revolute or wheel joint has turned since it was made, in
-    /// radians, clockwise on screen.
-    pub fn joint_angle(&self) -> f32 {
-        self.expect(&[JointType::Revolute, JointType::Wheel], "angle");
-        self.read(|joint, inner| {
-            let frames = Joint::frames(joint, inner);
-            (frames.one.rotation.inverse() * frames.two.rotation).angle()
-        })
-    }
-
-    /// The angle of the second body minus that of the first when a
-    /// revolute, prismatic or weld joint was made, in radians. The
-    /// joint's angle and limits are measured from it, and a weld joint
-    /// holds it.
-    pub fn reference_angle(&self) -> f32 {
-        self.expect(
-            &[JointType::Revolute, JointType::Prismatic, JointType::Weld],
-            "reference angle",
-        );
-        self.read(|joint, _| {
-            let data = &joint.data;
-            (data.local_frame1.rotation * data.local_frame2.rotation.inverse()).angle()
-        })
-    }
-
-    /// The direction a prismatic joint slides in, or a wheel joint's
-    /// suspension works in, in the world, as `(x, y)` one unit long. It
-    /// turns with the first body.
-    pub fn axis(&self) -> Vec2 {
-        self.expect(&[JointType::Prismatic, JointType::Wheel], "axis");
-        self.read(|joint, inner| {
-            let axis = Joint::frames(joint, inner)
-                .one
-                .rotation
-                .transform_vector(Vector::X);
-            (axis.x, axis.y)
-        })
-        .into()
-    }
-
-    /// How far a prismatic or wheel joint has slid along its axis since
-    /// it was made.
-    pub fn joint_translation(&self) -> f32 {
-        self.expect(&[JointType::Prismatic, JointType::Wheel], "translation");
-        self.read(|joint, inner| {
-            let frames = Joint::frames(joint, inner);
-            let axis = frames.one.rotation.transform_vector(Vector::X);
-            (frames.two.translation - frames.one.translation).dot(axis)
-        })
-    }
-
-    /// How fast the joint is moving: in radians per second for a revolute
-    /// or wheel joint, in units per second along the axis for a prismatic
-    /// one.
-    pub fn joint_speed(&self) -> f32 {
-        let kind = self.expect(
-            &[JointType::Revolute, JointType::Prismatic, JointType::Wheel],
-            "speed",
-        );
-        self.read(|joint, inner| {
-            let body = |handle| inner.world.bodies.get(handle);
-            let (Some(one), Some(two)) = (body(joint.body1()), body(joint.body2())) else {
-                return 0.0;
-            };
-            if kind != JointType::Prismatic {
-                return two.angvel() - one.angvel();
-            }
-            let frames = Joint::frames(joint, inner);
-            let axis = frames.one.rotation.transform_vector(Vector::X);
-            let cross = |spin: f32, arm: Vector| Vector::new(-arm.y, arm.x) * spin;
-            let at = |body: &RigidBody, point: Vector| {
-                body.linvel() + cross(body.angvel(), point - body.center_of_mass())
-            };
-            let apart = frames.two.translation - frames.one.translation;
-            // As Box2D works it out: the anchors' relative velocity along
-            // the axis, plus how the axis itself turns with the first body.
-            apart.dot(cross(one.angvel(), axis))
-                + axis.dot(at(two, frames.two.translation) - at(one, frames.one.translation))
-        })
-    }
-
     // Ropes, distances and springs.
-
-    /// The longest a rope joint can stretch.
-    pub fn max_length(&self) -> f32 {
-        self.expect(&[JointType::Rope], "maximum length");
-        self.read(|joint, _| joint.data.limits[JointAxis::LinX as usize].max)
-    }
-
-    /// Changes the longest a rope joint can stretch.
-    pub fn set_max_length(&self, length: f32) {
-        self.expect(&[JointType::Rope], "maximum length");
-        self.change(|joint| {
-            let limits = &mut joint.limits[JointAxis::LinX as usize];
-            limits.min = 0.0;
-            limits.max = length.max(0.0);
-        });
-    }
-
-    /// The distance a distance joint holds its anchors at, or that a
-    /// spring joint's spring rests at.
-    pub fn length(&self) -> f32 {
-        self.expect(&[JointType::Distance, JointType::Spring], "length");
-        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].target_pos)
-    }
-
-    /// Changes the length of a distance or spring joint.
-    pub fn set_length(&self, length: f32) {
-        let kind = self.expect(&[JointType::Distance, JointType::Spring], "length");
-        let length = length.max(0.0);
-        self.change(|joint| {
-            let axis = JointAxis::LinX as usize;
-            match kind {
-                JointType::Distance => {
-                    joint.limits[axis].max = length;
-                    joint.motors[axis].target_pos = length;
-                }
-                _ => joint.motors[axis].target_pos = length,
-            }
-        });
-    }
-
-    /// How hard a spring joint pulls back.
-    pub fn stiffness(&self) -> f32 {
-        self.expect(&[JointType::Spring], "stiffness");
-        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].stiffness)
-    }
-
-    /// Changes how hard a spring joint pulls back.
-    pub fn set_stiffness(&self, stiffness: f32) {
-        self.expect(&[JointType::Spring], "stiffness");
-        self.change(|joint| joint.motors[JointAxis::LinX as usize].stiffness = stiffness.max(0.0));
-    }
-
-    /// How quickly a spring joint's bouncing dies away.
-    pub fn damping(&self) -> f32 {
-        self.expect(&[JointType::Spring], "damping");
-        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].damping)
-    }
-
-    /// Changes how quickly a spring joint's bouncing dies away.
-    pub fn set_damping(&self, damping: f32) {
-        self.expect(&[JointType::Spring], "damping");
-        self.change(|joint| joint.motors[JointAxis::LinX as usize].damping = damping.max(0.0));
-    }
 
     // Springy mouse and wheel joints.
 
@@ -644,36 +370,6 @@ impl Joint {
             JointType::Mouse => &[JointAxis::LinX, JointAxis::LinY],
             _ => &[JointAxis::LinX],
         }
-    }
-
-    /// How quickly a mouse joint pulls its body to the target, or a wheel
-    /// joint's suspension bounces, in times a second.
-    pub fn frequency(&self) -> f32 {
-        let axis = self.springs()[0];
-        self.read(|joint, _| unspring(&joint.data.motors[axis as usize]).0)
-    }
-
-    /// Changes how quickly a mouse joint pulls, or a wheel joint's
-    /// suspension bounces. 5 for a mouse joint and 2 for a wheel at first.
-    pub fn set_frequency(&self, frequency: f32) {
-        let axes = self.springs();
-        let ratio = self.damping_ratio();
-        self.set_spring(axes, frequency, ratio);
-    }
-
-    /// How much a mouse joint's pull, or a wheel joint's suspension, is
-    /// damped: 1.0 stops it overshooting at all, less lets it bounce.
-    pub fn damping_ratio(&self) -> f32 {
-        let axis = self.springs()[0];
-        self.read(|joint, _| unspring(&joint.data.motors[axis as usize]).1)
-    }
-
-    /// Changes how much a mouse joint or wheel joint is damped. 0.7 at
-    /// first.
-    pub fn set_damping_ratio(&self, ratio: f32) {
-        let axes = self.springs();
-        let frequency = self.frequency();
-        self.set_spring(axes, frequency, ratio);
     }
 
     fn set_spring(&self, axes: &[JointAxis], frequency: f32, ratio: f32) {
@@ -687,24 +383,6 @@ impl Joint {
         });
     }
 
-    /// Where a mouse joint pulls its body to.
-    pub fn target(&self) -> Vec2 {
-        self.expect(&[JointType::Mouse], "target");
-        self.anchors().0
-    }
-
-    /// Moves the point a mouse joint pulls its body to. Call it with the
-    /// mouse position every frame while dragging.
-    pub fn set_target(&self, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.expect(&[JointType::Mouse], "target");
-        // The target is held by the world's hidden ground body, which
-        // sits at the origin.
-        self.change(|joint| {
-            joint.set_local_anchor1(Vector::new(x, y));
-        });
-    }
-
     // Mouse, friction and motor joints.
 
     fn force_axes(&self) -> &'static [JointAxis] {
@@ -713,91 +391,6 @@ impl Joint {
             "maximum force",
         );
         &[JointAxis::LinX, JointAxis::LinY]
-    }
-
-    /// The most force a mouse, friction or motor joint applies.
-    pub fn max_force(&self) -> f32 {
-        let axis = self.force_axes()[0];
-        self.read(|joint, _| joint.data.motors[axis as usize].max_force)
-    }
-
-    /// Limits the force a mouse, friction or motor joint applies. A mouse
-    /// joint starts at a thousand times its body's weight in one meter's
-    /// gravity, a friction joint at 0, and a motor joint unlimited.
-    pub fn set_max_force(&self, force: f32) {
-        let axes = self.force_axes();
-        self.change(|joint| {
-            for &axis in axes {
-                joint.motors[axis as usize].max_force = force.max(0.0);
-            }
-        });
-    }
-
-    /// The most torque a friction or motor joint applies.
-    pub fn max_torque(&self) -> f32 {
-        self.expect(&[JointType::Friction, JointType::Motor], "maximum torque");
-        self.read(|joint, _| joint.data.motors[JointAxis::AngX as usize].max_force)
-    }
-
-    /// Limits the torque a friction or motor joint applies. A friction
-    /// joint starts at 0, and a motor joint unlimited.
-    pub fn set_max_torque(&self, torque: f32) {
-        self.expect(&[JointType::Friction, JointType::Motor], "maximum torque");
-        self.change(|joint| joint.motors[JointAxis::AngX as usize].max_force = torque.max(0.0));
-    }
-
-    /// Where a motor joint holds its second body, relative to the first
-    /// body's position and angle.
-    pub fn linear_offset(&self) -> Vec2 {
-        self.expect(&[JointType::Motor], "linear offset");
-        self.read(|joint, _| {
-            let offset = joint.data.local_frame1.translation;
-            (offset.x, offset.y)
-        })
-        .into()
-    }
-
-    /// Changes where a motor joint holds its second body.
-    pub fn set_linear_offset(&self, position: impl Into<Vec2>) {
-        let Vec2 { x, y } = position.into();
-        self.expect(&[JointType::Motor], "linear offset");
-        self.change(|joint| joint.local_frame1.translation = Vector::new(x, y));
-    }
-
-    /// The angle a motor joint holds its second body at, relative to the
-    /// first.
-    pub fn angular_offset(&self) -> f32 {
-        self.expect(&[JointType::Motor], "angular offset");
-        self.read(|joint, _| joint.data.local_frame1.rotation.angle())
-    }
-
-    /// Changes the angle a motor joint holds its second body at.
-    pub fn set_angular_offset(&self, angle: f32) {
-        self.expect(&[JointType::Motor], "angular offset");
-        self.change(|joint| joint.local_frame1.rotation = Rotation::new(angle));
-    }
-
-    /// How quickly a motor joint corrects its second body's position,
-    /// from 0.0 to 1.0. 0.3 by default.
-    pub fn correction_factor(&self) -> f32 {
-        self.expect(&[JointType::Motor], "correction factor");
-        self.read(|joint, _| {
-            let stiffness = joint.data.motors[JointAxis::LinX as usize].stiffness;
-            stiffness.max(0.0).sqrt() / 60.0
-        })
-    }
-
-    /// Changes how quickly a motor joint corrects its second body's
-    /// position.
-    pub fn set_correction_factor(&self, factor: f32) {
-        self.expect(&[JointType::Motor], "correction factor");
-        let (stiffness, damping) = correction_spring(factor);
-        self.change(|joint| {
-            for motor in &mut joint.motors {
-                motor.stiffness = stiffness;
-                motor.damping = damping;
-            }
-        });
     }
 }
 
@@ -872,6 +465,605 @@ impl Joint {
         Some(((force.x, force.y), angular * impulse * per_second))
     }
 
+    /// What a gear or pulley joint would hold constant with `ratio`, from
+    /// where the bodies are now.
+    fn current_sum(&self, ratio: f32) -> Option<f32> {
+        let coupling = self.coupling();
+        let inner = self.world.borrow();
+        match coupling {
+            Coupling::Pulley {
+                ground_a, ground_b, ..
+            } => {
+                let (a, b) =
+                    coupling::pulley_lengths(&inner.world, self.handle, ground_a, ground_b)?;
+                Some(a + ratio * b)
+            }
+            Coupling::Gear {
+                joint_a, joint_b, ..
+            } => {
+                let mut rates = Vec::new();
+                let a = coupling::joint_coordinate(&inner.world, joint_a, &mut rates, 1.0)?;
+                let b = coupling::joint_coordinate(&inner.world, joint_b, &mut rates, 1.0)?;
+                Some(a + ratio * b)
+            }
+        }
+    }
+
+    fn pulley(&self, what: &str) -> (Vector, Vector, f32, f32) {
+        self.expect(&[JointType::Pulley], what);
+        let Coupling::Pulley {
+            ground_a,
+            ground_b,
+            ratio,
+            constant,
+            ..
+        } = self.coupling()
+        else {
+            unreachable!("a pulley joint has ropes")
+        };
+        (ground_a, ground_b, ratio, constant)
+    }
+
+    fn pulley_lengths(&self) -> (f32, f32) {
+        let (a, b, _, _) = self.pulley("rope lengths");
+        let inner = self.world.borrow();
+        coupling::pulley_lengths(&inner.world, self.handle, a, b).unwrap_or((0.0, 0.0))
+    }
+}
+
+impl std::fmt::Debug for Joint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_destroyed() {
+            return f.write_str("Joint(destroyed)");
+        }
+        f.debug_struct("Joint").field("kind", &self.kind()).finish()
+    }
+}
+
+/// A joint of one kind, `K` from [`joint_kind`], such as a [`RevoluteJoint`].
+/// It has the methods that kind of joint has, and derefs to [`Joint`] for
+/// the ones every joint has.
+pub struct JointOf<K> {
+    joint: Joint,
+    kind: PhantomData<K>,
+}
+
+impl<K: joint_kind::Kind> JointOf<K> {
+    /// Wraps a joint known to be of kind `K`.
+    pub(super) fn wrap(joint: Joint) -> Self {
+        debug_assert_eq!(joint.kind(), K::TYPE);
+        JointOf {
+            joint,
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<K> Deref for JointOf<K> {
+    type Target = Joint;
+
+    fn deref(&self) -> &Joint {
+        &self.joint
+    }
+}
+
+impl<K> AsRef<Joint> for JointOf<K> {
+    fn as_ref(&self) -> &Joint {
+        &self.joint
+    }
+}
+
+impl<K> From<JointOf<K>> for Joint {
+    fn from(joint: JointOf<K>) -> Joint {
+        joint.joint
+    }
+}
+
+impl<K> Clone for JointOf<K> {
+    fn clone(&self) -> Self {
+        JointOf {
+            joint: self.joint.clone(),
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<K> PartialEq for JointOf<K> {
+    fn eq(&self, other: &Self) -> bool {
+        self.joint == other.joint
+    }
+}
+
+impl<K> Eq for JointOf<K> {}
+
+impl<K> PartialEq<JointOf<K>> for Joint {
+    fn eq(&self, other: &JointOf<K>) -> bool {
+        *self == other.joint
+    }
+}
+
+impl<K> PartialEq<Joint> for JointOf<K> {
+    fn eq(&self, other: &Joint) -> bool {
+        self.joint == *other
+    }
+}
+
+impl<K> std::hash::Hash for JointOf<K> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.joint.hash(state);
+    }
+}
+
+impl<K> std::fmt::Debug for JointOf<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.joint.fmt(f)
+    }
+}
+
+/// The kinds of joint, as types for [`JointOf`], and what each kind has.
+///
+/// Each kind's methods are on [`JointOf`] for that kind. The traits here
+/// group the kinds that share methods, such as [`Motorized`](joint_kind::Motorized) for the
+/// joints with a motor. They are sealed: only smitten's kinds have them.
+pub mod joint_kind {
+    use super::JointType;
+
+    mod sealed {
+        pub trait Sealed {}
+    }
+
+    /// A kind of joint.
+    pub trait Kind: sealed::Sealed {
+        /// The kind as a value.
+        const TYPE: JointType;
+    }
+
+    macro_rules! kinds {
+        ($($name:ident: $($has:ident),*;)*) => {$(
+            #[doc = concat!("The kind of a [`JointType::", stringify!($name), "`] joint.")]
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum $name {}
+            impl sealed::Sealed for $name {}
+            impl Kind for $name {
+                const TYPE: JointType = JointType::$name;
+            }
+            $(impl $has for $name {})*
+        )*};
+    }
+
+    /// Revolute, prismatic and wheel joints, which have a motor.
+    pub trait Motorized: Kind {}
+    /// Revolute and wheel joints, whose motor turns.
+    pub trait MotorTorque: Kind {}
+    /// Revolute and wheel joints, which turn.
+    pub trait Turning: Kind {}
+    /// Revolute and prismatic joints, which have limits.
+    pub trait Limits: Kind {}
+    /// Revolute, prismatic and weld joints, which have a reference angle.
+    pub trait ReferenceAngle: Kind {}
+    /// Prismatic and wheel joints, which slide along an axis.
+    pub trait Axis: Kind {}
+    /// Revolute, prismatic and wheel joints, which have a speed.
+    pub trait Speed: Kind {}
+    /// Distance and spring joints, which have a length.
+    pub trait Length: Kind {}
+    /// Mouse and wheel joints, which have a spring.
+    pub trait Springy: Kind {}
+    /// Mouse, friction and motor joints, which have a maximum force.
+    pub trait MaxForce: Kind {}
+    /// Friction and motor joints, which have a maximum torque.
+    pub trait MaxTorque: Kind {}
+    /// Gear and pulley joints, which have a ratio.
+    pub trait Ratio: Kind {}
+
+    kinds! {
+        Revolute: Motorized, MotorTorque, Turning, Limits, ReferenceAngle, Speed;
+        Weld: ReferenceAngle;
+        Rope: ;
+        Spring: Length;
+        Distance: Length;
+        Prismatic: Motorized, Limits, ReferenceAngle, Axis, Speed;
+        Wheel: Motorized, MotorTorque, Turning, Axis, Speed, Springy;
+        Mouse: Springy, MaxForce;
+        Friction: MaxForce, MaxTorque;
+        Motor: MaxForce, MaxTorque;
+        Gear: Ratio;
+        Pulley: Ratio;
+    }
+}
+
+/// Two bodies that turn around a shared point.
+pub type RevoluteJoint = JointOf<joint_kind::Revolute>;
+/// Two bodies glued together.
+pub type WeldJoint = JointOf<joint_kind::Weld>;
+/// Two points that can come closer but not get further apart.
+pub type RopeJoint = JointOf<joint_kind::Rope>;
+/// Two points held apart by a spring.
+pub type SpringJoint = JointOf<joint_kind::Spring>;
+/// Two points held at a fixed distance.
+pub type DistanceJoint = JointOf<joint_kind::Distance>;
+/// A body that slides along a line relative to another.
+pub type PrismaticJoint = JointOf<joint_kind::Prismatic>;
+/// A wheel on a suspension.
+pub type WheelJoint = JointOf<joint_kind::Wheel>;
+/// A body pulled towards a target point.
+pub type MouseJoint = JointOf<joint_kind::Mouse>;
+/// Top-down friction between two bodies.
+pub type FrictionJoint = JointOf<joint_kind::Friction>;
+/// A body driven towards an offset from another.
+pub type MotorJoint = JointOf<joint_kind::Motor>;
+/// Two revolute or prismatic joints that turn or slide together.
+pub type GearJoint = JointOf<joint_kind::Gear>;
+/// Two bodies hanging from ropes over two fixed points.
+pub type PulleyJoint = JointOf<joint_kind::Pulley>;
+
+/// A joint as its own type, from [`Joint::typed`], to match on.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[allow(missing_docs)]
+pub enum AnyJoint {
+    Revolute(RevoluteJoint),
+    Weld(WeldJoint),
+    Rope(RopeJoint),
+    Spring(SpringJoint),
+    Distance(DistanceJoint),
+    Prismatic(PrismaticJoint),
+    Wheel(WheelJoint),
+    Mouse(MouseJoint),
+    Friction(FrictionJoint),
+    Motor(MotorJoint),
+    Gear(GearJoint),
+    Pulley(PulleyJoint),
+}
+
+impl Joint {
+    /// The joint as its own type, to match on.
+    pub fn typed(&self) -> AnyJoint {
+        let joint = self.clone();
+        match self.kind() {
+            JointType::Revolute => AnyJoint::Revolute(JointOf::wrap(joint)),
+            JointType::Weld => AnyJoint::Weld(JointOf::wrap(joint)),
+            JointType::Rope => AnyJoint::Rope(JointOf::wrap(joint)),
+            JointType::Spring => AnyJoint::Spring(JointOf::wrap(joint)),
+            JointType::Distance => AnyJoint::Distance(JointOf::wrap(joint)),
+            JointType::Prismatic => AnyJoint::Prismatic(JointOf::wrap(joint)),
+            JointType::Wheel => AnyJoint::Wheel(JointOf::wrap(joint)),
+            JointType::Mouse => AnyJoint::Mouse(JointOf::wrap(joint)),
+            JointType::Friction => AnyJoint::Friction(JointOf::wrap(joint)),
+            JointType::Motor => AnyJoint::Motor(JointOf::wrap(joint)),
+            JointType::Gear => AnyJoint::Gear(JointOf::wrap(joint)),
+            JointType::Pulley => AnyJoint::Pulley(JointOf::wrap(joint)),
+        }
+    }
+
+    /// The joint as a joint of kind `K`, or `None` if it is another kind.
+    ///
+    /// ```no_run
+    /// # use smitten::physics::{Joint, joint_kind};
+    /// # fn demo(joint: &Joint) {
+    /// if let Some(hinge) = joint.downcast::<joint_kind::Revolute>() {
+    ///     hinge.set_motor_speed(2.0);
+    /// }
+    /// # }
+    /// ```
+    pub fn downcast<K: joint_kind::Kind>(&self) -> Option<JointOf<K>> {
+        (self.kind() == K::TYPE).then(|| JointOf::wrap(self.clone()))
+    }
+}
+
+/// Revolute, prismatic and wheel joints: their motor.
+impl<K: joint_kind::Motorized> JointOf<K> {
+    /// Whether the joint's motor is on. Revolute, prismatic and wheel
+    /// joints have one, off at first.
+    pub fn is_motor_enabled(&self) -> bool {
+        let axis = self.motor_axis("motor");
+        self.read(|joint, _| joint.data.motor_axes.contains(axis.into()))
+    }
+
+    /// Turns the joint's motor on or off. A motor turns the joint at
+    /// [`JointOf::motor_speed`], with no more than its maximum torque (or
+    /// force, for a prismatic joint), which is 0 until set.
+    pub fn set_motor_enabled(&self, enabled: bool) {
+        let axis = self.motor_axis("motor");
+        self.change(|joint| joint.motor_axes.set(axis.into(), enabled));
+    }
+
+    /// The speed the motor drives the joint at: radians per second for a
+    /// revolute or wheel joint, units per second for a prismatic one.
+    pub fn motor_speed(&self) -> f32 {
+        let axis = self.motor_axis("motor");
+        self.read(|joint, _| joint.data.motors[axis as usize].target_vel)
+    }
+
+    /// Sets the speed the motor drives the joint at. Positive turns the
+    /// second body clockwise on screen, or slides it along the axis.
+    pub fn set_motor_speed(&self, speed: f32) {
+        let axis = self.motor_axis("motor");
+        self.change(|joint| joint.motors[axis as usize].target_vel = speed);
+    }
+}
+
+/// Revolute and wheel joints: a motor that turns.
+impl<K: joint_kind::MotorTorque> JointOf<K> {
+    /// The most torque the motor of a revolute or wheel joint can apply.
+    pub fn max_motor_torque(&self) -> f32 {
+        self.expect(&[JointType::Revolute, JointType::Wheel], "motor torque");
+        self.read(|joint, _| joint.data.motors[JointAxis::AngX as usize].max_force)
+    }
+
+    /// Limits the torque the motor of a revolute or wheel joint can
+    /// apply. The motor does nothing until this is above 0.
+    pub fn set_max_motor_torque(&self, torque: f32) {
+        self.expect(&[JointType::Revolute, JointType::Wheel], "motor torque");
+        self.change(|joint| joint.motors[JointAxis::AngX as usize].max_force = torque.max(0.0));
+    }
+
+    /// The torque a revolute or wheel joint's motor applied during the
+    /// last update.
+    pub fn motor_torque(&self) -> f32 {
+        self.expect(&[JointType::Revolute, JointType::Wheel], "motor torque");
+        self.motor_output(JointAxis::AngX)
+    }
+}
+
+/// Revolute and wheel joints: how far they have turned.
+impl<K: joint_kind::Turning> JointOf<K> {
+    /// How far a revolute or wheel joint has turned since it was made, in
+    /// radians, clockwise on screen.
+    pub fn joint_angle(&self) -> f32 {
+        self.expect(&[JointType::Revolute, JointType::Wheel], "angle");
+        self.read(|joint, inner| {
+            let frames = Joint::frames(joint, inner);
+            (frames.one.rotation.inverse() * frames.two.rotation).angle()
+        })
+    }
+}
+
+/// Revolute and prismatic joints: their limits.
+impl<K: joint_kind::Limits> JointOf<K> {
+    /// Whether the joint's limits are on. Revolute and prismatic joints
+    /// have them, off at first.
+    pub fn are_limits_enabled(&self) -> bool {
+        let axis = self.limit_axis();
+        self.read(|joint, _| joint.data.limit_axes.contains(axis.into()))
+    }
+
+    /// Turns the joint's limits on or off.
+    pub fn set_limits_enabled(&self, enabled: bool) {
+        let axis = self.limit_axis();
+        self.change(|joint| joint.limit_axes.set(axis.into(), enabled));
+    }
+
+    /// The joint's `(lower, upper)` limits: the angles, in radians, a
+    /// revolute joint may turn to, or the distances along its axis a
+    /// prismatic joint may slide to. Both start at 0.
+    pub fn limits(&self) -> (f32, f32) {
+        let axis = self.limit_axis();
+        self.read(|joint, _| {
+            let limits = &joint.data.limits[axis as usize];
+            (limits.min, limits.max)
+        })
+    }
+
+    /// Sets the joint's limits. They are measured from where the joint
+    /// was made, and take effect once
+    /// [enabled](JointOf::set_limits_enabled).
+    pub fn set_limits(&self, lower: f32, upper: f32) {
+        assert!(
+            lower <= upper,
+            "a joint's lower limit must not be above its upper one, got {lower} and {upper}"
+        );
+        let axis = self.limit_axis();
+        self.change(|joint| {
+            let limits = &mut joint.limits[axis as usize];
+            limits.min = lower;
+            limits.max = upper;
+        });
+    }
+
+    /// Sets only the lower limit of a revolute or prismatic joint,
+    /// keeping the upper one. See [`JointOf::set_limits`].
+    pub fn set_lower_limit(&self, lower: f32) {
+        let (_, upper) = self.limits();
+        self.set_limits(lower, upper.max(lower));
+    }
+
+    /// Sets only the upper limit of a revolute or prismatic joint,
+    /// keeping the lower one.
+    pub fn set_upper_limit(&self, upper: f32) {
+        let (lower, _) = self.limits();
+        self.set_limits(lower.min(upper), upper);
+    }
+
+    /// The lower limit of a revolute or prismatic joint.
+    pub fn lower_limit(&self) -> f32 {
+        self.limits().0
+    }
+
+    /// The upper limit of a revolute or prismatic joint.
+    pub fn upper_limit(&self) -> f32 {
+        self.limits().1
+    }
+}
+
+/// Revolute, prismatic and weld joints.
+impl<K: joint_kind::ReferenceAngle> JointOf<K> {
+    /// The angle of the second body minus that of the first when a
+    /// revolute, prismatic or weld joint was made, in radians. The
+    /// joint's angle and limits are measured from it, and a weld joint
+    /// holds it.
+    pub fn reference_angle(&self) -> f32 {
+        self.expect(
+            &[JointType::Revolute, JointType::Prismatic, JointType::Weld],
+            "reference angle",
+        );
+        self.read(|joint, _| {
+            let data = &joint.data;
+            (data.local_frame1.rotation * data.local_frame2.rotation.inverse()).angle()
+        })
+    }
+}
+
+/// Prismatic and wheel joints: the line they slide along.
+impl<K: joint_kind::Axis> JointOf<K> {
+    /// The direction a prismatic joint slides in, or a wheel joint's
+    /// suspension works in, in the world, as `(x, y)` one unit long. It
+    /// turns with the first body.
+    pub fn axis(&self) -> Vec2 {
+        self.expect(&[JointType::Prismatic, JointType::Wheel], "axis");
+        self.read(|joint, inner| {
+            let axis = Joint::frames(joint, inner)
+                .one
+                .rotation
+                .transform_vector(Vector::X);
+            (axis.x, axis.y)
+        })
+        .into()
+    }
+
+    /// How far a prismatic or wheel joint has slid along its axis since
+    /// it was made.
+    pub fn joint_translation(&self) -> f32 {
+        self.expect(&[JointType::Prismatic, JointType::Wheel], "translation");
+        self.read(|joint, inner| {
+            let frames = Joint::frames(joint, inner);
+            let axis = frames.one.rotation.transform_vector(Vector::X);
+            (frames.two.translation - frames.one.translation).dot(axis)
+        })
+    }
+}
+
+/// Revolute, prismatic and wheel joints.
+impl<K: joint_kind::Speed> JointOf<K> {
+    /// How fast the joint is moving: in radians per second for a revolute
+    /// or wheel joint, in units per second along the axis for a prismatic
+    /// one.
+    pub fn joint_speed(&self) -> f32 {
+        let kind = self.expect(
+            &[JointType::Revolute, JointType::Prismatic, JointType::Wheel],
+            "speed",
+        );
+        self.read(|joint, inner| {
+            let body = |handle| inner.world.bodies.get(handle);
+            let (Some(one), Some(two)) = (body(joint.body1()), body(joint.body2())) else {
+                return 0.0;
+            };
+            if kind != JointType::Prismatic {
+                return two.angvel() - one.angvel();
+            }
+            let frames = Joint::frames(joint, inner);
+            let axis = frames.one.rotation.transform_vector(Vector::X);
+            let cross = |spin: f32, arm: Vector| Vector::new(-arm.y, arm.x) * spin;
+            let at = |body: &RigidBody, point: Vector| {
+                body.linvel() + cross(body.angvel(), point - body.center_of_mass())
+            };
+            let apart = frames.two.translation - frames.one.translation;
+            // As Box2D works it out: the anchors' relative velocity along
+            // the axis, plus how the axis itself turns with the first body.
+            apart.dot(cross(one.angvel(), axis))
+                + axis.dot(at(two, frames.two.translation) - at(one, frames.one.translation))
+        })
+    }
+}
+
+/// Distance and spring joints.
+impl<K: joint_kind::Length> JointOf<K> {
+    /// The distance a distance joint holds its anchors at, or that a
+    /// spring joint's spring rests at.
+    pub fn length(&self) -> f32 {
+        self.expect(&[JointType::Distance, JointType::Spring], "length");
+        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].target_pos)
+    }
+
+    /// Changes the length of a distance or spring joint.
+    pub fn set_length(&self, length: f32) {
+        let kind = self.expect(&[JointType::Distance, JointType::Spring], "length");
+        let length = length.max(0.0);
+        self.change(|joint| {
+            let axis = JointAxis::LinX as usize;
+            match kind {
+                JointType::Distance => {
+                    joint.limits[axis].max = length;
+                    joint.motors[axis].target_pos = length;
+                }
+                _ => joint.motors[axis].target_pos = length,
+            }
+        });
+    }
+}
+
+/// Mouse and wheel joints: their spring.
+impl<K: joint_kind::Springy> JointOf<K> {
+    /// How quickly a mouse joint pulls its body to the target, or a wheel
+    /// joint's suspension bounces, in times a second.
+    pub fn frequency(&self) -> f32 {
+        let axis = self.springs()[0];
+        self.read(|joint, _| unspring(&joint.data.motors[axis as usize]).0)
+    }
+
+    /// Changes how quickly a mouse joint pulls, or a wheel joint's
+    /// suspension bounces. 5 for a mouse joint and 2 for a wheel at first.
+    pub fn set_frequency(&self, frequency: f32) {
+        let axes = self.springs();
+        let ratio = self.damping_ratio();
+        self.set_spring(axes, frequency, ratio);
+    }
+
+    /// How much a mouse joint's pull, or a wheel joint's suspension, is
+    /// damped: 1.0 stops it overshooting at all, less lets it bounce.
+    pub fn damping_ratio(&self) -> f32 {
+        let axis = self.springs()[0];
+        self.read(|joint, _| unspring(&joint.data.motors[axis as usize]).1)
+    }
+
+    /// Changes how much a mouse joint or wheel joint is damped. 0.7 at
+    /// first.
+    pub fn set_damping_ratio(&self, ratio: f32) {
+        let axes = self.springs();
+        let frequency = self.frequency();
+        self.set_spring(axes, frequency, ratio);
+    }
+}
+
+/// Mouse, friction and motor joints.
+impl<K: joint_kind::MaxForce> JointOf<K> {
+    /// The most force a mouse, friction or motor joint applies.
+    pub fn max_force(&self) -> f32 {
+        let axis = self.force_axes()[0];
+        self.read(|joint, _| joint.data.motors[axis as usize].max_force)
+    }
+
+    /// Limits the force a mouse, friction or motor joint applies. A mouse
+    /// joint starts at a thousand times its body's weight in one meter's
+    /// gravity, a friction joint at 0, and a motor joint unlimited.
+    pub fn set_max_force(&self, force: f32) {
+        let axes = self.force_axes();
+        self.change(|joint| {
+            for &axis in axes {
+                joint.motors[axis as usize].max_force = force.max(0.0);
+            }
+        });
+    }
+}
+
+/// Friction and motor joints.
+impl<K: joint_kind::MaxTorque> JointOf<K> {
+    /// The most torque a friction or motor joint applies.
+    pub fn max_torque(&self) -> f32 {
+        self.expect(&[JointType::Friction, JointType::Motor], "maximum torque");
+        self.read(|joint, _| joint.data.motors[JointAxis::AngX as usize].max_force)
+    }
+
+    /// Limits the torque a friction or motor joint applies. A friction
+    /// joint starts at 0, and a motor joint unlimited.
+    pub fn set_max_torque(&self, torque: f32) {
+        self.expect(&[JointType::Friction, JointType::Motor], "maximum torque");
+        self.change(|joint| joint.motors[JointAxis::AngX as usize].max_force = torque.max(0.0));
+    }
+}
+
+/// Gear and pulley joints.
+impl<K: joint_kind::Ratio> JointOf<K> {
     /// How much one side of a gear or pulley joint moves for the other:
     /// see [`World::new_gear_joint`](super::World::new_gear_joint) and
     /// [`World::new_pulley_joint`](super::World::new_pulley_joint).
@@ -913,31 +1105,157 @@ impl Joint {
             }
         });
     }
+}
 
-    /// What a gear or pulley joint would hold constant with `ratio`, from
-    /// where the bodies are now.
-    fn current_sum(&self, ratio: f32) -> Option<f32> {
-        let coupling = self.coupling();
-        let inner = self.world.borrow();
-        match coupling {
-            Coupling::Pulley {
-                ground_a, ground_b, ..
-            } => {
-                let (a, b) =
-                    coupling::pulley_lengths(&inner.world, self.handle, ground_a, ground_b)?;
-                Some(a + ratio * b)
-            }
-            Coupling::Gear {
-                joint_a, joint_b, ..
-            } => {
-                let mut rates = Vec::new();
-                let a = coupling::joint_coordinate(&inner.world, joint_a, &mut rates, 1.0)?;
-                let b = coupling::joint_coordinate(&inner.world, joint_b, &mut rates, 1.0)?;
-                Some(a + ratio * b)
-            }
-        }
+/// Prismatic joints.
+impl JointOf<joint_kind::Prismatic> {
+    /// The most force the motor of a prismatic joint can apply.
+    pub fn max_motor_force(&self) -> f32 {
+        self.expect(&[JointType::Prismatic], "motor force");
+        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].max_force)
     }
 
+    /// Limits the force the motor of a prismatic joint can apply. The
+    /// motor does nothing until this is above 0.
+    pub fn set_max_motor_force(&self, force: f32) {
+        self.expect(&[JointType::Prismatic], "motor force");
+        self.change(|joint| joint.motors[JointAxis::LinX as usize].max_force = force.max(0.0));
+    }
+
+    /// The force a prismatic joint's motor applied during the last
+    /// update.
+    pub fn motor_force(&self) -> f32 {
+        self.expect(&[JointType::Prismatic], "motor force");
+        self.motor_output(JointAxis::LinX)
+    }
+}
+
+/// Rope joints.
+impl JointOf<joint_kind::Rope> {
+    /// The longest a rope joint can stretch.
+    pub fn max_length(&self) -> f32 {
+        self.expect(&[JointType::Rope], "maximum length");
+        self.read(|joint, _| joint.data.limits[JointAxis::LinX as usize].max)
+    }
+
+    /// Changes the longest a rope joint can stretch.
+    pub fn set_max_length(&self, length: f32) {
+        self.expect(&[JointType::Rope], "maximum length");
+        self.change(|joint| {
+            let limits = &mut joint.limits[JointAxis::LinX as usize];
+            limits.min = 0.0;
+            limits.max = length.max(0.0);
+        });
+    }
+}
+
+/// Spring joints.
+impl JointOf<joint_kind::Spring> {
+    /// How hard a spring joint pulls back.
+    pub fn stiffness(&self) -> f32 {
+        self.expect(&[JointType::Spring], "stiffness");
+        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].stiffness)
+    }
+
+    /// Changes how hard a spring joint pulls back.
+    pub fn set_stiffness(&self, stiffness: f32) {
+        self.expect(&[JointType::Spring], "stiffness");
+        self.change(|joint| joint.motors[JointAxis::LinX as usize].stiffness = stiffness.max(0.0));
+    }
+
+    /// How quickly a spring joint's bouncing dies away.
+    pub fn damping(&self) -> f32 {
+        self.expect(&[JointType::Spring], "damping");
+        self.read(|joint, _| joint.data.motors[JointAxis::LinX as usize].damping)
+    }
+
+    /// Changes how quickly a spring joint's bouncing dies away.
+    pub fn set_damping(&self, damping: f32) {
+        self.expect(&[JointType::Spring], "damping");
+        self.change(|joint| joint.motors[JointAxis::LinX as usize].damping = damping.max(0.0));
+    }
+}
+
+/// Mouse joints.
+impl JointOf<joint_kind::Mouse> {
+    /// Where a mouse joint pulls its body to.
+    pub fn target(&self) -> Vec2 {
+        self.expect(&[JointType::Mouse], "target");
+        self.anchors().0
+    }
+
+    /// Moves the point a mouse joint pulls its body to. Call it with the
+    /// mouse position every frame while dragging.
+    pub fn set_target(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        self.expect(&[JointType::Mouse], "target");
+        // The target is held by the world's hidden ground body, which
+        // sits at the origin.
+        self.change(|joint| {
+            joint.set_local_anchor1(Vector::new(x, y));
+        });
+    }
+}
+
+/// Motor joints.
+impl JointOf<joint_kind::Motor> {
+    /// Where a motor joint holds its second body, relative to the first
+    /// body's position and angle.
+    pub fn linear_offset(&self) -> Vec2 {
+        self.expect(&[JointType::Motor], "linear offset");
+        self.read(|joint, _| {
+            let offset = joint.data.local_frame1.translation;
+            (offset.x, offset.y)
+        })
+        .into()
+    }
+
+    /// Changes where a motor joint holds its second body.
+    pub fn set_linear_offset(&self, position: impl Into<Vec2>) {
+        let Vec2 { x, y } = position.into();
+        self.expect(&[JointType::Motor], "linear offset");
+        self.change(|joint| joint.local_frame1.translation = Vector::new(x, y));
+    }
+
+    /// The angle a motor joint holds its second body at, relative to the
+    /// first.
+    pub fn angular_offset(&self) -> f32 {
+        self.expect(&[JointType::Motor], "angular offset");
+        self.read(|joint, _| joint.data.local_frame1.rotation.angle())
+    }
+
+    /// Changes the angle a motor joint holds its second body at.
+    pub fn set_angular_offset(&self, angle: f32) {
+        self.expect(&[JointType::Motor], "angular offset");
+        self.change(|joint| joint.local_frame1.rotation = Rotation::new(angle));
+    }
+
+    /// How quickly a motor joint corrects its second body's position,
+    /// from 0.0 to 1.0. 0.3 by default.
+    pub fn correction_factor(&self) -> f32 {
+        self.expect(&[JointType::Motor], "correction factor");
+        self.read(|joint, _| {
+            let stiffness = joint.data.motors[JointAxis::LinX as usize].stiffness;
+            stiffness.max(0.0).sqrt() / 60.0
+        })
+    }
+
+    /// Changes how quickly a motor joint corrects its second body's
+    /// position.
+    pub fn set_correction_factor(&self, factor: f32) {
+        self.expect(&[JointType::Motor], "correction factor");
+        let (stiffness, damping) = correction_spring(factor);
+        self.change(|joint| {
+            for motor in &mut joint.motors {
+                motor.stiffness = stiffness;
+                motor.damping = damping;
+            }
+        });
+    }
+}
+
+/// Gear joints.
+impl JointOf<joint_kind::Gear> {
     /// The two joints a gear joint ties together, if they still exist.
     pub fn joints(&self) -> Vec<Joint> {
         self.expect(&[JointType::Gear], "joints");
@@ -954,22 +1272,10 @@ impl Joint {
             .map(|handle| Joint::new(&self.world, handle))
             .collect()
     }
+}
 
-    fn pulley(&self, what: &str) -> (Vector, Vector, f32, f32) {
-        self.expect(&[JointType::Pulley], what);
-        let Coupling::Pulley {
-            ground_a,
-            ground_b,
-            ratio,
-            constant,
-            ..
-        } = self.coupling()
-        else {
-            unreachable!("a pulley joint has ropes")
-        };
-        (ground_a, ground_b, ratio, constant)
-    }
-
+/// Pulley joints.
+impl JointOf<joint_kind::Pulley> {
     /// The fixed points a pulley joint's ropes run over, as `((x1, y1),
     /// (x2, y2))`.
     pub fn ground_anchors(&self) -> (Vec2, Vec2) {
@@ -988,12 +1294,6 @@ impl Joint {
         self.pulley_lengths().1
     }
 
-    fn pulley_lengths(&self) -> (f32, f32) {
-        let (a, b, _, _) = self.pulley("rope lengths");
-        let inner = self.world.borrow();
-        coupling::pulley_lengths(&inner.world, self.handle, a, b).unwrap_or((0.0, 0.0))
-    }
-
     /// The total a pulley joint holds `length_a + ratio * length_b` at:
     /// how much rope there is.
     pub fn constant(&self) -> f32 {
@@ -1009,14 +1309,5 @@ impl Joint {
                 *kept = constant;
             }
         });
-    }
-}
-
-impl std::fmt::Debug for Joint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_destroyed() {
-            return f.write_str("Joint(destroyed)");
-        }
-        f.debug_struct("Joint").field("kind", &self.kind()).finish()
     }
 }

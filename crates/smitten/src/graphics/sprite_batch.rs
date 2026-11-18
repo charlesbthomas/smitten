@@ -83,6 +83,15 @@ enum Source {
     Array(ArrayImage),
 }
 
+/// What a [`SpriteBatch`] draws, from [`SpriteBatch::texture`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchTexture<'a> {
+    /// A plain image.
+    Image(&'a Image),
+    /// The layers of an array image.
+    Array(&'a ArrayImage),
+}
+
 const VERTICES_PER_SPRITE: usize = 6;
 
 impl SpriteBatch {
@@ -300,21 +309,12 @@ impl SpriteBatch {
         self.vertices.len() / VERTICES_PER_SPRITE
     }
 
-    /// The image the batch draws, or `None` if it draws an
-    /// [`ArrayImage`].
-    pub fn image(&self) -> Option<&Image> {
+    /// The image or array image the batch draws, the equivalent of
+    /// `SpriteBatch:getTexture`.
+    pub fn texture(&self) -> BatchTexture<'_> {
         match &self.source {
-            Source::Image(image) => Some(image),
-            Source::Array(_) => None,
-        }
-    }
-
-    /// The array image the batch draws, or `None` if it draws a plain
-    /// [`Image`].
-    pub fn array_image(&self) -> Option<&ArrayImage> {
-        match &self.source {
-            Source::Array(image) => Some(image),
-            Source::Image(_) => None,
+            Source::Image(image) => BatchTexture::Image(image),
+            Source::Array(image) => BatchTexture::Array(image),
         }
     }
 
@@ -447,7 +447,7 @@ impl SpriteBatch {
     }
 
     /// The texture to draw with, and the filter to sample it with.
-    pub(crate) fn texture(&self) -> (TextureId, Filter) {
+    pub(crate) fn gpu_texture(&self) -> (TextureId, Filter) {
         match &self.source {
             Source::Image(image) => (image.texture(), image.filter()),
             Source::Array(image) => (image.texture(), image.filter()),
@@ -744,8 +744,7 @@ mod tests {
         // A whole layer is the size of the array image.
         assert_eq!(vertices[2].position, [16.0, 16.0]);
         assert_eq!(vertices[6].position, [32.0, 0.0]);
-        assert!(batch.image().is_none());
-        assert!(batch.array_image().is_some());
+        assert!(matches!(batch.texture(), BatchTexture::Array(_)));
     }
 
     #[test]
