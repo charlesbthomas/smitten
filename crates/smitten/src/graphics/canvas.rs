@@ -342,6 +342,22 @@ impl Canvas {
     }
 }
 
+/// Two canvases are equal when they are the same canvas, as for
+/// [`Image`].
+impl PartialEq for Canvas {
+    fn eq(&self, other: &Self) -> bool {
+        self.image == other.image
+    }
+}
+
+impl Eq for Canvas {}
+
+impl std::hash::Hash for Canvas {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.image.hash(state);
+    }
+}
+
 impl Deref for Canvas {
     type Target = Image;
 

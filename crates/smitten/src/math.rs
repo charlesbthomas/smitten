@@ -18,8 +18,6 @@ pub use glam::{Vec2, Vec3};
 
 use std::cell::RefCell;
 
-use crate::Color;
-
 /// A source of random numbers with its own seed, the equivalent of LÖVE's
 /// `RandomGenerator`.
 ///
@@ -145,13 +143,14 @@ impl RandomGenerator {
     }
 
     /// A number from a bell curve centered on `mean`, where about two
-    /// thirds of the results fall within `deviation` of it.
-    pub fn random_normal(&mut self, deviation: f32, mean: f32) -> f32 {
+    /// thirds of the results fall within `std_dev` of it. LÖVE's
+    /// `randomNormal(stddev, mean)` takes the two the other way round.
+    pub fn random_normal(&mut self, mean: f32, std_dev: f32) -> f32 {
         // Box-Muller. Flip the first number so it is never zero.
         let a = 1.0 - self.random();
         let b = self.random();
         let unit = (-2.0 * a.ln()).sqrt() * (std::f32::consts::TAU * b).cos();
-        mean + deviation * unit
+        mean + std_dev * unit
     }
 
     /// `true` with the given probability: 0.25 is one time in four.
@@ -247,8 +246,8 @@ pub fn random_int(min: i64, max: i64) -> i64 {
 
 /// A number from a bell curve centered on `mean`. See
 /// [`RandomGenerator::random_normal`].
-pub fn random_normal(deviation: f32, mean: f32) -> f32 {
-    shared(|generator| generator.random_normal(deviation, mean))
+pub fn random_normal(mean: f32, std_dev: f32) -> f32 {
+    shared(|generator| generator.random_normal(mean, std_dev))
 }
 
 /// `true` with the given probability: 0.25 is one time in four.
@@ -505,41 +504,6 @@ fn cross(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
 
 fn inside_triangle(point: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
     cross(a, b, point) >= 0.0 && cross(b, c, point) >= 0.0 && cross(c, a, point) >= 0.0
-}
-
-/// Turns color components from 0 to 255, as image editors show them, into
-/// a [`Color`] with components from 0.0 to 1.0, like
-/// `love.math.colorFromBytes`.
-pub fn color_from_bytes(r: u8, g: u8, b: u8, a: u8) -> Color {
-    let unit = |byte: u8| byte as f32 / 255.0;
-    Color::rgba(unit(r), unit(g), unit(b), unit(a))
-}
-
-/// Turns a [`Color`] into components from 0 to 255, like
-/// `love.math.colorToBytes`. Components outside 0.0 to 1.0 are cut to
-/// that range, and each is rounded to the nearest whole number.
-pub fn color_to_bytes(color: Color) -> [u8; 4] {
-    let byte = |unit: f32| (unit.clamp(0.0, 1.0) * 255.0).round() as u8;
-    [byte(color.r), byte(color.g), byte(color.b), byte(color.a)]
-}
-
-/// Converts one color component from the usual sRGB encoding to linear
-/// light, where adding and averaging behave physically.
-pub fn gamma_to_linear(component: f32) -> f32 {
-    if component <= 0.04045 {
-        component / 12.92
-    } else {
-        ((component + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-/// Converts one color component from linear light back to sRGB.
-pub fn linear_to_gamma(component: f32) -> f32 {
-    if component <= 0.003_130_8 {
-        component * 12.92
-    } else {
-        1.055 * component.powf(1.0 / 2.4) - 0.055
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -888,7 +852,7 @@ mod tests {
     fn random_normal_centers_on_the_mean() {
         let mut generator = RandomGenerator::new(3);
         let values: Vec<f32> = (0..20_000)
-            .map(|_| generator.random_normal(2.0, 10.0))
+            .map(|_| generator.random_normal(10.0, 2.0))
             .collect();
         let mean = values.iter().sum::<f32>() / values.len() as f32;
         let within = values
@@ -955,19 +919,6 @@ mod tests {
         let first = random();
         set_random_state(&saved).unwrap();
         assert_eq!(random(), first);
-    }
-
-    #[test]
-    fn colors_convert_to_and_from_bytes() {
-        let color = color_from_bytes(255, 0, 51, 128);
-        assert_eq!(color.r, 1.0);
-        assert_eq!(color.g, 0.0);
-        assert!((color.b - 0.2).abs() < 1e-6);
-        assert_eq!(color_to_bytes(color), [255, 0, 51, 128]);
-        assert_eq!(
-            color_to_bytes(Color::rgba(2.0, -1.0, 0.5, 1.0)),
-            [255, 0, 128, 255]
-        );
     }
 
     #[test]
@@ -1044,14 +995,5 @@ mod tests {
             shape.reverse();
         }
         assert!(triangulate(&shape[..2]).is_empty());
-    }
-
-    #[test]
-    fn gamma_and_linear_undo_each_other() {
-        for step in 0..=10 {
-            let value = step as f32 / 10.0;
-            assert!((linear_to_gamma(gamma_to_linear(value)) - value).abs() < 1e-5);
-        }
-        assert!((gamma_to_linear(0.5) - 0.214).abs() < 0.001);
     }
 }

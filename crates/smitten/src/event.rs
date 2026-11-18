@@ -58,6 +58,7 @@ impl fmt::Debug for CustomEvent {
 /// variant matches the [`crate::Game`] callback of the same name, with the
 /// same values, already in units.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     /// The player or the system asked the game to close. Taken by
     /// [`poll`], it no longer reaches [`crate::Game::quit`]; call [`quit`]

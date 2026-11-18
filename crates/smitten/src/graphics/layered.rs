@@ -98,6 +98,8 @@ pub struct ArrayImage {
     inner: Rc<Inner>,
 }
 
+identity_eq!(ArrayImage, inner);
+
 impl ArrayImage {
     /// Makes an array image with one layer for each of `layers`, in order.
     /// They must all be the same size.

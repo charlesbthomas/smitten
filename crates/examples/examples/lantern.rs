@@ -29,6 +29,7 @@ use smitten::{
     BlendMode, Color, CompareMode, Config, Game, GamepadButton, Joystick, Key, event, filesystem,
     graphics, joystick, keyboard, math, mouse,
 };
+use std::time::Duration;
 
 const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = 600.0;
@@ -370,7 +371,7 @@ impl Lantern {
                         voice.set_position((x, y, 0.0));
                         voice.set_attenuation_distances(70.0, 700.0);
                         voice.play();
-                        voice.seek(math::random_range(0.0, 1.9) as f64);
+                        voice.seek(Duration::from_secs_f32(math::random_range(0.0, 1.9)));
                         self.shades.push(Shade {
                             x,
                             y,

@@ -37,7 +37,7 @@ fn the_headers_give_the_size_rate_and_length() {
     assert_eq!(stream.dimensions(), (50, 30));
     assert_eq!(stream.frame_rate(), 12.0);
     assert_eq!(stream.frame_count(), 11);
-    assert!((stream.duration() - 11.0 / 12.0).abs() < 1e-9);
+    assert!((stream.duration().as_secs_f64() - 11.0 / 12.0).abs() < 1e-9);
     assert_eq!(stream.pixels().len(), 50 * 30 * 4);
 }
 
@@ -59,19 +59,19 @@ fn the_first_frame_is_ready_at_once() {
 #[test]
 fn seeking_shows_the_frame_at_that_time_in_either_direction() {
     let mut stream = open();
-    assert!(stream.seek(0.6));
+    assert!(stream.seek(Duration::from_secs_f64(0.6)));
     // Frame 7 repeats frame 6, the first blue one.
     assert_eq!(stream.frame(), 6);
     assert!(is_blue(color(&stream)), "{:?}", color(&stream));
 
-    assert!(stream.seek(0.4));
+    assert!(stream.seek(Duration::from_secs_f64(0.4)));
     assert_eq!(stream.frame(), 4);
     assert!(is_red(color(&stream)), "{:?}", color(&stream));
 
     // Frame 5 is still frame 4, so nothing changes.
-    assert!(!stream.seek(0.45));
+    assert!(!stream.seek(Duration::from_secs_f64(0.45)));
     // Past the end holds the last frame.
-    stream.seek(5.0);
+    stream.seek(Duration::from_secs_f64(5.0));
     assert_eq!(stream.frame(), 10);
 }
 
@@ -79,10 +79,10 @@ fn seeking_shows_the_frame_at_that_time_in_either_direction() {
 fn a_frame_reached_by_seeking_matches_one_reached_by_playing() {
     let mut played = open();
     for frame in 0..=10 {
-        played.seek(frame as f64 / 12.0);
+        played.seek(Duration::from_secs_f64(frame as f64 / 12.0));
     }
     let mut jumped = open();
-    jumped.seek(10.0 / 12.0);
+    jumped.seek(Duration::from_secs_f64(10.0 / 12.0));
     assert_eq!(played.frame(), jumped.frame());
     assert_eq!(played.pixels(), jumped.pixels());
 }
@@ -119,7 +119,7 @@ fn frames_between_keyframes_decode_the_same_however_they_are_reached() {
     assert!(count >= 17, "{count}");
     let mut seen = Vec::new();
     for frame in 0..count {
-        played.seek(frame as f64 / 12.0 + 0.01);
+        played.seek(Duration::from_secs_f64(frame as f64 / 12.0 + 0.01));
         seen.push(played.pixels().to_vec());
     }
     // The pattern moves, so most frames differ from the one before.
@@ -132,7 +132,7 @@ fn frames_between_keyframes_decode_the_same_however_they_are_reached() {
     // Jump about, backwards and forwards, and land on the same pictures.
     let mut jumping = VideoStream::from_bytes(MOVING_VIDEO).unwrap();
     for frame in [count - 1, 3, 9, 2, 14, 7, 0, 11] {
-        jumping.seek(frame as f64 / 12.0 + 0.01);
+        jumping.seek(Duration::from_secs_f64(frame as f64 / 12.0 + 0.01));
         let index = jumping.frame() as usize;
         assert!(
             jumping.pixels() == &seen[index][..],

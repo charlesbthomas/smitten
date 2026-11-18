@@ -70,6 +70,8 @@ pub struct Font {
     inner: Rc<Inner>,
 }
 
+identity_eq!(Font, inner);
+
 pub(crate) struct Inner {
     // In cells so a changed file can be loaded into every handle at once.
     face: RefCell<Face>,

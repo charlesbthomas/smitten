@@ -181,6 +181,8 @@ pub struct Shader {
     inner: Rc<Inner>,
 }
 
+identity_eq!(Shader, inner);
+
 pub(crate) struct Inner {
     // In cells so a changed file can be loaded into every handle at once.
     id: Cell<ShaderId>,
@@ -273,13 +275,7 @@ impl Shader {
     /// member or it has a different type.
     pub fn try_send_color(&self, name: &str, color: Color) -> Result<(), ShaderError> {
         let color = if super::is_gamma_correct() {
-            use crate::math::gamma_to_linear;
-            Color::rgba(
-                gamma_to_linear(color.r),
-                gamma_to_linear(color.g),
-                gamma_to_linear(color.b),
-                color.a,
-            )
+            color.to_linear()
         } else {
             color
         };

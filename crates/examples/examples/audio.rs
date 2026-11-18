@@ -59,7 +59,7 @@ impl Game for Audio {
         // A bar showing how far through the music is.
         let width = graphics::width() as f32 - 80.0;
         let progress = match self.music.duration() {
-            Some(duration) if duration > 0.0 => (self.music.tell() / duration) as f32,
+            Some(duration) if !duration.is_zero() => self.music.tell().div_duration_f32(duration),
             _ => 0.0,
         };
         graphics::set_color(Color::rgb(0.3, 0.32, 0.38));

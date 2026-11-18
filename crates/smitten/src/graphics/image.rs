@@ -23,6 +23,8 @@ pub struct Image {
     inner: Rc<Inner>,
 }
 
+identity_eq!(Image, inner);
+
 pub(crate) struct Inner {
     // In cells so a changed file can be loaded into every handle at once.
     texture: Cell<TextureId>,

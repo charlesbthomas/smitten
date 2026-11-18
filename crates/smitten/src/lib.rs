@@ -29,6 +29,26 @@
 
 #![forbid(unsafe_code)]
 
+/// Makes a handle type equal to, and hashed as, the handles that share
+/// its `Rc`: two handles are equal when they refer to the same resource.
+macro_rules! identity_eq {
+    ($type:ty, $field:ident) => {
+        impl PartialEq for $type {
+            fn eq(&self, other: &Self) -> bool {
+                std::rc::Rc::ptr_eq(&self.$field, &other.$field)
+            }
+        }
+
+        impl Eq for $type {}
+
+        impl std::hash::Hash for $type {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                std::rc::Rc::as_ptr(&self.$field).hash(state);
+            }
+        }
+    };
+}
+
 mod context;
 mod error;
 mod gamepad_mapping;
@@ -66,8 +86,8 @@ pub use result::{Error, Result};
 pub use smitten_core::{
     Blend, BlendAlphaMode, BlendMode, Color, CompareMode, Config, CullMode, Cursor,
     DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton, GamepadInput,
-    JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton, PixelFormat, Scaling,
-    StencilAction, TouchId, VertexWinding, Wrap,
+    JoystickHat, JoystickInput, Key, MessageBoxKind, MouseButton, ParseNameError, PixelFormat,
+    Scaling, StencilAction, TouchId, VertexWinding, Wrap,
 };
 
 use std::path::Path;

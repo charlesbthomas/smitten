@@ -48,6 +48,7 @@ use glam::Vec3;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use crate::context;
 use decode::Decoder;
@@ -125,6 +126,22 @@ pub struct Source {
     mixer: Arc<Mutex<Mixer>>,
     id: u64,
     kind: SourceType,
+}
+
+/// Two sources are equal when they are the same source. A clone plays on
+/// its own, so it is a different source.
+impl PartialEq for Source {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.mixer, &other.mixer) && self.id == other.id
+    }
+}
+
+impl Eq for Source {}
+
+impl std::hash::Hash for Source {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 impl Source {
@@ -291,15 +308,15 @@ impl Source {
         self.mixer().pitch(self.id)
     }
 
-    /// Moves playback to `seconds` from the start. A queueable source
+    /// Moves playback to `position` from the start. A queueable source
     /// cannot seek.
-    pub fn seek(&self, seconds: f64) {
-        self.mixer().seek(self.id, seconds);
+    pub fn seek(&self, position: Duration) {
+        self.mixer().seek(self.id, position.as_secs_f64());
     }
 
-    /// Returns the playback position in seconds from the start.
-    pub fn tell(&self) -> f64 {
-        self.mixer().tell(self.id)
+    /// Returns the playback position from the start.
+    pub fn tell(&self) -> Duration {
+        Duration::from_secs_f64(self.mixer().tell(self.id).max(0.0))
     }
 
     /// Moves playback to `sample`, counted in sample frames of the sound
@@ -322,10 +339,12 @@ impl Source {
         self.mixer().frame_count(self.id)
     }
 
-    /// Returns the sound's length in seconds. A few streamed formats only
-    /// learn their length by playing to the end, and give `None` until then.
-    pub fn duration(&self) -> Option<f64> {
-        self.mixer().duration(self.id)
+    /// Returns the sound's length. A few streamed formats only learn
+    /// their length by playing to the end, and give `None` until then.
+    pub fn duration(&self) -> Option<Duration> {
+        self.mixer()
+            .duration(self.id)
+            .map(|seconds| Duration::from_secs_f64(seconds.max(0.0)))
     }
 
     /// Returns 1 for a mono sound or 2 for stereo. Only mono sounds can be

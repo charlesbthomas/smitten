@@ -13,6 +13,7 @@ use smitten::graphics::DrawParams;
 use smitten::graphics::{DrawMode, Video};
 use smitten::sound::SoundData;
 use smitten::{Color, Config, Game, Key, event, graphics};
+use std::time::Duration;
 
 const TONE_RATE: u32 = 44_100;
 const TONE_BUFFER: usize = 1_024;
@@ -72,7 +73,7 @@ impl Game for Player {
         // How far through the video is.
         let bar_y = 40.0 + video_h as f32 * scale + 20.0;
         let bar_w = video_w as f32 * scale;
-        let through = (self.video.tell() / self.video.duration()) as f32;
+        let through = self.video.tell().div_duration_f32(self.video.duration());
         graphics::set_color(Color::rgb(0.25, 0.25, 0.3));
         graphics::rectangle(DrawMode::Fill, (x, bar_y), (bar_w, 8.0));
         graphics::set_color(Color::rgb(0.95, 0.6, 0.3));
@@ -87,8 +88,8 @@ impl Game for Player {
         graphics::print(
             &format!(
                 "{state} {:.1} / {:.1} s    Space: pause    R: rewind    Left / Right: skip    T: tone {}",
-                self.video.tell(),
-                self.video.duration(),
+                self.video.tell().as_secs_f32(),
+                self.video.duration().as_secs_f32(),
                 if self.tone_on { "on" } else { "off" },
             ),
             (x, bar_y + 24.0),
@@ -103,8 +104,10 @@ impl Game for Player {
                 self.video.rewind();
                 self.video.play();
             }
-            Key::Left => self.video.seek(self.video.tell() - 1.0),
-            Key::Right => self.video.seek(self.video.tell() + 1.0),
+            Key::Left => self
+                .video
+                .seek(self.video.tell().saturating_sub(Duration::from_secs(1))),
+            Key::Right => self.video.seek(self.video.tell() + Duration::from_secs(1)),
             Key::T => {
                 self.tone_on = !self.tone_on;
                 if !self.tone_on {

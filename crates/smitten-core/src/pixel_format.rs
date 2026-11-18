@@ -179,12 +179,17 @@ impl PixelFormat {
             Depth32fStencil8 => "depth32fstencil8",
         }
     }
+}
 
-    /// The format LÖVE calls `name`, such as `"rgba16f"`.
-    pub fn from_name(name: &str) -> Option<PixelFormat> {
+impl std::str::FromStr for PixelFormat {
+    type Err = crate::ParseNameError;
+
+    /// Reads LÖVE's name for a format, such as `"rgba16f"`.
+    fn from_str(name: &str) -> Result<PixelFormat, Self::Err> {
         PixelFormat::ALL
             .into_iter()
             .find(|format| format.name() == name)
+            .ok_or_else(|| crate::ParseNameError::new("pixel format", name))
     }
 }
 
@@ -201,9 +206,9 @@ mod tests {
     #[test]
     fn every_format_round_trips_through_its_name() {
         for format in PixelFormat::ALL {
-            assert_eq!(PixelFormat::from_name(format.name()), Some(format));
+            assert_eq!(format.name().parse::<PixelFormat>(), Ok(format));
         }
-        assert_eq!(PixelFormat::from_name("rgba9"), None);
+        assert!("rgba9".parse::<PixelFormat>().is_err());
     }
 
     #[test]

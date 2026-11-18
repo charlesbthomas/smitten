@@ -12,6 +12,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::audio::AudioError;
 use crate::audio::decode::{self, Decoded, Frame};
@@ -74,9 +75,9 @@ impl SoundData {
         self.samples.len() / usize::from(self.channels)
     }
 
-    /// The length in seconds.
-    pub fn duration(&self) -> f64 {
-        self.sample_count() as f64 / f64::from(self.rate)
+    /// The length of the sound.
+    pub fn duration(&self) -> Duration {
+        Duration::from_secs_f64(self.sample_count() as f64 / f64::from(self.rate))
     }
 
     /// Returns sample `index` of `channel`, where channel 0 is the left (or
@@ -304,9 +305,9 @@ impl Decoder {
         Some(piece)
     }
 
-    /// Moves to `seconds` from the start, so the next piece begins there.
-    pub fn seek(&mut self, seconds: f64) {
-        let frame = (seconds.max(0.0) * f64::from(self.rate())).floor() as u64;
+    /// Moves to `position` from the start, so the next piece begins there.
+    pub fn seek(&mut self, position: Duration) {
+        let frame = (position.as_secs_f64() * f64::from(self.rate())).floor() as u64;
         self.pending.clear();
         self.ended = false;
         self.discard = 0;
@@ -322,12 +323,12 @@ impl Decoder {
 
     /// Goes back to the start of the sound.
     pub fn rewind(&mut self) {
-        self.seek(0.0);
+        self.seek(Duration::ZERO);
     }
 
-    /// Where the next piece starts, in seconds from the start.
-    pub fn tell(&self) -> f64 {
-        self.position as f64 / f64::from(self.rate())
+    /// Where the next piece starts, from the start.
+    pub fn tell(&self) -> Duration {
+        Duration::from_secs_f64(self.position as f64 / f64::from(self.rate()))
     }
 
     /// Samples per second.
@@ -346,10 +347,12 @@ impl Decoder {
         self.buffer_size
     }
 
-    /// The length in seconds, when the file states it.
-    pub fn duration(&self) -> Option<f64> {
+    /// The length of the sound, when the file states it.
+    pub fn duration(&self) -> Option<Duration> {
         let frames = self.inner.total_frames()?;
-        Some(frames as f64 / f64::from(self.rate()))
+        Some(Duration::from_secs_f64(
+            frames as f64 / f64::from(self.rate()),
+        ))
     }
 
     /// The file being read, for starting a source that plays it.
@@ -436,7 +439,7 @@ mod tests {
         let mut decoder = Decoder::from_bytes(file, 3_000).unwrap();
         assert_eq!(decoder.rate(), 22_050);
         assert_eq!(decoder.channel_count(), 1);
-        assert!((decoder.duration().unwrap() - 10_000.0 / 22_050.0).abs() < 1e-9);
+        assert!((decoder.duration().unwrap().as_secs_f64() - 10_000.0 / 22_050.0).abs() < 1e-9);
 
         let mut lengths = Vec::new();
         let mut samples = Vec::new();
@@ -447,7 +450,7 @@ mod tests {
         assert_eq!(lengths, [3_000, 3_000, 3_000, 1_000]);
         assert_eq!(samples, whole.samples());
         assert!(decoder.decode().is_none());
-        assert!((decoder.tell() - 10_000.0 / 22_050.0).abs() < 1e-9);
+        assert!((decoder.tell().as_secs_f64() - 10_000.0 / 22_050.0).abs() < 1e-9);
     }
 
     #[test]
@@ -455,8 +458,8 @@ mod tests {
         let file = wav(10_000, 1, &ramp(10_000));
         let whole = SoundData::from_bytes(file.clone()).unwrap();
         let mut decoder = Decoder::from_bytes(file, 500).unwrap();
-        decoder.seek(0.25);
-        assert!((decoder.tell() - 0.25).abs() < 1e-9);
+        decoder.seek(Duration::from_secs_f64(0.25));
+        assert!((decoder.tell().as_secs_f64() - 0.25).abs() < 1e-9);
         let piece = decoder.decode().unwrap();
         assert_eq!(piece.samples(), &whole.samples()[2_500..3_000]);
 
@@ -488,7 +491,7 @@ mod tests {
         assert_eq!(data.sample_count(), 3);
         assert!((data.sample(1, 0) - 0.5).abs() < 1e-3);
         assert!((data.sample(2, 0) + 0.5).abs() < 1e-3);
-        assert!((data.duration() - 3.0 / 8_000.0).abs() < 1e-9);
+        assert!((data.duration().as_secs_f64() - 3.0 / 8_000.0).abs() < 1e-9);
     }
 
     #[test]

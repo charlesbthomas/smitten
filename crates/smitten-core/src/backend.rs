@@ -692,6 +692,24 @@ impl CompressedFormat {
     }
 }
 
+impl std::fmt::Display for CompressedFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl std::str::FromStr for CompressedFormat {
+    type Err = crate::ParseNameError;
+
+    /// Reads LÖVE's name for a format, such as `"DXT5"`.
+    fn from_str(name: &str) -> Result<CompressedFormat, Self::Err> {
+        CompressedFormat::ALL
+            .into_iter()
+            .find(|format| format.name() == name)
+            .ok_or_else(|| crate::ParseNameError::new("compressed format", name))
+    }
+}
+
 /// A texture a custom shader declares besides `image`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaderTexture {

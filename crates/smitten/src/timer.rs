@@ -80,13 +80,11 @@ pub fn time() -> f64 {
     context::with(|ctx| ctx.backend.ticks_ns().saturating_sub(ctx.timer.start_ns) as f64 / 1e9)
 }
 
-/// Pauses the game for `seconds`, the equivalent of `love.timer.sleep`.
+/// Pauses the game for `duration`, the equivalent of `love.timer.sleep`.
 /// Nothing is drawn and no events are handled meanwhile, so keep it
-/// short. Negative or non-finite values do nothing.
-pub fn sleep(seconds: f64) {
-    if seconds.is_finite() && seconds > 0.0 {
-        std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
-    }
+/// short.
+pub fn sleep(duration: std::time::Duration) {
+    std::thread::sleep(duration);
 }
 
 #[cfg(test)]
@@ -115,14 +113,9 @@ mod tests {
     }
 
     #[test]
-    fn sleeping_waits_and_ignores_nonsense() {
+    fn sleeping_waits() {
         let start = std::time::Instant::now();
-        sleep(0.02);
+        sleep(std::time::Duration::from_millis(20));
         assert!(start.elapsed() >= std::time::Duration::from_millis(20));
-        let start = std::time::Instant::now();
-        sleep(-1.0);
-        sleep(f64::NAN);
-        sleep(f64::INFINITY);
-        assert!(start.elapsed() < std::time::Duration::from_millis(20));
     }
 }

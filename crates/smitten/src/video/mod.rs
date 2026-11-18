@@ -22,6 +22,7 @@ use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use theora_rs::{DecoderContext, HeaderParser, Info, OggPacket, SetupInfo};
 
@@ -212,9 +213,9 @@ impl VideoStream {
         self.packets.last().map_or(0, |packet| packet.frame + 1)
     }
 
-    /// The length in seconds.
-    pub fn duration(&self) -> f64 {
-        self.frame_count() as f64 / self.frame_rate()
+    /// The length of the video.
+    pub fn duration(&self) -> Duration {
+        Duration::from_secs_f64(self.frame_count() as f64 / self.frame_rate())
     }
 
     /// The number of the frame [`VideoStream::pixels`] holds, counting
@@ -223,10 +224,10 @@ impl VideoStream {
         self.shown.map_or(0, |index| self.packets[index].frame)
     }
 
-    /// Decodes the frame showing at `seconds` from the start. Returns
+    /// Decodes the frame showing at `position` from the start. Returns
     /// whether the picture changed.
-    pub fn seek(&mut self, seconds: f64) -> bool {
-        let frame = (seconds.max(0.0) * self.frame_rate()).floor() as u64;
+    pub fn seek(&mut self, position: Duration) -> bool {
+        let frame = (position.as_secs_f64() * self.frame_rate()).floor() as u64;
         // The last frame that starts by then; a repeated frame is not
         // stored, so the one before it carries on.
         let index = self

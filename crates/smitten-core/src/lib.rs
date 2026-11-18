@@ -16,6 +16,7 @@ mod cull;
 mod filter;
 mod input;
 mod key;
+mod parse;
 mod pixel_format;
 mod stencil;
 mod system;
@@ -30,6 +31,7 @@ pub use input::{
     MouseButton, TouchId,
 };
 pub use key::Key;
+pub use parse::ParseNameError;
 pub use pixel_format::PixelFormat;
 pub use stencil::{CompareMode, DepthMode, StencilAction, StencilMode};
 pub use system::{

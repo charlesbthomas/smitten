@@ -4,6 +4,7 @@ use std::cell::{Cell, Ref, RefCell};
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use smitten_core::Filter;
 
@@ -63,21 +64,21 @@ impl Video {
         if self.playing.get() {
             return;
         }
-        if self.position.get() >= self.duration() {
+        if self.position.get() >= self.duration_secs() {
             // At the end there is nothing to play until a rewind.
             return;
         }
         self.playing.set(true);
         self.started.set(Some(timer::time()));
         if let Some(source) = &self.source {
-            source.seek(self.position.get());
+            source.seek(Duration::from_secs_f64(self.position.get()));
             source.play();
         }
     }
 
     /// Stops playing, keeping the position.
     pub fn pause(&self) {
-        self.position.set(self.tell());
+        self.position.set(self.tell_secs());
         self.playing.set(false);
         self.started.set(None);
         if let Some(source) = &self.source {
@@ -91,38 +92,52 @@ impl Video {
         self.playing.get()
     }
 
-    /// Moves to `seconds` from the start.
-    pub fn seek(&self, seconds: f64) {
-        let seconds = seconds.clamp(0.0, self.duration());
+    /// Moves to `position` from the start.
+    pub fn seek(&self, position: Duration) {
+        self.seek_secs(position.as_secs_f64());
+    }
+
+    fn seek_secs(&self, seconds: f64) {
+        let seconds = seconds.clamp(0.0, self.duration_secs());
         self.position.set(seconds);
         if self.playing.get() {
             self.started.set(Some(timer::time()));
         }
         if let Some(source) = &self.source {
-            source.seek(seconds);
+            source.seek(Duration::from_secs_f64(seconds));
         }
     }
 
     /// Goes back to the start.
     pub fn rewind(&self) {
-        self.seek(0.0);
+        self.seek_secs(0.0);
     }
 
-    /// The position in seconds from the start.
-    pub fn tell(&self) -> f64 {
+    /// The position from the start.
+    pub fn tell(&self) -> Duration {
+        Duration::from_secs_f64(self.tell_secs().max(0.0))
+    }
+
+    fn tell_secs(&self) -> f64 {
         let elapsed = self
             .started
             .get()
             .map_or(0.0, |started| timer::time() - started);
-        (self.position.get() + elapsed).min(self.duration())
+        (self.position.get() + elapsed).min(self.duration_secs())
     }
 
-    /// The length in seconds: of the picture, or of the sound if that
-    /// goes on longer, holding the last frame.
-    pub fn duration(&self) -> f64 {
+    /// The length: of the picture, or of the sound if that goes on
+    /// longer, holding the last frame.
+    pub fn duration(&self) -> Duration {
+        Duration::from_secs_f64(self.duration_secs())
+    }
+
+    fn duration_secs(&self) -> f64 {
         let picture = self.stream.borrow().duration();
         let sound = self.source.as_ref().and_then(Source::duration);
-        sound.map_or(picture, |sound| sound.max(picture))
+        sound
+            .map_or(picture, |sound| sound.max(picture))
+            .as_secs_f64()
     }
 
     /// The sound track, if the video has one and was loaded with it.
@@ -141,18 +156,18 @@ impl Video {
     /// Any source works, such as a dub in another language. The video's
     /// length becomes the longer of the picture and the new sound.
     pub fn set_source(&mut self, source: Option<Source>) -> Option<Source> {
-        let position = self.tell();
+        let position = self.tell_secs();
         let old = std::mem::replace(&mut self.source, source);
         if let Some(old) = &old {
             old.pause();
         }
-        let position = position.min(self.duration());
+        let position = position.min(self.duration_secs());
         self.position.set(position);
         if self.playing.get() {
             self.started.set(Some(timer::time()));
         }
         if let Some(source) = &self.source {
-            source.seek(position);
+            source.seek(Duration::from_secs_f64(position));
             if self.playing.get() {
                 source.play();
             } else {
@@ -217,11 +232,11 @@ impl Video {
         {
             // The sound plays at its own pace, so the picture keeps up
             // with it rather than with the game's clock.
-            self.position.set(source.tell());
+            self.position.set(source.tell().as_secs_f64());
             self.started.set(Some(timer::time()));
         }
-        if self.tell() >= self.duration() {
-            self.position.set(self.duration());
+        if self.tell_secs() >= self.duration_secs() {
+            self.position.set(self.duration_secs());
             self.playing.set(false);
             self.started.set(None);
         }

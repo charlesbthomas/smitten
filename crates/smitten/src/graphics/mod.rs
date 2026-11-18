@@ -1988,6 +1988,36 @@ pub fn pop() {
     context::with(|ctx| ctx.gfx.pop_state());
 }
 
+/// Runs `draw` between a [`push`] and its [`pop`], so changes it makes to
+/// the transform are undone afterwards, and returns what `draw` returns.
+///
+/// ```no_run
+/// use smitten::graphics::{self, DrawMode};
+///
+/// graphics::scoped(|| {
+///     graphics::translate((100.0, 100.0));
+///     graphics::rotate(0.5);
+///     graphics::rectangle(DrawMode::Fill, (-10.0, -10.0), (20.0, 20.0));
+/// });
+/// // Back to the transform from before.
+/// ```
+pub fn scoped<R>(draw: impl FnOnce() -> R) -> R {
+    push();
+    let result = draw();
+    pop();
+    result
+}
+
+/// Runs `draw` between a [`push_all`] and its [`pop`], so every drawing
+/// setting it changes is put back afterwards, and returns what `draw`
+/// returns.
+pub fn scoped_all<R>(draw: impl FnOnce() -> R) -> R {
+    push_all();
+    let result = draw();
+    pop();
+    result
+}
+
 /// How many [`push`]es are waiting for a [`pop`], the equivalent of
 /// `love.graphics.getStackDepth`. It is 0 at the start of every `draw`.
 pub fn stack_depth() -> usize {
