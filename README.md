@@ -143,6 +143,8 @@ If a game panics, the window does not vanish. It turns blue and shows the
 message and the file and line it came from, as LÖVE's error screen does,
 until Escape is pressed or the window is closed. The message is still
 printed to the terminal, and the program still ends with the panic.
+A game can draw its own screen instead, or quit straight away, with
+`smitten::set_error_handler`.
 
 ## Hot reload
 

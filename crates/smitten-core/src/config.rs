@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::FullscreenType;
+
 /// Startup settings, the equivalent of LÖVE's `conf.lua`.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -29,6 +31,26 @@ pub struct Config {
     /// Whether the game starts filling the whole screen. It can be changed
     /// while the game runs.
     pub fullscreen: bool,
+    /// How the game fills the screen when [`Config::fullscreen`] is on.
+    pub fullscreen_type: FullscreenType,
+    /// Whether the window has no title bar or frame, like `t.window.borderless`.
+    pub borderless: bool,
+    /// The smallest width in units the user can shrink a resizable window
+    /// to, like `t.window.minwidth`. LÖVE's default is 1.
+    pub min_width: u32,
+    /// The smallest height in units, like `t.window.minheight`.
+    pub min_height: u32,
+    /// Which display the window opens on, counted from 0 in the order the
+    /// system lists them (LÖVE counts from 1). A display that is not
+    /// connected falls back to the first.
+    pub display: u32,
+    /// Where the window's top-left corner goes, in desktop coordinates
+    /// from the top-left of [`Config::display`], like `t.window.x` and
+    /// `t.window.y`. When `None`, [`Config::centered`] decides.
+    pub position: Option<(i32, i32)>,
+    /// Whether the window opens in the middle of its display when no
+    /// [`Config::position`] is given, like `t.window.centered`.
+    pub centered: bool,
     /// An image file to use as the window's icon, looked up like any other
     /// asset. When `None`, the platform's default icon is used.
     pub icon: Option<PathBuf>,
@@ -54,6 +76,13 @@ impl Default for Config {
             design_size: None,
             design_scaling: Scaling::default(),
             fullscreen: false,
+            fullscreen_type: FullscreenType::Desktop,
+            borderless: false,
+            min_width: 1,
+            min_height: 1,
+            display: 0,
+            position: None,
+            centered: true,
             icon: None,
             identity: None,
             vsync: true,

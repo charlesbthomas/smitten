@@ -107,6 +107,54 @@ impl SoundData {
         &mut self.samples
     }
 
+    /// Makes a sound from raw PCM samples, interleaved for stereo, the
+    /// way LÖVE stores a `SoundData` of that bit depth. `bit_depth` is 8,
+    /// for unsigned bytes centred on 128 as in WAV files, or 16, for
+    /// signed little-endian pairs of bytes.
+    ///
+    /// Smitten keeps samples as floats whatever they came from. A partial
+    /// sample at the end of `bytes` is ignored.
+    ///
+    /// Panics if `rate` is zero, `channels` is not 1 or 2, or `bit_depth`
+    /// is not 8 or 16.
+    pub fn from_pcm(bytes: &[u8], rate: u32, channels: u16, bit_depth: u8) -> SoundData {
+        let samples: Vec<f32> = match bit_depth {
+            8 => bytes
+                .iter()
+                .map(|&byte| (f32::from(byte) - 128.0) / 128.0)
+                .collect(),
+            16 => bytes
+                .chunks_exact(2)
+                .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+                .collect(),
+            _ => panic!("PCM samples must be 8 or 16 bit, not {bit_depth}"),
+        };
+        let frames = samples.len() / usize::from(channels.max(1));
+        let mut sound = SoundData::new(frames, rate, channels);
+        let length = sound.samples.len();
+        sound.samples.copy_from_slice(&samples[..length]);
+        sound
+    }
+
+    /// The samples as raw PCM, interleaved for stereo, in the layout
+    /// [`from_pcm`](Self::from_pcm) reads: 8 bit unsigned or 16 bit signed
+    /// little-endian. This is what LÖVE's `SoundData:getString` gives for
+    /// a sound of that bit depth. Samples are clipped to -1.0 to 1.0.
+    ///
+    /// Panics if `bit_depth` is not 8 or 16.
+    pub fn to_pcm(&self, bit_depth: u8) -> Vec<u8> {
+        let clipped = self.samples.iter().map(|sample| sample.clamp(-1.0, 1.0));
+        match bit_depth {
+            8 => clipped
+                .map(|sample| (sample * 127.0 + 128.0).round() as u8)
+                .collect(),
+            16 => clipped
+                .flat_map(|sample| ((sample * 32767.0).round() as i16).to_le_bytes())
+                .collect(),
+            _ => panic!("PCM samples must be 8 or 16 bit, not {bit_depth}"),
+        }
+    }
+
     fn offset(&self, index: usize, channel: u16) -> usize {
         assert!(
             channel < self.channels,
@@ -369,6 +417,36 @@ pub fn try_new_decoder(path: impl AsRef<Path>, buffer_size: usize) -> Result<Dec
 mod tests {
     use super::*;
     use crate::audio::decode::tests::{ramp, wav};
+
+    #[test]
+    fn pcm_round_trips_at_both_bit_depths() {
+        let mut sound = SoundData::new(3, 8000, 2);
+        sound
+            .samples_mut()
+            .copy_from_slice(&[0.0, 1.0, -1.0, 0.5, -0.5, 0.25]);
+        for depth in [8, 16] {
+            let bytes = sound.to_pcm(depth);
+            assert_eq!(bytes.len(), 6 * usize::from(depth / 8));
+            let back = SoundData::from_pcm(&bytes, 8000, 2, depth);
+            assert_eq!(back.sample_count(), 3);
+            let tolerance = if depth == 8 {
+                1.0 / 64.0
+            } else {
+                1.0 / 16384.0
+            };
+            for (a, b) in sound.samples().iter().zip(back.samples()) {
+                assert!((a - b).abs() <= tolerance, "{depth} bit: {a} became {b}");
+            }
+        }
+        assert_eq!(
+            SoundData::from_pcm(&[128, 255, 0], 8000, 1, 8).sample(0, 0),
+            0.0
+        );
+        assert_eq!(
+            SoundData::from_pcm(&[0, 0x80, 0xff], 8000, 1, 16).samples(),
+            &[-1.0]
+        );
+    }
 
     #[test]
     fn a_decoder_hands_back_pieces_of_the_buffer_size() {

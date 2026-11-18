@@ -329,6 +329,12 @@ impl std::error::Error for ImageError {
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<::image::RgbaImage, String> {
     ::image::load_from_memory(bytes)
+        // TGA files have no signature to recognize them by, so they are
+        // tried last, and the first error is the one reported.
+        .or_else(|error| {
+            ::image::load_from_memory_with_format(bytes, ::image::ImageFormat::Tga)
+                .map_err(|_| error)
+        })
         .map(::image::DynamicImage::into_rgba8)
         .map_err(|error| error.to_string())
 }

@@ -22,9 +22,9 @@ use smitten_core::backend::{
     RecordingSink, ShaderId, ShaderInfo, TextureId, TextureKind,
 };
 use smitten_core::{
-    Config, Cursor, DisplayOrientation, Filter, GamepadAxis, GamepadButton, JoystickHat,
-    JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, PowerState, TouchId,
-    WindowState, Wrap,
+    Config, Cursor, DisplayOrientation, Filter, FullscreenType, GamepadAxis, GamepadButton,
+    JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton, PowerInfo, PowerState,
+    TouchId, WindowState, Wrap,
 };
 
 use renderer::Renderer;
@@ -92,19 +92,22 @@ impl SdlBackend {
                 return Err(format!("SDL_Init failed: {}", sdl_error()));
             }
 
-            let mut flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
+            // Hidden until it has been placed and given its mode, so it
+            // does not appear in one place and then jump to another.
+            let mut flags = SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
             if config.resizable {
                 flags |= SDL_WINDOW_RESIZABLE;
             }
-            if config.fullscreen {
-                flags |= SDL_WINDOW_FULLSCREEN;
+            if config.borderless {
+                flags |= SDL_WINDOW_BORDERLESS;
             }
+            let display = display_id(config.display).unwrap_or_else(|| SDL_GetPrimaryDisplay());
             // Where window sizes are in pixels (Windows, X11), a display
             // set to 150% needs a window 1.5 times as large to show the
             // same number of units. Where they are in points (macOS,
             // Wayland) this scale is 1 and the pixels come for free.
             let content_scale = if config.dpi_scaling {
-                let scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+                let scale = SDL_GetDisplayContentScale(display);
                 if scale > 0.0 { scale } else { 1.0 }
             } else {
                 1.0
@@ -122,6 +125,40 @@ impl SdlBackend {
                 SDL_Quit();
                 return Err(message);
             }
+
+            SDL_SetWindowMinimumSize(
+                window,
+                (config.min_width.max(1) as f32 * content_scale).round() as i32,
+                (config.min_height.max(1) as f32 * content_scale).round() as i32,
+            );
+            let mut bounds = SDL_Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            };
+            if let Some((x, y)) = config.position {
+                SDL_GetDisplayBounds(display, &mut bounds);
+                SDL_SetWindowPosition(window, bounds.x + x, bounds.y + y);
+            } else if config.centered || display != SDL_GetPrimaryDisplay() {
+                let centered = SDL_WINDOWPOS_CENTERED_DISPLAY(display);
+                SDL_SetWindowPosition(window, centered, centered);
+            }
+            if config.fullscreen {
+                if config.fullscreen_type == FullscreenType::Exclusive {
+                    let mut mode: SDL_DisplayMode = std::mem::zeroed();
+                    let (mut width, mut height) = (0, 0);
+                    SDL_GetWindowSize(window, &mut width, &mut height);
+                    if SDL_GetClosestFullscreenDisplayMode(
+                        display, width, height, 0.0, true, &mut mode,
+                    ) {
+                        SDL_SetWindowFullscreenMode(window, &mode);
+                    }
+                }
+                SDL_SetWindowFullscreen(window, true);
+            }
+            SDL_ShowWindow(window);
+            SDL_SyncWindow(window);
 
             // The built-in shaders are SPIR-V only for now, which selects the
             // Vulkan driver. Direct3D 12 and Metal need their own shader
@@ -1052,10 +1089,37 @@ impl Backend for SdlBackend {
         unsafe { SDL_SetWindowTitle(self.window, title.as_ptr()) };
     }
 
-    fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String> {
-        // SAFETY: the window is alive. With no fullscreen mode chosen, SDL
-        // uses the desktop's own resolution, without changing video mode.
+    fn set_fullscreen(&mut self, fullscreen: bool, kind: FullscreenType) -> Result<(), String> {
+        // The fullscreen mode is chosen even when leaving fullscreen, so
+        // that the window remembers which kind to use next time. With no
+        // mode chosen, SDL uses the desktop's own resolution, without
+        // changing video mode.
+        // SAFETY: the window is alive, and the mode passed is read by SDL
+        // during the call.
         unsafe {
+            match kind {
+                FullscreenType::Desktop => {
+                    if !SDL_SetWindowFullscreenMode(self.window, ptr::null()) {
+                        return Err(sdl_error());
+                    }
+                }
+                FullscreenType::Exclusive => {
+                    let (mut width, mut height) = (0, 0);
+                    SDL_GetWindowSize(self.window, &mut width, &mut height);
+                    let mut mode: SDL_DisplayMode = std::mem::zeroed();
+                    if !SDL_GetClosestFullscreenDisplayMode(
+                        SDL_GetDisplayForWindow(self.window),
+                        width,
+                        height,
+                        0.0,
+                        true,
+                        &mut mode,
+                    ) || !SDL_SetWindowFullscreenMode(self.window, &mode)
+                    {
+                        return Err(sdl_error());
+                    }
+                }
+            }
             if !SDL_SetWindowFullscreen(self.window, fullscreen) {
                 return Err(sdl_error());
             }
@@ -1070,6 +1134,208 @@ impl Backend for SdlBackend {
         // SAFETY: the window is alive.
         let flags = unsafe { SDL_GetWindowFlags(self.window) };
         flags & SDL_WINDOW_FULLSCREEN != 0
+    }
+
+    fn fullscreen_type(&self) -> FullscreenType {
+        // SAFETY: the window is alive.
+        if unsafe { SDL_GetWindowFullscreenMode(self.window) }.is_null() {
+            FullscreenType::Desktop
+        } else {
+            FullscreenType::Exclusive
+        }
+    }
+
+    fn fullscreen_modes(&self, display: u32) -> Vec<(u32, u32)> {
+        let Some(id) = display_id(display) else {
+            return Vec::new();
+        };
+        let scale = self.display_content_scale(id);
+        let mut sizes: Vec<(u32, u32)> = Vec::new();
+        let mut count = 0;
+        // SAFETY: SDL returns `count` valid mode pointers in one
+        // allocation, which is read here and then freed once.
+        unsafe {
+            let modes = SDL_GetFullscreenDisplayModes(id, &mut count);
+            if modes.is_null() {
+                return Vec::new();
+            }
+            for index in 0..count.max(0) as usize {
+                let mode = &**modes.add(index);
+                let size = (
+                    (mode.w.max(0) as f32 / scale).round() as u32,
+                    (mode.h.max(0) as f32 / scale).round() as u32,
+                );
+                // SDL lists a size once for each refresh rate and density.
+                if !sizes.contains(&size) {
+                    sizes.push(size);
+                }
+            }
+            SDL_free(modes.cast());
+        }
+        sizes
+    }
+
+    fn set_borderless(&mut self, borderless: bool) {
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_SetWindowBordered(self.window, !borderless);
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn is_borderless(&self) -> bool {
+        // SAFETY: the window is alive.
+        let flags = unsafe { SDL_GetWindowFlags(self.window) };
+        flags & SDL_WINDOW_BORDERLESS != 0
+    }
+
+    fn set_resizable(&mut self, resizable: bool) {
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_SetWindowResizable(self.window, resizable);
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn is_resizable(&self) -> bool {
+        // SAFETY: the window is alive.
+        let flags = unsafe { SDL_GetWindowFlags(self.window) };
+        flags & SDL_WINDOW_RESIZABLE != 0
+    }
+
+    fn set_minimum_size(&mut self, width: u32, height: u32) {
+        let scale = self.content_scale();
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_SetWindowMinimumSize(
+                self.window,
+                (width as f32 * scale).round() as i32,
+                (height as f32 * scale).round() as i32,
+            );
+        }
+    }
+
+    fn minimum_size(&self) -> (u32, u32) {
+        let scale = self.content_scale();
+        let (mut width, mut height) = (0, 0);
+        // SAFETY: the window is alive and both out-pointers are valid.
+        unsafe { SDL_GetWindowMinimumSize(self.window, &mut width, &mut height) };
+        (
+            (width.max(0) as f32 / scale).round() as u32,
+            (height.max(0) as f32 / scale).round() as u32,
+        )
+    }
+
+    fn window_display(&self) -> u32 {
+        // SAFETY: the window is alive.
+        let id = unsafe { SDL_GetDisplayForWindow(self.window) };
+        display_ids()
+            .iter()
+            .position(|&each| each == id)
+            .unwrap_or(0) as u32
+    }
+
+    fn display_name(&self, display: u32) -> Option<String> {
+        let id = display_id(display)?;
+        // SAFETY: the string SDL returns is copied straight away.
+        unsafe {
+            let name = SDL_GetDisplayName(id);
+            if name.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(name).to_string_lossy().into_owned())
+            }
+        }
+    }
+
+    fn display_bounds(&self, display: u32) -> Option<(i32, i32, u32, u32)> {
+        let id = display_id(display)?;
+        let mut rect = SDL_Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
+        // SAFETY: the out-pointer is valid.
+        if !unsafe { SDL_GetDisplayBounds(id, &mut rect) } {
+            return None;
+        }
+        Some((rect.x, rect.y, rect.w.max(0) as u32, rect.h.max(0) as u32))
+    }
+
+    fn display_desktop_size(&self, display: u32) -> Option<(u32, u32)> {
+        let id = display_id(display)?;
+        let scale = self.display_content_scale(id);
+        // SAFETY: the mode SDL returns is read before anything else can
+        // change it.
+        unsafe {
+            let mode = SDL_GetDesktopDisplayMode(id);
+            if mode.is_null() {
+                return None;
+            }
+            Some((
+                ((*mode).w.max(0) as f32 / scale).round() as u32,
+                ((*mode).h.max(0) as f32 / scale).round() as u32,
+            ))
+        }
+    }
+
+    fn display_dpi_scale(&self, display: u32) -> Option<f32> {
+        let id = display_id(display)?;
+        // SAFETY: the mode SDL returns is read before anything else can
+        // change it.
+        let density = unsafe {
+            let mode = SDL_GetDesktopDisplayMode(id);
+            if mode.is_null() {
+                return None;
+            }
+            (*mode).pixel_density
+        };
+        // SAFETY: a plain query.
+        let content = unsafe { SDL_GetDisplayContentScale(id) };
+        let scale = density.max(0.0) * content.max(0.0);
+        Some(if scale > 0.0 { scale } else { 1.0 })
+    }
+
+    fn center_window(&mut self, display: u32) {
+        let id = display_id(display).unwrap_or_else(|| {
+            // SAFETY: a plain query.
+            unsafe { SDL_GetPrimaryDisplay() }
+        });
+        let centered = SDL_WINDOWPOS_CENTERED_DISPLAY(id);
+        // SAFETY: the window is alive.
+        unsafe {
+            SDL_SetWindowPosition(self.window, centered, centered);
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn set_window_shown(&mut self, shown: bool) {
+        // SAFETY: the window is alive.
+        unsafe {
+            if shown {
+                SDL_ShowWindow(self.window);
+            } else {
+                SDL_HideWindow(self.window);
+            }
+            SDL_SyncWindow(self.window);
+        }
+    }
+
+    fn set_display_sleep(&mut self, enabled: bool) {
+        // SAFETY: plain SDL calls; video is initialized.
+        unsafe {
+            if enabled {
+                SDL_EnableScreenSaver();
+            } else {
+                SDL_DisableScreenSaver();
+            }
+        }
+    }
+
+    fn display_sleep_enabled(&self) -> bool {
+        // SAFETY: a plain query.
+        unsafe { SDL_ScreenSaverEnabled() }
     }
 
     fn set_icon(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
@@ -1410,11 +1676,43 @@ impl SdlBackend {
         if scale > 0.0 { scale } else { 1.0 }
     }
 
+    /// How many window coordinates make up one unit on `display`, as
+    /// `content_scale` is for the window's own display.
+    fn display_content_scale(&self, display: SDL_DisplayID) -> f32 {
+        if !self.content_scaling {
+            return 1.0;
+        }
+        // SAFETY: a plain query.
+        let scale = unsafe { SDL_GetDisplayContentScale(display) };
+        if scale > 0.0 { scale } else { 1.0 }
+    }
+
     fn pixel_density(&self) -> f32 {
         // SAFETY: the window is alive.
         let density = unsafe { SDL_GetWindowPixelDensity(self.window) };
         if density > 0.0 { density } else { 1.0 }
     }
+}
+
+/// The connected displays, in the order the system lists them.
+fn display_ids() -> Vec<SDL_DisplayID> {
+    let mut count = 0;
+    // SAFETY: SDL returns `count` ids in one allocation, which is copied
+    // and then freed once.
+    unsafe {
+        let displays = SDL_GetDisplays(&mut count);
+        if displays.is_null() {
+            return Vec::new();
+        }
+        let ids = std::slice::from_raw_parts(displays, count.max(0) as usize).to_vec();
+        SDL_free(displays.cast());
+        ids
+    }
+}
+
+/// The SDL id of the display at `index` in [`display_ids`].
+fn display_id(index: u32) -> Option<SDL_DisplayID> {
+    display_ids().get(index as usize).copied()
 }
 
 fn display_orientation(orientation: SDL_DisplayOrientation) -> DisplayOrientation {
@@ -1534,9 +1832,12 @@ fn all_keys() -> impl Iterator<Item = (SDL_Scancode, Key)> {
 }
 
 fn scancode_from_key(key: Key) -> SDL_Scancode {
-    all_keys()
-        .find(|&(_, known)| known == key)
-        .map_or(SDL_SCANCODE_UNKNOWN, |(scancode, _)| scancode)
+    static SCANCODES: std::sync::OnceLock<HashMap<Key, SDL_Scancode>> = std::sync::OnceLock::new();
+    SCANCODES
+        .get_or_init(|| all_keys().map(|(scancode, key)| (key, scancode)).collect())
+        .get(&key)
+        .copied()
+        .unwrap_or(SDL_SCANCODE_UNKNOWN)
 }
 
 /// The keycode a US layout gives the key. Keys that type a character use
@@ -1568,6 +1869,22 @@ fn keycode_from_key(key: Key) -> SDL_Keycode {
         Comma => Some(b','),
         Period => Some(b'.'),
         Slash => Some(b'/'),
+        Exclaim => Some(b'!'),
+        DoubleQuote => Some(b'"'),
+        Hash => Some(b'#'),
+        Dollar => Some(b'$'),
+        Ampersand => Some(b'&'),
+        LeftParen => Some(b'('),
+        RightParen => Some(b')'),
+        Asterisk => Some(b'*'),
+        Plus => Some(b'+'),
+        Colon => Some(b':'),
+        Less => Some(b'<'),
+        Greater => Some(b'>'),
+        Question => Some(b'?'),
+        At => Some(b'@'),
+        Caret => Some(b'^'),
+        Underscore => Some(b'_'),
         _ => None,
     };
     match character {
@@ -1580,10 +1897,40 @@ fn key_from_keycode(keycode: SDL_Keycode) -> Option<Key> {
     if keycode.0 == 0 {
         return None;
     }
+    // Keys that type no character carry their scancode.
+    if keycode.0 & SDLK_SCANCODE_MASK.0 != 0 {
+        let key = key_from_scancode(SDL_Scancode((keycode.0 & !SDLK_SCANCODE_MASK.0) as _))?;
+        return (keycode_from_key(key) == keycode).then_some(key);
+    }
     all_keys()
         .map(|(_, key)| key)
+        .chain(LAYOUT_ONLY_KEYS)
         .find(|&key| keycode_from_key(key) == keycode)
 }
+
+/// Keys that some layouts have but no US key sits where they do, so they
+/// have no scancode and are found only by their keycode.
+const LAYOUT_ONLY_KEYS: [Key; 16] = {
+    use Key::*;
+    [
+        Exclaim,
+        DoubleQuote,
+        Hash,
+        Dollar,
+        Ampersand,
+        LeftParen,
+        RightParen,
+        Asterisk,
+        Plus,
+        Colon,
+        Less,
+        Greater,
+        Question,
+        At,
+        Caret,
+        Underscore,
+    ]
+};
 
 fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
     use Key::*;
@@ -1594,6 +1941,23 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
     // SDL orders the digit row 1 through 9 and then 0.
     const DIGITS: [Key; 10] = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0];
     const FUNCTION: [Key; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
+    const MORE_FUNCTION: [Key; 12] = [F13, F14, F15, F16, F17, F18, F19, F20, F21, F22, F23, F24];
+    // Like the digit row, SDL orders the keypad digits 1 through 9 and then 0.
+    const KEYPAD_DIGITS: [Key; 10] = [Kp1, Kp2, Kp3, Kp4, Kp5, Kp6, Kp7, Kp8, Kp9, Kp0];
+    const INTERNATIONAL: [Key; 9] = [
+        International1,
+        International2,
+        International3,
+        International4,
+        International5,
+        International6,
+        International7,
+        International8,
+        International9,
+    ];
+    const LANG: [Key; 9] = [
+        Lang1, Lang2, Lang3, Lang4, Lang5, Lang6, Lang7, Lang8, Lang9,
+    ];
 
     let code = scancode.0;
     let in_run = |first: SDL_Scancode, keys: &[Key]| {
@@ -1604,6 +1968,10 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
     if let Some(key) = in_run(SDL_SCANCODE_A, &LETTERS)
         .or_else(|| in_run(SDL_SCANCODE_1, &DIGITS))
         .or_else(|| in_run(SDL_SCANCODE_F1, &FUNCTION))
+        .or_else(|| in_run(SDL_SCANCODE_F13, &MORE_FUNCTION))
+        .or_else(|| in_run(SDL_SCANCODE_KP_1, &KEYPAD_DIGITS))
+        .or_else(|| in_run(SDL_SCANCODE_INTERNATIONAL1, &INTERNATIONAL))
+        .or_else(|| in_run(SDL_SCANCODE_LANG1, &LANG))
     {
         return Some(key);
     }
@@ -1644,6 +2012,52 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
         (SDL_SCANCODE_PAGEDOWN, PageDown),
         (SDL_SCANCODE_LGUI, LeftGui),
         (SDL_SCANCODE_RGUI, RightGui),
+        (SDL_SCANCODE_KP_PERIOD, KpPeriod),
+        (SDL_SCANCODE_KP_COMMA, KpComma),
+        (SDL_SCANCODE_KP_DIVIDE, KpDivide),
+        (SDL_SCANCODE_KP_MULTIPLY, KpMultiply),
+        (SDL_SCANCODE_KP_MINUS, KpMinus),
+        (SDL_SCANCODE_KP_PLUS, KpPlus),
+        (SDL_SCANCODE_KP_ENTER, KpEnter),
+        (SDL_SCANCODE_KP_EQUALS, KpEquals),
+        (SDL_SCANCODE_NUMLOCKCLEAR, NumLock),
+        (SDL_SCANCODE_SCROLLLOCK, ScrollLock),
+        (SDL_SCANCODE_PRINTSCREEN, PrintScreen),
+        (SDL_SCANCODE_SYSREQ, SysReq),
+        (SDL_SCANCODE_PAUSE, Pause),
+        (SDL_SCANCODE_APPLICATION, Application),
+        (SDL_SCANCODE_MENU, Menu),
+        (SDL_SCANCODE_CLEAR, Clear),
+        (SDL_SCANCODE_HELP, Help),
+        (SDL_SCANCODE_POWER, Power),
+        (SDL_SCANCODE_MODE, Mode),
+        (SDL_SCANCODE_EXECUTE, Execute),
+        (SDL_SCANCODE_SELECT, Select),
+        (SDL_SCANCODE_STOP, Stop),
+        (SDL_SCANCODE_AGAIN, Again),
+        (SDL_SCANCODE_UNDO, Undo),
+        (SDL_SCANCODE_CUT, Cut),
+        (SDL_SCANCODE_COPY, Copy),
+        (SDL_SCANCODE_PASTE, Paste),
+        (SDL_SCANCODE_FIND, Find),
+        (SDL_SCANCODE_CANCEL, Cancel),
+        (SDL_SCANCODE_MUTE, Mute),
+        (SDL_SCANCODE_VOLUMEUP, VolumeUp),
+        (SDL_SCANCODE_VOLUMEDOWN, VolumeDown),
+        (SDL_SCANCODE_MEDIA_PLAY_PAUSE, MediaPlayPause),
+        (SDL_SCANCODE_MEDIA_STOP, MediaStop),
+        (SDL_SCANCODE_MEDIA_NEXT_TRACK, MediaNextTrack),
+        (SDL_SCANCODE_MEDIA_PREVIOUS_TRACK, MediaPreviousTrack),
+        (SDL_SCANCODE_MEDIA_SELECT, MediaSelect),
+        (SDL_SCANCODE_MEDIA_EJECT, MediaEject),
+        (SDL_SCANCODE_AC_SEARCH, AppSearch),
+        (SDL_SCANCODE_AC_HOME, AppHome),
+        (SDL_SCANCODE_AC_BACK, AppBack),
+        (SDL_SCANCODE_AC_FORWARD, AppForward),
+        (SDL_SCANCODE_AC_REFRESH, AppRefresh),
+        (SDL_SCANCODE_AC_BOOKMARKS, AppBookmarks),
+        (SDL_SCANCODE_NONUSBACKSLASH, NonUsBackslash),
+        (SDL_SCANCODE_NONUSHASH, NonUsHash),
     ];
     named
         .iter()
@@ -1654,6 +2068,40 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_key_has_one_scancode_and_one_keycode() {
+        let keys: Vec<Key> = all_keys().map(|(_, key)| key).collect();
+        let distinct: std::collections::HashSet<Key> = keys.iter().copied().collect();
+        assert_eq!(keys.len(), distinct.len(), "two scancodes share a key");
+        for (scancode, key) in all_keys() {
+            assert_eq!(scancode_from_key(key).0, scancode.0, "{key:?}");
+            assert_eq!(
+                key_from_keycode(keycode_from_key(key)),
+                Some(key),
+                "{key:?}"
+            );
+        }
+        for key in LAYOUT_ONLY_KEYS {
+            assert_eq!(scancode_from_key(key).0, SDL_SCANCODE_UNKNOWN.0, "{key:?}");
+            assert_eq!(
+                key_from_keycode(keycode_from_key(key)),
+                Some(key),
+                "{key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keypad_keys_are_their_own_keys() {
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_0), Some(Key::Kp0));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_1), Some(Key::Kp1));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_9), Some(Key::Kp9));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_KP_ENTER), Some(Key::KpEnter));
+        assert_eq!(key_from_scancode(SDL_SCANCODE_F15), Some(Key::F15));
+        assert_eq!(key_from_keycode(SDLK_KP_PLUS), Some(Key::KpPlus));
+        assert_eq!(key_from_keycode(SDLK_EXCLAIM), Some(Key::Exclaim));
+    }
 
     #[test]
     fn locales_are_named_as_in_love() {

@@ -4,10 +4,14 @@ pub enum StencilAction {
     /// Sets them to the given value. The default, as in LÖVE.
     #[default]
     Replace,
-    /// Adds one, wrapping from 255 back to 0.
+    /// Adds one, stopping at 255.
     Increment,
-    /// Subtracts one, wrapping from 0 back to 255.
+    /// Subtracts one, stopping at 0.
     Decrement,
+    /// Adds one, wrapping from 255 back to 0.
+    IncrementWrap,
+    /// Subtracts one, wrapping from 0 back to 255.
+    DecrementWrap,
     /// Flips every bit.
     Invert,
 }
@@ -29,6 +33,11 @@ pub enum CompareMode {
     /// Draw where the stencil value is greater than or equal to the test
     /// value.
     GreaterEqual,
+    /// Draw nowhere.
+    Never,
+    /// Draw everywhere. With [`StencilMode::Test`] this is the same as no
+    /// test.
+    Always,
 }
 
 /// How a draw call uses the stencil buffer.
