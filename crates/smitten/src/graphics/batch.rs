@@ -2,11 +2,57 @@
 //! the draw order allows.
 
 use smitten_core::backend::{
-    BoundTexture, ColorMask, DrawCall, MeshDraw, Pass, Scissor, ShaderId, TextureId, Vertex,
+    BoundTexture, ColorMask, DrawCall, MAX_TARGETS, MeshDraw, Pass, Scissor, ShaderId, TextureId,
+    Vertex,
 };
 use smitten_core::{BlendAlphaMode, BlendMode, Color, Filter, StencilMode, VertexWinding};
 
 use super::stats::FrameCounts;
+
+/// Where draws go: a canvas's texture, or `None` for the screen, and the
+/// canvases drawn to at the same time as it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Targets {
+    pub first: Option<TextureId>,
+    pub extra: [Option<TextureId>; MAX_TARGETS - 1],
+}
+
+impl Targets {
+    /// One target, or the screen for `None`.
+    pub fn single(target: Option<TextureId>) -> Self {
+        Self {
+            first: target,
+            extra: [None; MAX_TARGETS - 1],
+        }
+    }
+
+    /// Whether `texture` is one of these targets.
+    fn contains(&self, texture: Option<TextureId>) -> bool {
+        self.first == texture
+            || self
+                .extra
+                .iter()
+                .any(|extra| extra.is_some() && *extra == texture)
+    }
+
+    /// Whether `pass` draws to these targets.
+    fn matches(&self, pass: &Pass) -> bool {
+        pass.target == self.first && pass.extra_targets == self.extra
+    }
+
+    /// A pass to these targets that clears nothing.
+    fn pass(&self, first_call: u32) -> Pass {
+        Pass {
+            target: self.first,
+            extra_targets: self.extra,
+            clear: None,
+            extra_clears: [None; MAX_TARGETS - 1],
+            clear_stencil: None,
+            first_call,
+            call_count: 0,
+        }
+    }
+}
 
 /// A custom shader with its uniform data and the textures sent to it.
 pub(crate) type ShaderState<'a> = (ShaderId, &'a [u8], &'a [Option<BoundTexture>]);
@@ -18,8 +64,8 @@ pub(crate) struct Batch {
     pub meshes: Vec<MeshDraw>,
     pub calls: Vec<DrawCall>,
     pub passes: Vec<Pass>,
-    /// Where draws go: a canvas's texture, or `None` for the screen.
-    target: Option<TextureId>,
+    /// Where draws go.
+    target: Targets,
     /// Applied to everything queued from now on.
     pub blend: BlendMode,
     pub blend_alpha: BlendAlphaMode,
@@ -94,28 +140,43 @@ impl Batch {
 
     /// Sends what is queued from now on to `target`.
     pub fn set_target(&mut self, target: Option<TextureId>) {
-        self.target = target;
+        self.target = Targets::single(target);
     }
 
-    /// Fills the current target with `color`, replacing its contents, and
-    /// resets its stencil values to zero.
+    /// Sends what is queued from now on to several targets at once.
+    pub fn set_targets(&mut self, targets: Targets) {
+        self.target = targets;
+    }
+
+    /// Fills the current targets with `color`, replacing their contents,
+    /// and resets the stencil values to zero.
     pub fn clear_target(&mut self, color: Color) {
         self.clear_target_ex(Some(color), Some(0));
     }
 
-    /// Fills the current target with `color` and sets its stencil values
+    /// Fills the current targets with `color` and sets the stencil values
     /// to `stencil`, each only if given.
     pub fn clear_target_ex(&mut self, color: Option<Color>, stencil: Option<u8>) {
-        let Some(color) = color else {
+        self.clear_targets([color; MAX_TARGETS], stencil);
+    }
+
+    /// Fills each current target with its own color, and sets the
+    /// stencil values to `stencil`, each only if given. `colors[0]` is
+    /// for the first target.
+    pub fn clear_targets(&mut self, colors: [Option<Color>; MAX_TARGETS], stencil: Option<u8>) {
+        let in_use = 1 + self.target.extra.iter().flatten().count();
+        let colors_used = &colors[..in_use];
+        if colors_used.iter().all(Option::is_none) {
             if let Some(value) = stencil {
                 self.clear_stencil_to(value);
             }
             return;
-        };
-        // Draws still waiting to reach this target would be painted over,
-        // so drop them rather than send them to the GPU.
-        if let Some(last) = self.passes.last()
-            && last.target == self.target
+        }
+        // Draws still waiting to reach these targets would be painted
+        // over, so drop them rather than send them to the GPU.
+        if colors_used.iter().all(Option::is_some)
+            && let Some(last) = self.passes.last()
+            && self.target.matches(last)
         {
             let first_call = last.first_call as usize;
             if let Some(call) = self.calls.get(first_call) {
@@ -124,12 +185,13 @@ impl Batch {
             self.calls.truncate(first_call);
             self.passes.pop();
         }
+        let mut extra_clears = [None; MAX_TARGETS - 1];
+        extra_clears.copy_from_slice(&colors[1..]);
         self.passes.push(Pass {
-            target: self.target,
-            clear: Some(color),
+            clear: colors[0],
+            extra_clears,
             clear_stencil: stencil,
-            first_call: self.calls.len() as u32,
-            call_count: 0,
+            ..self.target.pass(self.calls.len() as u32)
         });
     }
 
@@ -143,11 +205,8 @@ impl Batch {
     /// picture.
     pub fn clear_stencil_to(&mut self, value: u8) {
         self.passes.push(Pass {
-            target: self.target,
-            clear: None,
             clear_stencil: Some(value),
-            first_call: self.calls.len() as u32,
-            call_count: 0,
+            ..self.target.pass(self.calls.len() as u32)
         });
     }
 
@@ -201,7 +260,7 @@ impl Batch {
             return;
         }
         assert!(
-            texture.is_none() || texture != self.target,
+            texture.is_none() || !self.target.contains(texture),
             "a canvas cannot be drawn onto itself"
         );
         // Untextured geometry ignores the filter, so normalize it to let
@@ -270,7 +329,7 @@ impl Batch {
             return;
         }
         assert!(
-            texture.is_none() || texture != self.target,
+            texture.is_none() || !self.target.contains(texture),
             "a canvas cannot be drawn onto itself"
         );
         let filter = if texture.is_some() {
@@ -309,18 +368,12 @@ impl Batch {
         if self
             .passes
             .last()
-            .is_none_or(|pass| pass.target != self.target)
+            .is_none_or(|pass| !self.target.matches(pass))
         {
             if !self.passes.is_empty() {
                 self.counts.canvas_switches += 1;
             }
-            self.passes.push(Pass {
-                target: self.target,
-                clear: None,
-                clear_stencil: None,
-                first_call: self.calls.len() as u32,
-                call_count: 0,
-            });
+            self.passes.push(self.target.pass(self.calls.len() as u32));
         }
     }
 

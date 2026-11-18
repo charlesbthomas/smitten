@@ -36,6 +36,7 @@ pub(super) struct DrawState {
     blend_alpha: BlendAlphaMode,
     shader: Option<Shader>,
     canvas: Option<Canvas>,
+    extra_canvases: Vec<Canvas>,
     scissor: Option<(i32, i32, u32, u32)>,
     stencil: StencilMode,
     stencil_value: u8,
@@ -62,6 +63,7 @@ impl DrawState {
             blend_alpha: BlendAlphaMode::default(),
             shader: None,
             canvas: None,
+            extra_canvases: Vec::new(),
             scissor: None,
             stencil: StencilMode::Off,
             stencil_value: 0,
@@ -89,6 +91,7 @@ impl GraphicsState {
             blend_alpha: self.batch.blend_alpha,
             shader: self.shader.clone(),
             canvas: self.canvas.clone(),
+            extra_canvases: self.extra_canvases.clone(),
             scissor: self.scissor,
             stencil: self.batch.stencil,
             stencil_value: self.batch.stencil_value,
@@ -125,7 +128,7 @@ impl GraphicsState {
         }
         self.scissor = state.scissor;
         // Also puts the scissor back, in pixels of the restored target.
-        self.set_canvas(state.canvas);
+        self.set_canvas_list(state.canvas, state.extra_canvases);
         self.batch.stencil = state.stencil;
         self.batch.stencil_value = state.stencil_value;
         self.line_width = state.line_width;
