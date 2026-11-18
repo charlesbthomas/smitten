@@ -4,7 +4,8 @@
 use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use super::{Lookup, lookup, save_path, with_search};
+use super::search::symlink_refused;
+use super::{FileType, Lookup, lookup, save_path, with_search};
 use crate::context;
 
 /// What a [`File`] is opened for, as LÖVE's `FileMode`.
@@ -16,6 +17,46 @@ pub enum FileMode {
     Write,
     /// Writing to the end of a file in the save directory.
     Append,
+    /// Not open. A [`File`] made with this mode, or one that has been
+    /// [closed](File::close), knows its name and can be
+    /// [opened](File::open) later.
+    Closed,
+}
+
+/// How writes to a [`File`] are held back before they reach the disk, as
+/// LÖVE's `BufferMode`. Set it with [`File::set_buffer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BufferMode {
+    /// Every write goes straight to the disk.
+    None,
+    /// Writes are held until a line ends, or until this many bytes are
+    /// waiting. Good for a log that should be complete up to its last
+    /// line even if the game crashes.
+    Line(usize),
+    /// Writes are held until this many bytes are waiting, or the file is
+    /// flushed or closed. The fastest for writing a lot.
+    Full(usize),
+}
+
+impl BufferMode {
+    /// The size of the buffer a [`File`] starts with.
+    pub const DEFAULT_SIZE: usize = 8 * 1024;
+
+    fn capacity(self) -> usize {
+        match self {
+            BufferMode::None => 0,
+            BufferMode::Line(size) | BufferMode::Full(size) => size,
+        }
+    }
+}
+
+impl Default for BufferMode {
+    /// Full buffering with [`BufferMode::DEFAULT_SIZE`] bytes. LÖVE starts
+    /// files with no buffering instead; smitten buffers so that writing a
+    /// piece at a time is not slow.
+    fn default() -> Self {
+        BufferMode::Full(BufferMode::DEFAULT_SIZE)
+    }
 }
 
 enum Stream {
@@ -33,8 +74,9 @@ enum Stream {
 /// A `File` implements [`Read`], [`BufRead`], [`Write`] and [`Seek`], so
 /// it works with anything in the standard library that takes those. The
 /// file is closed when the `File` is dropped, after any buffered writes
-/// are flushed. Call [`File::flush`] first to find out whether they
-/// succeeded.
+/// are flushed. Call [`File::flush`] or [`File::close`] first to find out
+/// whether they succeeded. A closed file can be opened again with
+/// [`File::open`], in the same mode or another.
 ///
 /// ```no_run
 /// use std::io::{BufRead, Write};
@@ -49,37 +91,34 @@ enum Stream {
 /// }
 /// ```
 pub struct File {
-    stream: Stream,
+    /// `None` while the file is closed.
+    stream: Option<Stream>,
     filename: PathBuf,
     mode: FileMode,
+    buffer: BufferMode,
 }
 
 /// Opens a file to read or write a piece at a time, the equivalent of
-/// `love.filesystem.openFile`.
+/// `love.filesystem.openFile` and `love.filesystem.newFile`.
 ///
 /// For [`FileMode::Read`], a relative path is looked up as in
 /// [`super::read`]: the save directory, then the asset directory and
 /// anything mounted. An absolute path, such as that of a file the
 /// player dropped on the window, is opened as it is. For writing, the
 /// path must be relative and the file is in the save directory, with any
-/// missing parent directories created.
+/// missing parent directories created. [`FileMode::Closed`] touches
+/// nothing and gives a `File` to [open](File::open) later.
 pub fn open_file(path: impl AsRef<Path>, mode: FileMode) -> io::Result<File> {
-    let path = path.as_ref();
-    let stream = match mode {
-        FileMode::Read => open_for_reading(path)?,
-        FileMode::Write | FileMode::Append => {
-            let target = save_path(path)?;
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            open_for_writing(&target, mode)?
-        }
+    let mut file = File {
+        stream: None,
+        filename: path.as_ref().to_path_buf(),
+        mode: FileMode::Closed,
+        buffer: BufferMode::default(),
     };
-    Ok(File {
-        stream,
-        filename: path.to_path_buf(),
-        mode,
-    })
+    if mode != FileMode::Closed {
+        file.open(mode)?;
+    }
+    Ok(file)
 }
 
 fn open_for_reading(path: &Path) -> io::Result<Stream> {
@@ -89,6 +128,9 @@ fn open_for_reading(path: &Path) -> io::Result<Stream> {
     };
     let found = with_search(|search, save, assets| {
         let found = search.find(save, assets, &names)?;
+        if found.info.kind == FileType::Symlink {
+            return Some(Err(Err(symlink_refused())));
+        }
         Some(match &found.location {
             super::search::Location::Disk(file) => Ok(file.clone()),
             _ => Err(search.read(&found)),
@@ -115,7 +157,7 @@ fn open_disk(file: &Path) -> io::Result<Stream> {
     Ok(Stream::Disk(BufReader::new(opened)))
 }
 
-fn open_for_writing(target: &Path, mode: FileMode) -> io::Result<Stream> {
+fn open_for_writing(target: &Path, mode: FileMode, buffer: BufferMode) -> io::Result<Stream> {
     let mut options = std::fs::OpenOptions::new();
     options.create(true);
     if mode == FileMode::Append {
@@ -123,7 +165,11 @@ fn open_for_writing(target: &Path, mode: FileMode) -> io::Result<Stream> {
     } else {
         options.write(true).truncate(true);
     }
-    Ok(Stream::Writer(BufWriter::new(options.open(target)?)))
+    let file = options.open(target)?;
+    Ok(Stream::Writer(BufWriter::with_capacity(
+        buffer.capacity(),
+        file,
+    )))
 }
 
 fn not_readable() -> io::Error {
@@ -140,27 +186,128 @@ fn not_writable() -> io::Error {
     )
 }
 
+fn closed() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, "the file is closed")
+}
+
 impl File {
     /// The path the file was opened with.
     pub fn filename(&self) -> &Path {
         &self.filename
     }
 
-    /// What the file was opened for.
+    /// What the file is open for, or [`FileMode::Closed`].
     pub fn mode(&self) -> FileMode {
         self.mode
     }
 
+    /// Whether the file is open, the equivalent of `File:isOpen`.
+    pub fn is_open(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    /// Opens a closed file again, by the name it was made with, the
+    /// equivalent of `File:open`. The path is looked up afresh, as
+    /// [`open_file`] does, and reading or writing starts at the
+    /// beginning, or at the end for [`FileMode::Append`].
+    ///
+    /// Fails if the file is already open; [close](File::close) it first
+    /// to change its mode.
+    pub fn open(&mut self, mode: FileMode) -> io::Result<()> {
+        if self.is_open() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is already open", self.filename.display()),
+            ));
+        }
+        let stream = match mode {
+            FileMode::Read => open_for_reading(&self.filename)?,
+            FileMode::Write | FileMode::Append => {
+                let target = save_path(&self.filename)?;
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                open_for_writing(&target, mode, self.buffer)?
+            }
+            FileMode::Closed => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "a file cannot be opened in the closed mode",
+                ));
+            }
+        };
+        self.stream = Some(stream);
+        self.mode = mode;
+        Ok(())
+    }
+
+    /// Flushes any buffered writes and closes the file, the equivalent of
+    /// `File:close`. The `File` keeps its name and can be
+    /// [opened](File::open) again. Closing a closed file does nothing.
+    ///
+    /// The file is closed even if the flush fails; the error says the
+    /// last writes may be lost.
+    pub fn close(&mut self) -> io::Result<()> {
+        let stream = self.stream.take();
+        self.mode = FileMode::Closed;
+        match stream {
+            Some(Stream::Writer(mut writer)) => writer.flush(),
+            _ => Ok(()),
+        }
+    }
+
+    /// How writes are buffered, the equivalent of `File:getBuffer`.
+    pub fn buffer(&self) -> BufferMode {
+        self.buffer
+    }
+
+    /// Changes how writes are buffered, the equivalent of
+    /// `File:setBuffer`. Anything already buffered is written first. The
+    /// mode is kept if the file is closed and opened again.
+    ///
+    /// Only writing is affected. Reading always uses a buffer, which does
+    /// not change what is read.
+    pub fn set_buffer(&mut self, mode: BufferMode) -> io::Result<()> {
+        self.buffer = mode;
+        let Some(Stream::Writer(writer)) = &mut self.stream else {
+            return Ok(());
+        };
+        writer.flush()?;
+        let Some(Stream::Writer(writer)) = self.stream.take() else {
+            unreachable!("the stream was a writer a moment ago");
+        };
+        match writer.into_inner() {
+            Ok(file) => {
+                let writer = BufWriter::with_capacity(mode.capacity(), file);
+                self.stream = Some(Stream::Writer(writer));
+                Ok(())
+            }
+            Err(error) => {
+                let kind = error.error().kind();
+                let message = error.error().to_string();
+                self.stream = Some(Stream::Writer(error.into_inner()));
+                Err(io::Error::new(kind, message))
+            }
+        }
+    }
+
     /// The file's size in bytes, including anything written but not yet
-    /// flushed.
+    /// flushed. A closed file is looked up by its name.
     pub fn size(&mut self) -> io::Result<u64> {
         match &mut self.stream {
-            Stream::Disk(reader) => Ok(reader.get_ref().metadata()?.len()),
-            Stream::Memory(cursor) => Ok(cursor.get_ref().len() as u64),
-            Stream::Writer(writer) => {
+            Some(Stream::Disk(reader)) => Ok(reader.get_ref().metadata()?.len()),
+            Some(Stream::Memory(cursor)) => Ok(cursor.get_ref().len() as u64),
+            Some(Stream::Writer(writer)) => {
                 writer.flush()?;
                 Ok(writer.get_ref().metadata()?.len())
             }
+            None => match super::info(&self.filename) {
+                Some(info) => Ok(info.size),
+                None => Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{} was not found", self.filename.display()),
+                )),
+            },
         }
     }
 
@@ -174,7 +321,8 @@ impl File {
     /// Always true for a file opened for writing.
     pub fn is_eof(&mut self) -> io::Result<bool> {
         match &mut self.stream {
-            Stream::Writer(_) => Ok(true),
+            Some(Stream::Writer(_)) => Ok(true),
+            None => Err(closed()),
             _ => Ok(self.fill_buf()?.is_empty()),
         }
     }
@@ -206,9 +354,10 @@ impl File {
 impl Read for File {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         match &mut self.stream {
-            Stream::Disk(reader) => reader.read(buffer),
-            Stream::Memory(cursor) => cursor.read(buffer),
-            Stream::Writer(_) => Err(not_readable()),
+            Some(Stream::Disk(reader)) => reader.read(buffer),
+            Some(Stream::Memory(cursor)) => cursor.read(buffer),
+            Some(Stream::Writer(_)) => Err(not_readable()),
+            None => Err(closed()),
         }
     }
 }
@@ -216,17 +365,18 @@ impl Read for File {
 impl BufRead for File {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         match &mut self.stream {
-            Stream::Disk(reader) => reader.fill_buf(),
-            Stream::Memory(cursor) => cursor.fill_buf(),
-            Stream::Writer(_) => Err(not_readable()),
+            Some(Stream::Disk(reader)) => reader.fill_buf(),
+            Some(Stream::Memory(cursor)) => cursor.fill_buf(),
+            Some(Stream::Writer(_)) => Err(not_readable()),
+            None => Err(closed()),
         }
     }
 
     fn consume(&mut self, amount: usize) {
         match &mut self.stream {
-            Stream::Disk(reader) => reader.consume(amount),
-            Stream::Memory(cursor) => cursor.consume(amount),
-            Stream::Writer(_) => {}
+            Some(Stream::Disk(reader)) => reader.consume(amount),
+            Some(Stream::Memory(cursor)) => cursor.consume(amount),
+            _ => {}
         }
     }
 }
@@ -234,14 +384,22 @@ impl BufRead for File {
 impl Write for File {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         match &mut self.stream {
-            Stream::Writer(writer) => writer.write(buffer),
+            Some(Stream::Writer(writer)) => {
+                let written = writer.write(buffer)?;
+                if matches!(self.buffer, BufferMode::Line(_)) && buffer[..written].contains(&b'\n')
+                {
+                    writer.flush()?;
+                }
+                Ok(written)
+            }
+            None => Err(closed()),
             _ => Err(not_writable()),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match &mut self.stream {
-            Stream::Writer(writer) => writer.flush(),
+            Some(Stream::Writer(writer)) => writer.flush(),
             _ => Ok(()),
         }
     }
@@ -252,9 +410,10 @@ impl Seek for File {
     /// [`FileMode::Append`], writes still go to the end.
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
         match &mut self.stream {
-            Stream::Disk(reader) => reader.seek(position),
-            Stream::Memory(cursor) => cursor.seek(position),
-            Stream::Writer(writer) => writer.seek(position),
+            Some(Stream::Disk(reader)) => reader.seek(position),
+            Some(Stream::Memory(cursor)) => cursor.seek(position),
+            Some(Stream::Writer(writer)) => writer.seek(position),
+            None => Err(closed()),
         }
     }
 }
@@ -265,6 +424,7 @@ impl std::fmt::Debug for File {
             .debug_struct("File")
             .field("filename", &self.filename)
             .field("mode", &self.mode)
+            .field("buffer", &self.buffer)
             .finish_non_exhaustive()
     }
 }
@@ -277,13 +437,68 @@ mod tests {
     fn disk(path: &Path, mode: FileMode) -> File {
         let stream = match mode {
             FileMode::Read => open_disk(path).unwrap(),
-            _ => open_for_writing(path, mode).unwrap(),
+            _ => open_for_writing(path, mode, BufferMode::default()).unwrap(),
         };
         File {
-            stream,
+            stream: Some(stream),
             filename: path.to_path_buf(),
             mode,
+            buffer: BufferMode::default(),
         }
+    }
+
+    #[test]
+    fn a_closed_file_keeps_its_name_and_flushes() {
+        let dir = TempDir::new("file-close");
+        let path = dir.0.join("log.txt");
+
+        let mut file = disk(&path, FileMode::Write);
+        assert!(file.is_open());
+        file.write_bytes("kept").unwrap();
+        file.close().unwrap();
+        assert!(!file.is_open());
+        assert_eq!(file.mode(), FileMode::Closed);
+        assert_eq!(file.filename(), path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "kept");
+        file.close().unwrap();
+
+        assert_eq!(
+            file.write(b"x").unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            file.read_bytes(1).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(file.is_eof().is_err());
+        assert!(file.open(FileMode::Closed).is_err());
+
+        let mut open = disk(&path, FileMode::Read);
+        assert!(open.open(FileMode::Read).is_err());
+    }
+
+    #[test]
+    fn buffer_modes_decide_when_writes_reach_the_disk() {
+        let dir = TempDir::new("file-buffer");
+        let path = dir.0.join("log.txt");
+        let on_disk = || std::fs::read_to_string(&path).unwrap();
+
+        let mut file = disk(&path, FileMode::Write);
+        assert_eq!(file.buffer(), BufferMode::Full(BufferMode::DEFAULT_SIZE));
+        file.write_bytes("held\n").unwrap();
+        assert_eq!(on_disk(), "");
+
+        file.set_buffer(BufferMode::None).unwrap();
+        assert_eq!(on_disk(), "held\n");
+        file.write_bytes("direct").unwrap();
+        assert_eq!(on_disk(), "held\ndirect");
+
+        file.set_buffer(BufferMode::Line(1024)).unwrap();
+        assert_eq!(file.buffer(), BufferMode::Line(1024));
+        file.write_bytes(" line").unwrap();
+        assert_eq!(on_disk(), "held\ndirect");
+        file.write_bytes(" ends\nnext").unwrap();
+        assert_eq!(on_disk(), "held\ndirect line ends\nnext");
     }
 
     #[test]
@@ -366,9 +581,10 @@ mod tests {
     #[test]
     fn a_file_inside_an_archive_is_read_from_memory() {
         let mut file = File {
-            stream: Stream::Memory(Cursor::new(b"zipped\nlines".to_vec())),
+            stream: Some(Stream::Memory(Cursor::new(b"zipped\nlines".to_vec()))),
             filename: PathBuf::from("pack/a.txt"),
             mode: FileMode::Read,
+            buffer: BufferMode::default(),
         };
         assert_eq!(file.size().unwrap(), 12);
         let mut line = String::new();

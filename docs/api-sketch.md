@@ -84,13 +84,15 @@ fn main() {
 | `love.graphics.printf(text, x, y, limit, align)` | `graphics::printf(text, x, y, limit, Align)` | |
 | `font:getWidth(text)` / `font:getWrap(text, limit)` | `font.width(text)` / `font.wrap(text, limit)` | |
 | `font:setFallbacks(...)` / `font:hasGlyphs(text)` | `font.set_fallbacks(&[&other])` / `font.has_glyphs(text)` | |
+| `love.font.newRasterizer(path, size)` / `newGlyphData(r, glyph)` | `font::new_rasterizer(path, size)` / `font::new_glyph_data(&r, glyph)` | `Font::from_rasterizer(&r)` is `newFont(rasterizer)`. |
 | `love.filesystem.read(name)` | `filesystem::read(name)` | Returns `io::Result`. Save directory first, then assets. |
 | `love.filesystem.write(name, data)` | `filesystem::write(name, data)` | Always inside the save directory. |
 | `t.identity` in `conf.lua` | `Config::identity` | Names the save directory. |
 | `love.graphics.newCanvas(w, h)` | `graphics::new_canvas(w, h)` | A `Canvas` can be passed wherever an `&Image` is expected. |
 | `love.graphics.setCanvas(canvas)` / `setCanvas()` | `graphics::set_canvas(Some(&canvas))` / `set_canvas(None)` | |
 | `canvas:renderTo(fn)` | `canvas.render_to(\|\| { ... })` | |
-| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`. |
+| `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`, `Screen`, `Lighten`, `Darken`. |
+| `love.graphics.setBlendMode("add", "premultiplied")` | `graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied)` | `blend_mode_ex()` returns both, as `getBlendMode`. |
 | `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |
 | `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
 | `love.graphics.intersectScissor(x, y, w, h)` | `graphics::intersect_scissor(x, y, w, h)` | |

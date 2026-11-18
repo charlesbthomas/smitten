@@ -17,6 +17,10 @@ use super::stats::{Counted, Kind};
 use crate::reload::Asset;
 use crate::{Color, context};
 
+#[path = "rasterizer.rs"]
+mod rasterizer;
+pub use rasterizer::{GlyphData, GlyphFormat, Rasterizer};
+
 /// The typeface LÖVE also uses by default.
 static DEFAULT_FONT: &[u8] = include_bytes!("fonts/Vera.ttf");
 
@@ -92,6 +96,8 @@ enum Origin {
     Image(String, f32),
     /// A BMFont: the folder its page images are found in.
     BMFont(PathBuf),
+    /// Made from a [`Rasterizer`], with no file to reload.
+    Rasterizer,
 }
 
 impl Drop for Inner {
@@ -231,28 +237,13 @@ impl Font {
     /// Loads a `.fnt` file and the page images it names, which are looked
     /// for next to it.
     pub(crate) fn load_bmfont(path: &Path) -> Result<Font, FontError> {
-        let bytes =
-            crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-        let in_file = |message: String| FontError::Parse(format!("{}: {message}", path.display()));
-        let text = String::from_utf8(bytes).map_err(|_| in_file("it is not text".into()))?;
-        let file = BMFontFile::parse(&text).map_err(in_file)?;
-        let dir = path.parent().unwrap_or(Path::new(""));
-        let mut pages = Vec::new();
-        for page in &file.pages {
-            let page_path = dir.join(page);
-            let bytes = crate::filesystem::read(&page_path)
-                .map_err(|source| FontError::read(&page_path, source))?;
-            pages.push(bytes);
-        }
+        let (file, pages) = read_bmfont(path)?;
         let pages: Vec<&[u8]> = pages.iter().map(Vec::as_slice).collect();
         let disk_dir = crate::filesystem::resolve(path)
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        Font::from_bmfont_file(&file, &pages, disk_dir).map_err(|error| match error {
-            FontError::Parse(message) => in_file(message),
-            other => other,
-        })
+        Font::from_bmfont_file(&file, &pages, disk_dir).map_err(|error| in_file(path, error))
     }
 
     /// Has `asset` loaded again when the file at `path` changes.
@@ -507,6 +498,33 @@ impl fmt::Debug for Font {
     }
 }
 
+/// Reads a `.fnt` file and the bytes of the page images it names, which
+/// are looked for next to it.
+fn read_bmfont(path: &Path) -> Result<(BMFontFile, Vec<Vec<u8>>), FontError> {
+    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| in_file(path, FontError::Parse("it is not text".into())))?;
+    let file =
+        BMFontFile::parse(&text).map_err(|message| in_file(path, FontError::Parse(message)))?;
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let mut pages = Vec::new();
+    for page in &file.pages {
+        let page_path = dir.join(page);
+        let bytes = crate::filesystem::read(&page_path)
+            .map_err(|source| FontError::read(&page_path, source))?;
+        pages.push(bytes);
+    }
+    Ok((file, pages))
+}
+
+/// Names the file a parse error was in.
+fn in_file(path: &Path, error: FontError) -> FontError {
+    match error {
+        FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
+        other => other,
+    }
+}
+
 /// Why a font could not be created.
 #[derive(Debug)]
 pub enum FontError {
@@ -556,40 +574,121 @@ fn build_image_font(
     glyphs: &str,
     extra_spacing: f32,
 ) -> Result<(Face, Atlas), String> {
-    let decoded = super::image::decode(bytes)?;
-    let (width, height) = (decoded.width(), decoded.height());
-    let rgba = decoded.into_raw();
-    let cells = slice_glyphs(width, height, &rgba, glyphs)?;
-    let texture = backend.create_texture(width, height, &rgba)?;
+    let image = super::image::decode(bytes)?;
+    let (face, bitmaps) = decode_image_font(image, glyphs, extra_spacing)?;
+    let atlas = bitmaps.upload(backend)?;
+    Ok((face, atlas))
+}
 
+/// Measures an image font and finds its characters, without the GPU.
+fn decode_image_font(
+    image: ::image::RgbaImage,
+    glyphs: &str,
+    extra_spacing: f32,
+) -> Result<(Face, Bitmaps), String> {
+    let (width, height) = (image.width(), image.height());
+    let cells = slice_glyphs(width, height, image.as_raw(), glyphs)?;
     let mut advances = HashMap::new();
     let mut known = HashMap::new();
     for cell in cells {
         advances.insert(cell.character, cell.width as f32 + extra_spacing);
         known.insert(
             cell.character,
-            Some(Glyph {
+            Some(BitmapGlyph {
                 page: 0,
-                uv: [
-                    cell.x as f32 / width as f32,
-                    0.0,
-                    (cell.x + cell.width) as f32 / width as f32,
-                    1.0,
-                ],
-                width: cell.width as f32,
-                height: height as f32,
+                x: cell.x,
+                y: 0,
+                width: cell.width,
+                height,
                 left: 0.0,
                 top: -(height as f32),
             }),
         );
     }
     let face = Face::bitmap(advances, HashMap::new(), height as f32, height as f32, 0.0);
-    let atlas = Atlas {
-        page_size: width.max(height),
-        pages: vec![Page::full(texture, width, height)],
+    let bitmaps = Bitmaps {
+        pages: vec![image],
         glyphs: known,
     };
-    Ok((face, atlas))
+    Ok((face, bitmaps))
+}
+
+/// Where one character of a bitmap font is in its pages, in pixels, and
+/// how it sits against the pen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BitmapGlyph {
+    page: usize,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    /// Offset from the pen position to the picture's left edge.
+    left: f32,
+    /// Offset from the baseline to the picture's top edge; negative is up.
+    top: f32,
+}
+
+/// The pictures of a bitmap font's characters, before they are on the
+/// GPU.
+#[derive(Clone)]
+struct Bitmaps {
+    pages: Vec<::image::RgbaImage>,
+    /// `None` records a character with nothing to draw, such as a space.
+    glyphs: HashMap<char, Option<BitmapGlyph>>,
+}
+
+impl Bitmaps {
+    /// Puts the pages on the GPU as an atlas that already holds every
+    /// glyph.
+    fn upload(&self, backend: &mut dyn Backend) -> Result<Atlas, String> {
+        let mut pages: Vec<Page> = Vec::new();
+        for image in &self.pages {
+            match backend.create_texture(image.width(), image.height(), image.as_raw()) {
+                Ok(texture) => pages.push(Page::full(texture, image.width(), image.height())),
+                Err(error) => {
+                    for page in &pages {
+                        backend.destroy_texture(page.texture);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let glyphs = self
+            .glyphs
+            .iter()
+            .map(|(&character, glyph)| {
+                let glyph = glyph.map(|glyph| {
+                    let image = &self.pages[glyph.page];
+                    let (page_width, page_height) = (image.width() as f32, image.height() as f32);
+                    Glyph {
+                        page: glyph.page,
+                        uv: [
+                            glyph.x as f32 / page_width,
+                            glyph.y as f32 / page_height,
+                            (glyph.x + glyph.width) as f32 / page_width,
+                            (glyph.y + glyph.height) as f32 / page_height,
+                        ],
+                        width: glyph.width as f32,
+                        height: glyph.height as f32,
+                        left: glyph.left,
+                        top: glyph.top,
+                    }
+                });
+                (character, glyph)
+            })
+            .collect();
+        let page_size = self
+            .pages
+            .iter()
+            .map(|image| image.width().max(image.height()))
+            .max()
+            .unwrap_or(0);
+        Ok(Atlas {
+            page_size,
+            pages,
+            glyphs,
+        })
+    }
 }
 
 /// What an AngelCode BMFont `.fnt` file in its text form says.
@@ -738,6 +837,13 @@ fn build_bmfont(
     file: &BMFontFile,
     pages: &[&[u8]],
 ) -> Result<(Face, Atlas), String> {
+    let (face, bitmaps) = decode_bmfont(file, pages)?;
+    let atlas = bitmaps.upload(backend)?;
+    Ok((face, atlas))
+}
+
+/// Measures a BMFont and decodes its pages, without the GPU.
+fn decode_bmfont(file: &BMFontFile, pages: &[&[u8]]) -> Result<(Face, Bitmaps), String> {
     if pages.len() < file.pages.len() {
         return Err(format!(
             "it has {} pages but {} images were given",
@@ -750,35 +856,24 @@ fn build_bmfont(
         let image = super::image::decode(bytes).map_err(|error| format!("{name}: {error}"))?;
         decoded.push(image);
     }
-    let mut atlas_pages: Vec<Page> = Vec::new();
-    for image in &decoded {
-        match backend.create_texture(image.width(), image.height(), image.as_raw()) {
-            Ok(texture) => atlas_pages.push(Page::full(texture, image.width(), image.height())),
-            Err(error) => {
-                for page in &atlas_pages {
-                    backend.destroy_texture(page.texture);
-                }
-                return Err(error);
-            }
-        }
-    }
 
     let mut advances = HashMap::new();
     let mut glyphs = HashMap::new();
     for char in &file.chars {
         advances.insert(char.character, char.x_advance);
         let image = &decoded[char.page];
-        let (page_width, page_height) = (image.width() as f32, image.height() as f32);
-        let glyph = (char.width > 0 && char.height > 0).then(|| Glyph {
+        if char.x + char.width > image.width() || char.y + char.height > image.height() {
+            return Err(format!(
+                "the character {:?} reaches past the edge of {}",
+                char.character, file.pages[char.page]
+            ));
+        }
+        let glyph = (char.width > 0 && char.height > 0).then_some(BitmapGlyph {
             page: char.page,
-            uv: [
-                char.x as f32 / page_width,
-                char.y as f32 / page_height,
-                (char.x + char.width) as f32 / page_width,
-                (char.y + char.height) as f32 / page_height,
-            ],
-            width: char.width as f32,
-            height: char.height as f32,
+            x: char.x,
+            y: char.y,
+            width: char.width,
+            height: char.height,
             left: char.x_offset,
             top: char.y_offset - file.base,
         });
@@ -801,17 +896,13 @@ fn build_bmfont(
         file.base,
         file.line_height - file.base,
     );
-    let page_size = decoded
-        .iter()
-        .map(|image| image.width().max(image.height()))
-        .max()
-        .unwrap_or(0);
-    let atlas = Atlas {
-        page_size,
-        pages: atlas_pages,
-        glyphs,
-    };
-    Ok((face, atlas))
+    Ok((
+        face,
+        Bitmaps {
+            pages: decoded,
+            glyphs,
+        },
+    ))
 }
 
 /// Says which color each glyph of a piece of colored text is, the way
@@ -876,6 +967,7 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
             let pages: Vec<&[u8]> = pages.iter().map(Vec::as_slice).collect();
             build_bmfont(backend, &file, &pages)?
         }
+        Origin::Rasterizer => return Err("a font made from a rasterizer has no file".into()),
         Origin::Vector => {
             let (size, scale, hinting) = {
                 let face = inner.face.borrow();
@@ -896,6 +988,7 @@ pub(crate) fn reload(inner: &Inner, backend: &mut dyn Backend, bytes: &[u8]) -> 
 }
 
 /// The measuring half of a font: metrics and line breaking, no GPU.
+#[derive(Clone)]
 struct Face {
     source: Source,
     /// In units. All the metrics here are in units too.
@@ -909,6 +1002,7 @@ struct Face {
 }
 
 /// Where a font's characters come from.
+#[derive(Clone)]
 enum Source {
     /// Outlines from a TrueType or OpenType file, drawn when first used.
     Vector(fontdue::Font),
