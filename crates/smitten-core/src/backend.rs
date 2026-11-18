@@ -452,9 +452,10 @@ pub struct Pass {
     /// The color to fill the target with first. `None` keeps what the
     /// target already holds and draws on top of it.
     pub clear: Option<Color>,
-    /// Whether to reset the target's stencil values to zero first. Each
-    /// target has its own stencil values, kept until cleared.
-    pub clear_stencil: bool,
+    /// The value to reset the target's stencil values to first, or `None`
+    /// to keep them. Each target has its own stencil values, kept until
+    /// cleared.
+    pub clear_stencil: Option<u8>,
     /// Index into [`Frame::calls`] of the first call.
     pub first_call: u32,
     pub call_count: u32,
