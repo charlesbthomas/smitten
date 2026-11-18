@@ -6,23 +6,28 @@
 //! color is under a point. Turn one into an image with
 //! [`Image::from_image_data`] when it is ready to draw.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 
-use super::image::{Image, ImageError, decode};
+use smitten_core::PixelFormat;
+
+use super::image::{Image, ImageError, decode_any};
+use super::pixels;
 use crate::Color;
 
 /// A grid of pixels that can be read and changed.
+///
+/// Its pixels are stored in a [`PixelFormat`], [`PixelFormat::Rgba8`]
+/// unless it was made with another. [`ImageData::pixel`] and
+/// [`ImageData::set_pixel`] work the same in every format.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ImageData {
     width: u32,
     height: u32,
-    /// Four bytes a pixel (red, green, blue, alpha), in rows from the top.
+    format: PixelFormat,
+    /// [`PixelFormat::bytes_per_pixel`] bytes a pixel, in rows from the top.
     pixels: Vec<u8>,
-}
-
-fn to_byte(component: f32) -> u8 {
-    (component.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 impl ImageData {
@@ -31,8 +36,61 @@ impl ImageData {
         ImageData {
             width,
             height,
+            format: PixelFormat::Rgba8,
             pixels: vec![0; width as usize * height as usize * 4],
         }
+    }
+
+    /// Creates `width` by `height` pixels in `format`, all zero, the
+    /// equivalent of `love.image.newImageData(width, height, format)`.
+    /// For a format without alpha, they read back as opaque black.
+    ///
+    /// Fails for depth and stencil formats, which only canvases can have.
+    pub fn with_format(
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+    ) -> Result<ImageData, ImageError> {
+        check_format(format)?;
+        Ok(ImageData {
+            width,
+            height,
+            format,
+            pixels: vec![0; width as usize * height as usize * format.bytes_per_pixel()],
+        })
+    }
+
+    /// Wraps raw pixels in `format`: `width * height` of them, each
+    /// [`PixelFormat::bytes_per_pixel`] long, in rows from the top. The
+    /// equivalent of `love.image.newImageData(width, height, format,
+    /// rawdata)`. Multi-byte channels are little-endian, and packed
+    /// formats such as `rgb10a2` are one little-endian 32-bit number with
+    /// red in the lowest bits, as the GPU stores them.
+    pub fn from_raw(
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        bytes: Vec<u8>,
+    ) -> Result<ImageData, ImageError> {
+        check_format(format)?;
+        let expected = width as usize * height as usize * format.bytes_per_pixel();
+        if bytes.len() != expected {
+            return Err(ImageError::Invalid(format!(
+                "{width} by {height} {format} pixels need {expected} bytes, not {}",
+                bytes.len()
+            )));
+        }
+        Ok(ImageData {
+            width,
+            height,
+            format,
+            pixels: bytes,
+        })
+    }
+
+    /// How the pixels are stored, the equivalent of `ImageData:getFormat`.
+    pub fn format(&self) -> PixelFormat {
+        self.format
     }
 
     /// Wraps raw pixels: `width * height` of them, four bytes each (red,
@@ -49,17 +107,36 @@ impl ImageData {
         ImageData {
             width,
             height,
+            format: PixelFormat::Rgba8,
             pixels: rgba,
         }
     }
 
-    /// Decodes the contents of a PNG, JPEG or TGA file.
+    /// Decodes the contents of a PNG, JPEG or TGA file. A 16-bit PNG
+    /// keeps its precision as [`PixelFormat::Rgba16`], as in LÖVE; every
+    /// other file gives [`PixelFormat::Rgba8`].
     pub fn from_bytes(bytes: &[u8]) -> Result<ImageData, ImageError> {
-        let decoded = decode(bytes).map_err(ImageError::Invalid)?;
+        let decoded = decode_any(bytes).map_err(ImageError::Invalid)?;
+        let (width, height) = (decoded.width(), decoded.height());
+        if decoded.color().bytes_per_pixel() / decoded.color().channel_count() == 2 {
+            let pixels = decoded
+                .into_rgba16()
+                .into_raw()
+                .into_iter()
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            return Ok(ImageData {
+                width,
+                height,
+                format: PixelFormat::Rgba16,
+                pixels,
+            });
+        }
         Ok(ImageData {
-            width: decoded.width(),
-            height: decoded.height(),
-            pixels: decoded.into_raw(),
+            width,
+            height,
+            format: PixelFormat::Rgba8,
+            pixels: decoded.into_rgba8().into_raw(),
         })
     }
 
@@ -86,29 +163,31 @@ impl ImageData {
             self.width,
             self.height
         );
-        (y as usize * self.width as usize + x as usize) * 4
+        (y as usize * self.width as usize + x as usize) * self.format.bytes_per_pixel()
     }
 
     /// The color of the pixel at `(x, y)`, counted from the top-left.
+    /// Channels the format lacks read as LÖVE's do: green and blue as 0,
+    /// alpha as 1.
     ///
     /// Panics if the pixel is outside the image.
     pub fn pixel(&self, x: u32, y: u32) -> Color {
         let at = self.offset(x, y);
-        let component = |index: usize| f32::from(self.pixels[at + index]) / 255.0;
-        Color::rgba(component(0), component(1), component(2), component(3))
+        pixels::decode(
+            self.format,
+            &self.pixels[at..at + self.format.bytes_per_pixel()],
+        )
     }
 
-    /// Sets the color of the pixel at `(x, y)`.
+    /// Sets the color of the pixel at `(x, y)`. Channels the format lacks
+    /// are dropped. In a floating-point format, values outside 0 to 1 are
+    /// kept; in others they are clamped.
     ///
     /// Panics if the pixel is outside the image.
     pub fn set_pixel(&mut self, x: u32, y: u32, color: Color) {
         let at = self.offset(x, y);
-        self.pixels[at..at + 4].copy_from_slice(&[
-            to_byte(color.r),
-            to_byte(color.g),
-            to_byte(color.b),
-            to_byte(color.a),
-        ]);
+        let size = self.format.bytes_per_pixel();
+        pixels::encode(self.format, color, &mut self.pixels[at..at + size]);
     }
 
     /// Replaces every pixel with what `change` returns for its position
@@ -124,7 +203,8 @@ impl ImageData {
 
     /// Copies a `width` by `height` rectangle of `source`, whose top-left
     /// corner is at `(source_x, source_y)`, to `(x, y)` in this image.
-    /// Whatever falls outside either image is left out.
+    /// Whatever falls outside either image is left out. Pixels are
+    /// converted if the two images have different formats.
     #[allow(clippy::too_many_arguments)] // Mirrors ImageData:paste.
     pub fn paste(
         &mut self,
@@ -145,22 +225,68 @@ impl ImageData {
                 let inside_self = (0..i64::from(self.width)).contains(&to_x)
                     && (0..i64::from(self.height)).contains(&to_y);
                 if inside_source && inside_self {
-                    let from = source.offset(from_x, from_y);
-                    let to = self.offset(to_x as u32, to_y as u32);
-                    self.pixels[to..to + 4].copy_from_slice(&source.pixels[from..from + 4]);
+                    let (to_x, to_y) = (to_x as u32, to_y as u32);
+                    if source.format == self.format {
+                        let size = self.format.bytes_per_pixel();
+                        let from = source.offset(from_x, from_y);
+                        let to = self.offset(to_x, to_y);
+                        self.pixels[to..to + size]
+                            .copy_from_slice(&source.pixels[from..from + size]);
+                    } else {
+                        self.set_pixel(to_x, to_y, source.pixel(from_x, from_y));
+                    }
                 }
             }
         }
     }
 
-    /// The raw pixels, laid out as [`ImageData::from_rgba`] takes them.
+    /// The raw pixels, laid out as [`ImageData::from_raw`] takes them for
+    /// the image's format. For [`PixelFormat::Rgba8`], as
+    /// [`ImageData::from_rgba`] takes them.
     pub fn as_bytes(&self) -> &[u8] {
         &self.pixels
     }
 
+    /// The pixels as four bytes each (red, green, blue, alpha), converted
+    /// if the image is in another format. This is what the GPU and the
+    /// window system are given.
+    pub(crate) fn rgba8(&self) -> Cow<'_, [u8]> {
+        if matches!(self.format, PixelFormat::Rgba8 | PixelFormat::Srgba8) {
+            return Cow::Borrowed(&self.pixels);
+        }
+        let mut rgba = vec![0; self.width as usize * self.height as usize * 4];
+        let size = self.format.bytes_per_pixel();
+        for (to, from) in rgba.chunks_exact_mut(4).zip(self.pixels.chunks_exact(size)) {
+            pixels::encode(PixelFormat::Rgba8, pixels::decode(self.format, from), to);
+        }
+        Cow::Owned(rgba)
+    }
+
     /// The image as the contents of a file in `format`, the equivalent of
-    /// `ImageData:encode`.
+    /// `ImageData:encode`. Works for [`PixelFormat::Rgba8`] images, and
+    /// [`PixelFormat::Rgba16`] ones as PNG, as in LÖVE.
     pub fn encode(&self, format: ImageFormat) -> Result<Vec<u8>, ImageError> {
+        let color_type = match (self.format, format) {
+            (PixelFormat::Rgba8 | PixelFormat::Srgba8, _) => ::image::ExtendedColorType::Rgba8,
+            (PixelFormat::Rgba16, ImageFormat::Png) => ::image::ExtendedColorType::Rgba16,
+            (pixel_format, _) => {
+                return Err(ImageError::Invalid(format!(
+                    "{pixel_format} pixels cannot be saved as {format:?}: \
+                     only rgba8, and rgba16 as PNG, can"
+                )));
+            }
+        };
+        let pixels: Cow<'_, [u8]> = if self.format == PixelFormat::Rgba16 {
+            // The encoder takes 16-bit channels in the machine's byte order.
+            Cow::Owned(
+                self.pixels
+                    .chunks_exact(2)
+                    .flat_map(|pair| u16::from_le_bytes([pair[0], pair[1]]).to_ne_bytes())
+                    .collect(),
+            )
+        } else {
+            Cow::Borrowed(&self.pixels)
+        };
         let format = match format {
             ImageFormat::Png => ::image::ImageFormat::Png,
             ImageFormat::Tga => ::image::ImageFormat::Tga,
@@ -168,10 +294,10 @@ impl ImageData {
         let mut file = Vec::new();
         ::image::write_buffer_with_format(
             &mut std::io::Cursor::new(&mut file),
-            &self.pixels,
+            &pixels,
             self.width,
             self.height,
-            ::image::ExtendedColorType::Rgba8,
+            color_type,
             format,
         )
         .map_err(|error| ImageError::Invalid(error.to_string()))?;
@@ -221,15 +347,30 @@ impl fmt::Debug for ImageData {
         f.debug_struct("ImageData")
             .field("width", &self.width)
             .field("height", &self.height)
+            .field("format", &self.format)
             .finish()
     }
+}
+
+/// Fails for formats an [`ImageData`] cannot hold.
+fn check_format(format: PixelFormat) -> Result<(), ImageError> {
+    if format.is_depth() {
+        return Err(ImageError::Invalid(format!(
+            "image data cannot be in {format}, which only canvases can have"
+        )));
+    }
+    Ok(())
 }
 
 impl Image {
     /// Creates an image to draw from pixels in memory. Later changes to
     /// `data` do not show until [`Image::replace_pixels`] is called.
+    ///
+    /// Images are stored on the GPU as [`PixelFormat::Rgba8`] for now, so
+    /// pixels in other formats are converted, and lose any precision or
+    /// range beyond it.
     pub fn from_image_data(data: &ImageData) -> Result<Image, ImageError> {
-        Image::from_rgba(data.width, data.height, &data.pixels)
+        Image::from_rgba(data.width, data.height, &data.rgba8())
     }
 
     /// As [`Image::from_image_data`], with options such as mipmaps.
@@ -237,7 +378,7 @@ impl Image {
         data: &ImageData,
         settings: super::ImageSettings,
     ) -> Result<Image, ImageError> {
-        Image::from_rgba_with(data.width, data.height, &data.pixels, settings)
+        Image::from_rgba_with(data.width, data.height, &data.rgba8(), settings)
     }
 }
 
@@ -333,6 +474,54 @@ mod tests {
         let file = data.encode_png().unwrap();
         assert_eq!(ImageData::from_bytes(&file).unwrap(), data);
         assert!(ImageData::from_bytes(b"not an image").is_err());
+    }
+
+    #[test]
+    fn image_data_can_hold_other_formats() {
+        let mut data = ImageData::with_format(2, 1, PixelFormat::Rgba16f).unwrap();
+        assert_eq!(data.format(), PixelFormat::Rgba16f);
+        assert_eq!(data.as_bytes().len(), 16);
+        let bright = Color::rgba(3.0, 0.5, 0.0, 1.0);
+        data.set_pixel(1, 0, bright);
+        assert_eq!(data.pixel(1, 0), bright);
+        assert_eq!(data.pixel(0, 0), Color::rgba(0.0, 0.0, 0.0, 0.0));
+
+        let red_only = ImageData::with_format(1, 1, PixelFormat::R8).unwrap();
+        assert_eq!(red_only.pixel(0, 0), Color::rgba(0.0, 0.0, 0.0, 1.0));
+        assert!(ImageData::with_format(1, 1, PixelFormat::Depth24).is_err());
+    }
+
+    #[test]
+    fn raw_pixels_in_any_format_must_match_the_size() {
+        let data = ImageData::from_raw(2, 1, PixelFormat::Rg8, vec![255, 0, 0, 255]).unwrap();
+        assert_eq!(data.pixel(0, 0), Color::rgba(1.0, 0.0, 0.0, 1.0));
+        assert_eq!(data.pixel(1, 0), Color::rgba(0.0, 1.0, 0.0, 1.0));
+        assert!(ImageData::from_raw(2, 1, PixelFormat::Rg8, vec![0; 3]).is_err());
+    }
+
+    #[test]
+    fn paste_converts_between_formats() {
+        let mut source = ImageData::with_format(1, 1, PixelFormat::R32f).unwrap();
+        source.set_pixel(0, 0, Color::rgba(0.5, 0.0, 0.0, 1.0));
+        let mut target = ImageData::new(1, 1);
+        target.paste(&source, 0, 0, 0, 0, 1, 1);
+        assert_eq!(target.as_bytes(), [128, 0, 0, 255]);
+        // Converted for the GPU in the same way.
+        assert_eq!(&*source.rgba8(), [128, 0, 0, 255]);
+    }
+
+    #[test]
+    fn sixteen_bit_pngs_keep_their_precision() {
+        let mut data = ImageData::with_format(2, 1, PixelFormat::Rgba16).unwrap();
+        data.set_pixel(0, 0, Color::rgba(1.0 / 65535.0, 0.25, 1.0, 1.0));
+        let file = data.encode(ImageFormat::Png).unwrap();
+        let back = ImageData::from_bytes(&file).unwrap();
+        assert_eq!(back.format(), PixelFormat::Rgba16);
+        assert_eq!(back, data);
+        // TGA has no 16-bit channels, and floats go in neither file.
+        assert!(data.encode(ImageFormat::Tga).is_err());
+        let floats = ImageData::with_format(1, 1, PixelFormat::Rgba32f).unwrap();
+        assert!(floats.encode(ImageFormat::Png).is_err());
     }
 
     #[test]

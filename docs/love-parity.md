@@ -93,10 +93,6 @@ shaders, volume textures and canvas formats.
 
 - `SpriteBatch:attachAttribute`.
 
-## image
-
-- `ImageData:getFormat`, and `ImageData` in pixel formats other than RGBA8.
-
 ## physics
 
 - Ghost vertices on chains and edges: `ChainShape` and `EdgeShape`
