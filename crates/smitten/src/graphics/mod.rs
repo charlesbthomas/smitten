@@ -60,7 +60,7 @@ pub use shapes::{LineJoin, LineStyle};
 pub use smitten_core::backend::CompressedFormat;
 pub use sprite_batch::SpriteBatch;
 pub use stats::Stats;
-pub use text::{Align, Font, FontError};
+pub use text::{Align, Font, FontError, Hinting};
 pub use text_object::Text;
 pub use transform::Transform;
 #[cfg(feature = "video")]
@@ -1547,7 +1547,9 @@ pub fn draw_particles_ex(
 // ---------------------------------------------------------------------------
 // Text
 
-/// Loads a TrueType or OpenType font file at `size` pixels.
+/// Loads a TrueType or OpenType font file at `size` pixels, or an
+/// AngelCode BMFont if the file name ends in `.fnt` (whose own size is
+/// used then, and whose page images are found next to it).
 ///
 /// A relative path is looked up as [`crate::filesystem`] describes, which
 /// normally means inside the game's `assets` folder.
@@ -1560,9 +1562,60 @@ pub fn new_font(path: impl AsRef<Path>, size: f32) -> Font {
 
 /// Loads a font file at `size` pixels, returning an error if it fails.
 pub fn try_new_font(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
+    try_new_font_ex(path, size, Hinting::Normal, None)
+}
+
+/// Loads a font file with the full set of LÖVE's `newFont` arguments:
+/// its size, how its outlines are fitted to pixels, and how many pixels
+/// its glyphs hold for each unit, or `None` to match the screen.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_font_ex`] to handle the failure instead.
+pub fn new_font_ex(
+    path: impl AsRef<Path>,
+    size: f32,
+    hinting: Hinting,
+    dpi_scale: Option<f32>,
+) -> Font {
+    try_new_font_ex(path, size, hinting, dpi_scale).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// As [`new_font_ex`], returning an error if it fails.
+pub fn try_new_font_ex(
+    path: impl AsRef<Path>,
+    size: f32,
+    hinting: Hinting,
+    dpi_scale: Option<f32>,
+) -> Result<Font, FontError> {
     let path = path.as_ref();
-    let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    let font = Font::from_bytes(&bytes, size)?;
+    let is_bmfont = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("fnt"));
+    let font = if is_bmfont {
+        Font::load_bmfont(path)?
+    } else {
+        let bytes =
+            crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
+        Font::from_bytes_ex(&bytes, size, hinting, dpi_scale)?
+    };
+    font.watch(path);
+    Ok(font)
+}
+
+/// Loads an AngelCode BMFont from its `.fnt` file, whose page images are
+/// found next to it. Only the text form of `.fnt` files is read, as in
+/// LÖVE. [`new_font`] does the same for a file ending in `.fnt`.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_bmfont`] to handle the failure instead.
+pub fn new_bmfont(path: impl AsRef<Path>) -> Font {
+    try_new_bmfont(path).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Loads a BMFont, returning an error if it fails.
+pub fn try_new_bmfont(path: impl AsRef<Path>) -> Result<Font, FontError> {
+    let path = path.as_ref();
+    let font = Font::load_bmfont(path)?;
     font.watch(path);
     Ok(font)
 }
@@ -1582,14 +1635,51 @@ pub fn new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Font {
 
 /// Loads a bitmap font, returning an error if it fails.
 pub fn try_new_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
+    try_new_image_font_ex(path, glyphs, 0.0)
+}
+
+/// Loads a bitmap font with `extra_spacing` units added after each
+/// character, which may be negative: LÖVE's `newImageFont` with its
+/// `extraspacing` argument.
+///
+/// Panics with the file name if it cannot be loaded. Use
+/// [`try_new_image_font_ex`] to handle the failure instead.
+pub fn new_image_font_ex(path: impl AsRef<Path>, glyphs: &str, extra_spacing: f32) -> Font {
+    try_new_image_font_ex(path, glyphs, extra_spacing).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// As [`new_image_font_ex`], returning an error if it fails.
+pub fn try_new_image_font_ex(
+    path: impl AsRef<Path>,
+    glyphs: &str,
+    extra_spacing: f32,
+) -> Result<Font, FontError> {
     let path = path.as_ref();
     let bytes = crate::filesystem::read(path).map_err(|source| FontError::read(path, source))?;
-    let font = Font::from_image(&bytes, glyphs, 0.0).map_err(|error| match error {
+    let font = Font::from_image(&bytes, glyphs, extra_spacing).map_err(|error| match error {
         FontError::Parse(message) => FontError::Parse(format!("{}: {message}", path.display())),
         other => other,
     })?;
     font.watch(path);
     Ok(font)
+}
+
+/// Loads a font file at `size` pixels, makes it the current font and
+/// returns it, the equivalent of `love.graphics.setNewFont`.
+///
+/// Panics with the file name if it cannot be loaded.
+pub fn set_new_font(path: impl AsRef<Path>, size: f32) -> Font {
+    let font = new_font(path, size);
+    set_font(&font);
+    font
+}
+
+/// Makes the built-in font at `size` pixels the current font and returns
+/// it, the equivalent of `love.graphics.setNewFont(size)`.
+pub fn set_new_default_font(size: f32) -> Font {
+    let font = new_default_font(size);
+    set_font(&font);
+    font
 }
 
 /// Creates the built-in font at `size` pixels.
