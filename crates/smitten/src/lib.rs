@@ -57,8 +57,8 @@ pub use error::{ErrorReport, reset_error_handler, set_error_handler};
 pub use joystick::Joystick;
 pub use smitten_core::{
     BlendAlphaMode, BlendMode, Color, CompareMode, Config, Cursor, DisplayOrientation, Filter,
-    GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key, MessageBoxKind,
-    MouseButton, Scaling, StencilAction, TouchId, Wrap,
+    FullscreenType, GamepadAxis, GamepadButton, GamepadInput, JoystickHat, JoystickInput, Key,
+    MessageBoxKind, MouseButton, Scaling, StencilAction, TouchId, Wrap,
 };
 
 use std::path::Path;
@@ -309,7 +309,11 @@ pub fn run<G: Game>(config: Config) {
             let screenshots = context::with(|ctx| {
                 ctx.gfx.finish_frame();
                 let screenshots = ctx.gfx.take_screenshots(&mut *ctx.backend);
-                ctx.backend.present(&ctx.gfx.frame());
+                if ctx.window_closed {
+                    ctx.backend.render_offscreen(&ctx.gfx.frame());
+                } else {
+                    ctx.backend.present(&ctx.gfx.frame());
+                }
                 ctx.gfx.end_frame();
                 screenshots
             });

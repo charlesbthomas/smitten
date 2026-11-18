@@ -12,9 +12,9 @@
 use std::path::PathBuf;
 
 use crate::{
-    BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, GamepadAxis,
-    GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind, MouseButton,
-    PowerInfo, StencilMode, TouchId, WindowState, Wrap,
+    BlendAlphaMode, BlendMode, Color, Cursor, DisplayOrientation, Filter, FullscreenType,
+    GamepadAxis, GamepadButton, JoystickHat, JoystickId, JoystickInfo, Key, MessageBoxKind,
+    MouseButton, PowerInfo, StencilMode, TouchId, WindowState, Wrap,
 };
 
 /// Something that happened on the platform since the last poll.
@@ -841,12 +841,65 @@ pub trait Backend {
 
     fn set_title(&mut self, title: &str);
 
-    /// Makes the window fill the whole screen, or puts it back. A
-    /// [`BackendEvent::Resized`] follows if the drawable size changed.
-    fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), String>;
+    /// Makes the window fill the whole screen in the way `kind` says, or
+    /// puts it back. An exclusive mode takes the resolution closest to the
+    /// window's size. A [`BackendEvent::Resized`] follows if the drawable
+    /// size changed.
+    fn set_fullscreen(&mut self, fullscreen: bool, kind: FullscreenType) -> Result<(), String>;
 
     /// Whether the window currently fills the whole screen.
     fn is_fullscreen(&self) -> bool;
+
+    /// How the window fills the screen when it is fullscreen.
+    fn fullscreen_type(&self) -> FullscreenType;
+
+    /// The exclusive fullscreen sizes `display` offers, in units, largest
+    /// first, each listed once. Empty if there is no such display.
+    fn fullscreen_modes(&self, display: u32) -> Vec<(u32, u32)>;
+
+    /// Removes the window's title bar and frame, or puts them back.
+    fn set_borderless(&mut self, borderless: bool);
+
+    fn is_borderless(&self) -> bool;
+
+    /// Lets the user resize the window, or stops them.
+    fn set_resizable(&mut self, resizable: bool);
+
+    fn is_resizable(&self) -> bool;
+
+    /// The smallest size in units the user can shrink the window to.
+    fn set_minimum_size(&mut self, width: u32, height: u32);
+
+    fn minimum_size(&self) -> (u32, u32);
+
+    /// The index, counted from 0 in the order the system lists displays,
+    /// of the display the window is mostly on.
+    fn window_display(&self) -> u32;
+
+    /// The display's name, or `None` if there is no such display.
+    fn display_name(&self, display: u32) -> Option<String>;
+
+    /// The display's area in desktop coordinates, as `(x, y, width,
+    /// height)`. Desktop coordinates are what window positions use.
+    fn display_bounds(&self, display: u32) -> Option<(i32, i32, u32, u32)>;
+
+    /// The size in units of `display`'s desktop.
+    fn display_desktop_size(&self, display: u32) -> Option<(u32, u32)>;
+
+    /// What [`Backend::dpi_scale`] would be for a window on `display`.
+    fn display_dpi_scale(&self, display: u32) -> Option<f32>;
+
+    /// Moves the window to the middle of `display`.
+    fn center_window(&mut self, display: u32);
+
+    /// Shows or hides the window. A hidden window is not presented to.
+    fn set_window_shown(&mut self, shown: bool);
+
+    /// Lets the display sleep or start its screen saver while the game
+    /// runs, or keeps it awake.
+    fn set_display_sleep(&mut self, enabled: bool);
+
+    fn display_sleep_enabled(&self) -> bool;
 
     /// Sets the window's icon. `rgba` is laid out as in `create_texture`.
     fn set_icon(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), String>;

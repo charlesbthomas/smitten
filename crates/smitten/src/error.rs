@@ -187,6 +187,8 @@ pub(crate) fn show(payload: &(dyn Any + Send)) {
     let shown = catch_unwind(AssertUnwindSafe(|| {
         // Music should not play on over the error.
         crate::audio::stop();
+        // A window the game closed is opened again to show the error.
+        crate::window::open();
         reset_graphics();
 
         let mut draw = match handler {
