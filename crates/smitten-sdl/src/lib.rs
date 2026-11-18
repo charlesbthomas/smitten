@@ -212,7 +212,12 @@ impl SdlBackend {
             }
 
             let gamma_correct = composition == SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
-            let renderer = match Renderer::new(device, window, gamma_correct) {
+            let renderer = match Renderer::new(
+                device,
+                window,
+                gamma_correct,
+                (config.depth, config.stencil),
+            ) {
                 Ok(renderer) => renderer,
                 Err(message) => {
                     SDL_ReleaseWindowFromGPUDevice(device, window);

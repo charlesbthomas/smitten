@@ -250,7 +250,10 @@ pub(crate) struct Renderer {
     /// built-in one), whether it draws an array texture, and how many
     /// canvases.
     fragment_variants: HashMap<(Option<u32>, bool, u8), *mut SDL_GPUShader>,
+    /// The depth and stencil format of a canvas's own values.
     stencil_format: SDL_GPUTextureFormat,
+    /// The depth and stencil format of the screen's, as the game asked.
+    screen_depth_format: SDL_GPUTextureFormat,
     /// The screen's stencil values, and the size they were made for.
     screen_stencil: *mut SDL_GPUTexture,
     screen_stencil_size: (u32, u32),
@@ -289,10 +292,13 @@ pub(crate) struct Renderer {
 impl Renderer {
     /// Builds the pipeline for `window`, which `device` must already own.
     /// With `gamma_correct`, the window's swapchain is sRGB-encoded.
+    /// `screen_depth` is the bits of depth the screen asks for, and
+    /// whether it has a stencil buffer.
     pub fn new(
         device: *mut SDL_GPUDevice,
         window: *mut SDL_Window,
         gamma_correct: bool,
+        screen_depth: (Option<u8>, bool),
     ) -> Result<Self, String> {
         let mut renderer = Self {
             device,
@@ -309,6 +315,7 @@ impl Renderer {
             pipelines: HashMap::new(),
             fragment_variants: HashMap::new(),
             stencil_format: SDL_GPU_TEXTUREFORMAT_INVALID,
+            screen_depth_format: SDL_GPU_TEXTUREFORMAT_INVALID,
             screen_stencil: ptr::null_mut(),
             screen_stencil_size: (0, 0),
             screen_stencil_fresh: false,
@@ -374,12 +381,24 @@ impl Renderer {
                 )
             })
             .ok_or("the GPU has no stencil format")?;
+            renderer.screen_depth_format = screen_depth_formats(screen_depth)
+                .iter()
+                .copied()
+                .find(|&format| {
+                    SDL_GPUTextureSupportsFormat(
+                        device,
+                        format,
+                        SDL_GPU_TEXTURETYPE_2D,
+                        SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+                    )
+                })
+                .unwrap_or(renderer.stencil_format);
             // Build the pipeline nearly every frame uses now, so a broken
             // setup fails at startup rather than drawing nothing.
             let common = PipelineKey {
                 shader: None,
                 layered: false,
-                target: TargetDesc::single(screen_format, 1, renderer.stencil_format),
+                target: TargetDesc::single(screen_format, 1, renderer.screen_depth_format),
                 layout: VertexLayoutId::STANDARD,
                 blend: BlendMode::Alpha,
                 blend_alpha: BlendAlphaMode::AlphaMultiply,
@@ -1581,9 +1600,11 @@ impl Renderer {
     /// What a pass to `target`, or to the screen for `None`, draws to.
     fn target_desc(&self, target: Option<TextureId>) -> TargetDesc {
         match target.and_then(|id| self.textures.get(&id.0)) {
-            None if target.is_none() => {
-                TargetDesc::single(self.screen_format, self.screen_samples, self.stencil_format)
-            }
+            None if target.is_none() => TargetDesc::single(
+                self.screen_format,
+                self.screen_samples,
+                self.screen_depth_format,
+            ),
             None => TargetDesc::single(DEFAULT_TEXTURE_FORMAT, 1, self.stencil_format),
             Some(texture) => {
                 TargetDesc::single(texture.format, texture.samples, self.stencil_format)
@@ -1784,7 +1805,7 @@ impl Renderer {
             SDL_ReleaseGPUTexture(self.device, self.screen_msaa);
             self.screen_stencil = new_stencil_texture(
                 self.device,
-                self.stencil_format,
+                self.screen_depth_format,
                 width,
                 height,
                 self.screen_samples,
@@ -1806,7 +1827,7 @@ impl Renderer {
                 self.screen_samples = 1;
                 SDL_ReleaseGPUTexture(self.device, self.screen_stencil);
                 self.screen_stencil =
-                    new_stencil_texture(self.device, self.stencil_format, width, height, 1);
+                    new_stencil_texture(self.device, self.screen_depth_format, width, height, 1);
             }
         }
         self.screen_stencil_size = (width, height);
@@ -3478,6 +3499,31 @@ fn is_depth_format(format: SDL_GPUTextureFormat) -> bool {
         SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
     ]
     .contains(&format)
+}
+
+/// The depth and stencil formats that give the screen `bits` of depth,
+/// and a stencil part if asked for, best first. Without a number of bits,
+/// the smallest.
+fn screen_depth_formats((bits, stencil): (Option<u8>, bool)) -> &'static [SDL_GPUTextureFormat] {
+    match (bits, stencil) {
+        (Some(32), true) => &[
+            SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
+            SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+        ],
+        (_, true) => &[
+            SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
+            SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
+        ],
+        (Some(32), false) => &[
+            SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+            SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+        ],
+        (Some(bits), false) if bits > 16 => &[
+            SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+            SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+        ],
+        (_, false) => &[SDL_GPU_TEXTUREFORMAT_D16_UNORM],
+    }
 }
 
 /// Whether a depth `format` has a stencil part.
