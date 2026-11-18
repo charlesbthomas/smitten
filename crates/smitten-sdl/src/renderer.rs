@@ -12,8 +12,10 @@ use std::ptr;
 
 use sdl3_sys::everything::*;
 use smitten_core::backend::{
-    BoundTexture, BufferId, BufferUsage, ColorMask, CompressedFormat, DrawCall, Frame, MeshDraw,
-    RenderTargetDesc, RendererInfo, Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex,
+    BoundTexture, BufferId, BufferUsage, ColorMask, CompressedFormat, DrawCall, Frame,
+    IndexDataType, MAX_VERTEX_ATTRIBUTES, MAX_VERTEX_BUFFERS, MeshDraw, RenderTargetDesc,
+    RendererInfo, Scissor, ShaderId, ShaderInfo, TextureId, TextureKind, Vertex, VertexDataType,
+    VertexLayout, VertexLayoutId as MeshVertexLayoutId, VertexStep,
 };
 use smitten_core::{
     BlendAlphaMode, BlendMode, CompareMode, Filter, PixelFormat, StencilAction, StencilMode,
@@ -76,12 +78,18 @@ impl TargetDesc {
 struct VertexLayoutId(u32);
 
 impl VertexLayoutId {
-    /// One buffer of [`Vertex`], already in screen pixels, which is what
-    /// every draw uses today.
+    /// One buffer of [`Vertex`], already in pixels of the target, which
+    /// is what every draw but a mesh's uses. Mesh layouts count from 1.
     const STANDARD: Self = Self(0);
-    /// One buffer of [`Vertex`] in a mesh's own coordinates, placed and
-    /// tinted on the GPU by the built-in mesh vertex shader.
-    const MESH: Self = Self(1);
+}
+
+/// A vertex layout for meshes, and the built-in vertex shader for it.
+struct MeshLayout {
+    desc: VertexLayout,
+    vertex_shader: *mut SDL_GPUShader,
+    /// The index into `desc.attributes` of what each input location of
+    /// the shader reads.
+    locations: Vec<usize>,
 }
 
 /// A buffer the game keeps on the GPU.
@@ -185,8 +193,9 @@ pub(crate) struct Renderer {
     screen_format: SDL_GPUTextureFormat,
     /// The vertex shader for vertices already in pixels.
     vertex_shader: *mut SDL_GPUShader,
-    /// The vertex shader for geometry kept in GPU buffers.
-    mesh_vertex_shader: *mut SDL_GPUShader,
+    /// The layouts meshes have been drawn with, by id, and the id of each.
+    mesh_layouts: HashMap<u32, MeshLayout>,
+    mesh_layout_ids: HashMap<VertexLayout, u32>,
     buffers: HashMap<u32, GpuBuffer>,
     next_buffer_id: u32,
     shaders: HashMap<u32, CustomShader>,
@@ -240,7 +249,8 @@ impl Renderer {
             device,
             screen_format: SDL_GPU_TEXTUREFORMAT_INVALID,
             vertex_shader: ptr::null_mut(),
-            mesh_vertex_shader: ptr::null_mut(),
+            mesh_layouts: HashMap::new(),
+            mesh_layout_ids: HashMap::new(),
             buffers: HashMap::new(),
             next_buffer_id: 1,
             shaders: HashMap::new(),
@@ -278,14 +288,6 @@ impl Renderer {
                 device,
                 VERTEX_SPIRV,
                 c"main",
-                SDL_GPU_SHADERSTAGE_VERTEX,
-                0,
-                1,
-            )?;
-            renderer.mesh_vertex_shader = create_shader(
-                device,
-                &shader::mesh_vertex()?,
-                shader::MESH_VERTEX_ENTRY_POINT,
                 SDL_GPU_SHADERSTAGE_VERTEX,
                 0,
                 1,
@@ -1014,8 +1016,7 @@ impl Renderer {
             if handle.is_null() {
                 return Err(format!("could not create a buffer: {}", sdl_error()));
             }
-            let data = self.linear_vertex_bytes(usage, 0, data);
-            if let Err(message) = upload_buffer(self.device, handle, 0, &data, false) {
+            if let Err(message) = upload_buffer(self.device, handle, 0, data, false) {
                 SDL_ReleaseGPUBuffer(self.device, handle);
                 return Err(message);
             }
@@ -1061,41 +1062,41 @@ impl Renderer {
         // than waiting for frames still using the old. Part of it cannot,
         // since a cycled buffer loses the rest of its bytes.
         let whole = offset == 0 && data.len() == entry.size as usize;
-        let data = self.linear_vertex_bytes(entry.usage, offset, data);
         // SAFETY: the buffer is alive and the bytes were checked to fit.
-        unsafe { upload_buffer(self.device, entry.handle, offset, &data, whole) }
+        unsafe { upload_buffer(self.device, entry.handle, offset, data, whole) }
     }
 
-    /// `data` for a buffer, with the colors of whole vertices converted to
-    /// linear light when rendering is gamma-correct, as the colors in
-    /// [`Frame::vertices`] are.
-    fn linear_vertex_bytes<'a>(
-        &self,
-        usage: BufferUsage,
-        offset: u32,
-        data: &'a [u8],
-    ) -> std::borrow::Cow<'a, [u8]> {
-        let vertex = VERTEX_SIZE as usize;
-        if !self.gamma_correct
-            || usage != BufferUsage::Vertex
-            || !(offset as usize).is_multiple_of(vertex)
-            || !data.len().is_multiple_of(vertex)
-        {
-            return std::borrow::Cow::Borrowed(data);
+    pub fn create_vertex_layout(
+        &mut self,
+        layout: &VertexLayout,
+    ) -> Result<MeshVertexLayoutId, String> {
+        if let Some(&id) = self.mesh_layout_ids.get(layout) {
+            return Ok(MeshVertexLayoutId(id));
         }
-        let color_at = std::mem::offset_of!(Vertex, color);
-        let mut converted = data.to_vec();
-        for chunk in converted.chunks_exact_mut(vertex) {
-            let color = &mut chunk[color_at..color_at + 16];
-            let mut channels = [0f32; 4];
-            for (channel, bytes) in channels.iter_mut().zip(color.chunks_exact(4)) {
-                *channel = f32::from_ne_bytes(bytes.try_into().unwrap());
-            }
-            for (bytes, channel) in color.chunks_exact_mut(4).zip(linear_color(channels)) {
-                bytes.copy_from_slice(&channel.to_ne_bytes());
-            }
-        }
-        std::borrow::Cow::Owned(converted)
+        check_vertex_layout(layout)?;
+        let compiled = shader::mesh_vertex(layout, self.gamma_correct)?;
+        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let vertex_shader = unsafe {
+            create_shader(
+                self.device,
+                &compiled.spirv,
+                shader::MESH_VERTEX_ENTRY_POINT,
+                SDL_GPU_SHADERSTAGE_VERTEX,
+                0,
+                1,
+            )?
+        };
+        let id = self.mesh_layouts.len() as u32 + 1;
+        self.mesh_layouts.insert(
+            id,
+            MeshLayout {
+                desc: layout.clone(),
+                vertex_shader,
+                locations: compiled.locations,
+            },
+        );
+        self.mesh_layout_ids.insert(layout.clone(), id);
+        Ok(MeshVertexLayoutId(id))
     }
 
     pub fn destroy_buffer(&mut self, buffer: BufferId) {
@@ -1181,8 +1182,16 @@ impl Renderer {
     ) -> Result<(*mut SDL_GPUShader, VertexInput), String> {
         match layout {
             VertexLayoutId::STANDARD => Ok((self.vertex_shader, standard_vertex_input())),
-            VertexLayoutId::MESH => Ok((self.mesh_vertex_shader, standard_vertex_input())),
-            other => Err(format!("there is no vertex layout {other:?}")),
+            VertexLayoutId(id) => {
+                let layout = self
+                    .mesh_layouts
+                    .get(&id)
+                    .ok_or_else(|| format!("there is no vertex layout {id}"))?;
+                Ok((
+                    layout.vertex_shader,
+                    mesh_vertex_input(&layout.desc, &layout.locations),
+                ))
+            }
         }
     }
 
@@ -1228,7 +1237,7 @@ impl Renderer {
                 .unwrap_or(&[]);
             let target = self.target_desc(pass.target);
             for call in calls {
-                let key = self.pipeline_key(call, target);
+                let key = self.pipeline_key(call, target, frame.meshes);
                 if !self.pipelines.contains_key(&key)
                     && let Ok(pipeline) = self.create_pipeline(key)
                 {
@@ -1239,7 +1248,12 @@ impl Renderer {
     }
 
     /// The pipeline `call` draws with.
-    fn pipeline_key(&self, call: &DrawCall, target: TargetDesc) -> PipelineKey {
+    fn pipeline_key(
+        &self,
+        call: &DrawCall,
+        target: TargetDesc,
+        meshes: &[MeshDraw],
+    ) -> PipelineKey {
         let layered = call.shader.is_none()
             && call
                 .texture
@@ -1249,11 +1263,12 @@ impl Renderer {
             shader: call.shader.map(|id| id.0),
             layered,
             target,
-            layout: if call.mesh.is_some() {
-                VertexLayoutId::MESH
-            } else {
-                VertexLayoutId::STANDARD
-            },
+            layout: call
+                .mesh
+                .and_then(|index| meshes.get(index as usize))
+                .map_or(VertexLayoutId::STANDARD, |draw| {
+                    VertexLayoutId(draw.layout.0)
+                }),
             blend: call.blend,
             blend_alpha: call.blend_alpha,
             stencil: call.stencil,
@@ -1755,26 +1770,10 @@ impl Renderer {
                         let Some(&draw) = frame.meshes.get(index as usize) else {
                             continue;
                         };
-                        let buffers = self
-                            .buffers
-                            .get(&draw.vertices.0)
-                            .zip(self.buffers.get(&draw.indices.0));
-                        let Some((vertices, indices)) = buffers else {
+                        let Some((vertices, indices)) = self.mesh_buffers(&draw) else {
                             continue;
                         };
-                        let in_range = draw
-                            .first_index
-                            .checked_add(draw.index_count)
-                            .and_then(|end| end.checked_mul(4))
-                            .is_some_and(|end| end <= indices.size);
-                        if draw.index_count == 0
-                            || !in_range
-                            || vertices.usage != BufferUsage::Vertex
-                            || indices.usage != BufferUsage::Index
-                        {
-                            continue;
-                        }
-                        Some((draw, vertices.handle, indices.handle))
+                        Some((draw, vertices, indices))
                     }
                 };
                 // A target cannot be sampled while it is being drawn to.
@@ -1809,7 +1808,7 @@ impl Renderer {
                 let Some(scissor) = clip_scissor(call.scissor, width, height) else {
                     continue;
                 };
-                let key = self.pipeline_key(call, target_desc);
+                let key = self.pipeline_key(call, target_desc, frame.meshes);
                 // A pipeline that could not be built draws nothing.
                 let Some(&pipeline) = self.pipelines.get(&key) else {
                     continue;
@@ -1904,14 +1903,15 @@ impl Renderer {
                     }
                     Some((draw, vertices, indices)) => {
                         if bound_mesh != Some(draw) {
+                            let bindings: Vec<SDL_GPUBufferBinding> = vertices
+                                .iter()
+                                .map(|&buffer| SDL_GPUBufferBinding { buffer, offset: 0 })
+                                .collect();
                             SDL_BindGPUVertexBuffers(
                                 pass,
                                 0,
-                                &SDL_GPUBufferBinding {
-                                    buffer: vertices,
-                                    offset: 0,
-                                },
-                                1,
+                                bindings.as_ptr(),
+                                bindings.len() as u32,
                             );
                             SDL_BindGPUIndexBuffer(
                                 pass,
@@ -1919,7 +1919,10 @@ impl Renderer {
                                     buffer: indices,
                                     offset: 0,
                                 },
-                                SDL_GPU_INDEXELEMENTSIZE_32BIT,
+                                match draw.index_type {
+                                    IndexDataType::U16 => SDL_GPU_INDEXELEMENTSIZE_16BIT,
+                                    IndexDataType::U32 => SDL_GPU_INDEXELEMENTSIZE_32BIT,
+                                },
                             );
                             let uniforms = MeshUniforms {
                                 transform_projection: multiply(&projection, &draw.transform),
@@ -1950,6 +1953,144 @@ impl Renderer {
                 }
             }
         }
+    }
+}
+
+impl Renderer {
+    /// The vertex buffers, one for each of the layout's slots, and the
+    /// index buffer a mesh draw reads, if they all exist and hold enough
+    /// for the draw.
+    fn mesh_buffers(
+        &self,
+        draw: &MeshDraw,
+    ) -> Option<(Vec<*mut SDL_GPUBuffer>, *mut SDL_GPUBuffer)> {
+        let layout = self.mesh_layouts.get(&draw.layout.0)?;
+        let indices = self
+            .buffers
+            .get(&draw.indices.0)
+            .filter(|indices| indices.usage == BufferUsage::Index)?;
+        let index_end = draw
+            .first_index
+            .checked_add(draw.index_count)?
+            .checked_mul(draw.index_type.size())?;
+        if draw.index_count == 0 || index_end > indices.size {
+            return None;
+        }
+        let mut vertices = Vec::with_capacity(layout.desc.buffers.len());
+        for (slot, buffer_layout) in layout.desc.buffers.iter().enumerate() {
+            let buffer = self
+                .buffers
+                .get(&draw.buffers.get(slot).copied().flatten()?.0)
+                .filter(|buffer| buffer.usage == BufferUsage::Vertex)?;
+            // Every vertex the indices may reach must be there. An
+            // instance buffer only needs the one instance drawn.
+            let needed = match buffer_layout.step {
+                VertexStep::PerVertex => draw.vertex_count,
+                VertexStep::PerInstance => 1,
+            };
+            if u64::from(needed) * u64::from(buffer_layout.stride) > u64::from(buffer.size) {
+                return None;
+            }
+            vertices.push(buffer.handle);
+        }
+        Some((vertices, indices.handle))
+    }
+}
+
+/// Checks that a mesh layout is one the GPU can read.
+fn check_vertex_layout(layout: &VertexLayout) -> Result<(), String> {
+    if layout.buffers.is_empty() || layout.buffers.len() > MAX_VERTEX_BUFFERS {
+        return Err(format!(
+            "a vertex layout needs 1 to {MAX_VERTEX_BUFFERS} buffers, not {}",
+            layout.buffers.len()
+        ));
+    }
+    if layout.attributes.len() > MAX_VERTEX_ATTRIBUTES {
+        return Err(format!(
+            "a vertex layout can have at most {MAX_VERTEX_ATTRIBUTES} attributes"
+        ));
+    }
+    for buffer in &layout.buffers {
+        if buffer.stride == 0 || !buffer.stride.is_multiple_of(4) {
+            return Err(format!(
+                "a vertex buffer's stride must be a positive multiple of 4, not {}",
+                buffer.stride
+            ));
+        }
+    }
+    for (index, attribute) in layout.attributes.iter().enumerate() {
+        let name = &attribute.name;
+        if layout.attributes[..index]
+            .iter()
+            .any(|other| other.name == *name)
+        {
+            return Err(format!("vertex attribute `{name}` is named twice"));
+        }
+        if !(1..=4).contains(&attribute.components) {
+            return Err(format!(
+                "vertex attribute `{name}` must have 1 to 4 components"
+            ));
+        }
+        let Some(buffer) = layout.buffers.get(attribute.buffer as usize) else {
+            return Err(format!(
+                "vertex attribute `{name}` is in a buffer that is not there"
+            ));
+        };
+        let end = attribute.offset + attribute.data_type.size(attribute.components);
+        if !attribute.offset.is_multiple_of(4) || end > buffer.stride {
+            return Err(format!(
+                "vertex attribute `{name}` does not fit in its vertex"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The vertex input for a mesh layout, with the attributes its shader
+/// reads at their locations.
+fn mesh_vertex_input(layout: &VertexLayout, locations: &[usize]) -> VertexInput {
+    VertexInput {
+        buffers: layout
+            .buffers
+            .iter()
+            .enumerate()
+            .map(|(slot, buffer)| SDL_GPUVertexBufferDescription {
+                slot: slot as u32,
+                pitch: buffer.stride,
+                input_rate: match buffer.step {
+                    VertexStep::PerVertex => SDL_GPU_VERTEXINPUTRATE_VERTEX,
+                    VertexStep::PerInstance => SDL_GPU_VERTEXINPUTRATE_INSTANCE,
+                },
+                instance_step_rate: 0,
+            })
+            .collect(),
+        attributes: locations
+            .iter()
+            .enumerate()
+            .map(|(location, &index)| {
+                let attribute = &layout.attributes[index];
+                SDL_GPUVertexAttribute {
+                    location: location as u32,
+                    buffer_slot: attribute.buffer,
+                    format: vertex_element_format(attribute.data_type, attribute.components),
+                    offset: attribute.offset,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// The SDL format a vertex attribute is read as, matching
+/// [`shader::attribute_shader_type`].
+fn vertex_element_format(data_type: VertexDataType, components: u8) -> SDL_GPUVertexElementFormat {
+    match (data_type, components) {
+        (VertexDataType::Float, 1) => SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,
+        (VertexDataType::Float, 2) => SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+        (VertexDataType::Float, 3) => SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+        (VertexDataType::Float, _) => SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+        (VertexDataType::UNorm8, _) => SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM,
+        (VertexDataType::UNorm16, 1 | 2) => SDL_GPU_VERTEXELEMENTFORMAT_USHORT2_NORM,
+        (VertexDataType::UNorm16, _) => SDL_GPU_VERTEXELEMENTFORMAT_USHORT4_NORM,
     }
 }
 
@@ -2112,7 +2253,9 @@ impl Drop for Renderer {
                 SDL_ReleaseGPUShader(self.device, shader.fragment);
             }
             SDL_ReleaseGPUShader(self.device, self.vertex_shader);
-            SDL_ReleaseGPUShader(self.device, self.mesh_vertex_shader);
+            for layout in self.mesh_layouts.values() {
+                SDL_ReleaseGPUShader(self.device, layout.vertex_shader);
+            }
             SDL_ReleaseGPUShader(self.device, self.fragment_shader);
             SDL_ReleaseGPUShader(self.device, self.array_fragment_shader);
         }

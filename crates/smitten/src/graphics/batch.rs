@@ -397,8 +397,11 @@ mod tests {
 
     fn mesh_draw(index_count: u32) -> MeshDraw {
         MeshDraw {
-            vertices: smitten_core::backend::BufferId(1),
+            layout: smitten_core::backend::VertexLayoutId(1),
+            buffers: [None; smitten_core::backend::MAX_VERTEX_BUFFERS],
+            vertex_count: 3,
             indices: smitten_core::backend::BufferId(2),
+            index_type: smitten_core::backend::IndexDataType::U32,
             first_index: 0,
             index_count,
             transform: [0.0; 16],

@@ -10,7 +10,10 @@
 
 use naga::back::spv;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
-use smitten_core::backend::{ShaderTexture, TextureKind, UniformArray, UniformField, UniformKind};
+use smitten_core::backend::{
+    ShaderTexture, TextureKind, UniformArray, UniformField, UniformKind, VERTEX_COLOR,
+    VERTEX_POSITION, VERTEX_TEX_COORD, VertexDataType, VertexLayout,
+};
 
 /// The name of the entry point in the generated shader.
 pub(crate) const ENTRY_POINT: &std::ffi::CStr = c"smitten_fragment";
@@ -38,11 +41,12 @@ fn smitten_fragment(input: SmittenFragmentInput) -> @location(0) vec4<f32> {
 /// The name of the entry point of the built-in mesh vertex shader.
 pub(crate) const MESH_VERTEX_ENTRY_POINT: &std::ffi::CStr = c"smitten_vertex";
 
-/// The vertex shader for geometry kept on the GPU: it places each vertex
-/// with the draw's matrix and tints its color, where ordinary draws are
-/// placed and tinted on the CPU. Its outputs match what every fragment
-/// shader takes. SDL wants vertex shader uniforms in group 1.
-const MESH_VERTEX: &str = "
+/// The part of every mesh vertex shader that does not depend on the
+/// layout. It places each vertex with the draw's matrix and tints its
+/// color, where ordinary draws are placed and tinted on the CPU. Its
+/// outputs match what every fragment shader takes. SDL wants vertex shader
+/// uniforms in group 1.
+const MESH_VERTEX_COMMON: &str = "
 struct SmittenDraw {
     transform_projection: mat4x4<f32>,
     tint: vec4<f32>,
@@ -55,28 +59,127 @@ struct SmittenVertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
 }
+";
 
-@vertex
-fn smitten_vertex(
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-) -> SmittenVertexOutput {
-    var output: SmittenVertexOutput;
-    output.position = smitten_draw.transform_projection * vec4<f32>(position, 0.0, 1.0);
-    output.uv = uv;
-    output.color = color * smitten_draw.tint;
-    return output;
+/// A vertex shader made for one vertex layout.
+#[derive(Debug)]
+pub(crate) struct MeshVertexShader {
+    pub spirv: Vec<u8>,
+    /// The index into the layout's attributes of what each input location
+    /// reads, in location order. Attributes the shader does not read are
+    /// left out.
+    pub locations: Vec<usize>,
+}
+
+/// How a vertex attribute reaches a shader: the WGSL type it is read as,
+/// and how many values that type has.
+pub(crate) fn attribute_shader_type(
+    data_type: VertexDataType,
+    components: u8,
+) -> (&'static str, u8) {
+    match (data_type, components) {
+        (VertexDataType::Float, 1) => ("f32", 1),
+        (VertexDataType::Float, 2) => ("vec2<f32>", 2),
+        (VertexDataType::Float, 3) => ("vec3<f32>", 3),
+        (VertexDataType::Float, _) => ("vec4<f32>", 4),
+        (VertexDataType::UNorm8, _) => ("vec4<f32>", 4),
+        (VertexDataType::UNorm16, 1 | 2) => ("vec2<f32>", 2),
+        (VertexDataType::UNorm16, _) => ("vec4<f32>", 4),
+    }
+}
+
+/// A WGSL `vecN<f32>` of `want` values: the attribute's own values where
+/// it has them, read from `expr`, and `defaults` for the rest.
+fn widen(expr: &str, read: u8, components: u8, defaults: &[f32]) -> String {
+    let values: Vec<String> = defaults
+        .iter()
+        .enumerate()
+        .map(|(index, default)| {
+            if index < usize::from(components) {
+                if read == 1 {
+                    expr.to_string()
+                } else {
+                    format!("{expr}.{}", ["x", "y", "z", "w"][index])
+                }
+            } else {
+                format!("{default:?}")
+            }
+        })
+        .collect();
+    format!("vec{}<f32>({})", defaults.len(), values.join(", "))
+}
+
+/// Turns a color given sRGB-encoded, as games give colors, into linear
+/// light, for gamma-correct rendering. Alpha is left alone.
+const LINEAR_COLOR: &str = "
+fn smitten_linear(color: vec4<f32>) -> vec4<f32> {
+    let low = color.rgb / 12.92;
+    let high = pow((color.rgb + 0.055) / 1.055, vec3<f32>(2.4));
+    return vec4<f32>(select(high, low, color.rgb <= vec3<f32>(0.04045)), color.a);
 }
 ";
 
-/// The built-in mesh vertex shader as SPIR-V.
-pub(crate) fn mesh_vertex() -> Result<Vec<u8>, String> {
-    let module = naga::front::wgsl::parse_str(MESH_VERTEX)
-        .map_err(|error| error.emit_to_string_with_path(MESH_VERTEX, "mesh vertex shader"))?;
+/// Writes the built-in mesh vertex shader for `layout`: it reads the
+/// position, texture coordinate and color by their LÖVE names, with
+/// LÖVE's defaults for any the layout lacks. With `gamma_correct`, vertex
+/// colors are turned into linear light, as LÖVE does.
+pub(crate) fn mesh_vertex(
+    layout: &VertexLayout,
+    gamma_correct: bool,
+) -> Result<MeshVertexShader, String> {
+    let mut source = String::from(MESH_VERTEX_COMMON);
+    source.push_str(LINEAR_COLOR);
+    let mut parameters = Vec::new();
+    let mut locations = Vec::new();
+    let mut read = |name: &str, defaults: &[f32]| {
+        let found = layout
+            .attributes
+            .iter()
+            .enumerate()
+            .find(|(_, attribute)| attribute.name == name);
+        match found {
+            Some((index, attribute)) => {
+                let (ty, width) = attribute_shader_type(attribute.data_type, attribute.components);
+                let variable = format!("in_{}", locations.len());
+                parameters.push(format!("@location({}) {variable}: {ty}", locations.len()));
+                locations.push(index);
+                widen(&variable, width, attribute.components, defaults)
+            }
+            None => widen("", 0, 0, defaults),
+        }
+    };
+    let position = read(VERTEX_POSITION, &[0.0, 0.0, 0.0, 1.0]);
+    let uv = read(VERTEX_TEX_COORD, &[0.0, 0.0]);
+    let color = read(VERTEX_COLOR, &[1.0, 1.0, 1.0, 1.0]);
+    let color = if gamma_correct {
+        format!("smitten_linear({color})")
+    } else {
+        color
+    };
+    source.push_str(&format!(
+        "
+@vertex
+fn smitten_vertex({}) -> SmittenVertexOutput {{
+    var output: SmittenVertexOutput;
+    output.position = smitten_draw.transform_projection * {position};
+    output.uv = {uv};
+    output.color = {color} * smitten_draw.tint;
+    return output;
+}}
+",
+        parameters.join(", ")
+    ));
+    let spirv = vertex_spirv(&source)?;
+    Ok(MeshVertexShader { spirv, locations })
+}
+
+/// Translates a vertex shader the framework wrote to SPIR-V.
+fn vertex_spirv(source: &str) -> Result<Vec<u8>, String> {
+    let module = naga::front::wgsl::parse_str(source)
+        .map_err(|error| error.emit_to_string_with_path(source, "mesh vertex shader"))?;
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
-        .map_err(|error| error.emit_to_string_with_path(MESH_VERTEX, "mesh vertex shader"))?;
+        .map_err(|error| error.emit_to_string_with_path(source, "mesh vertex shader"))?;
     let pipeline = spv::PipelineOptions {
         shader_stage: naga::ShaderStage::Vertex,
         entry_point: "smitten_vertex".to_string(),
@@ -395,10 +498,74 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
 }
 ";
 
+    fn layout(attributes: &[(&str, VertexDataType, u8)]) -> VertexLayout {
+        let mut offset = 0;
+        let attributes = attributes
+            .iter()
+            .map(|&(name, data_type, components)| {
+                let attribute = smitten_core::backend::VertexLayoutAttribute {
+                    name: name.to_string(),
+                    buffer: 0,
+                    offset,
+                    data_type,
+                    components,
+                };
+                offset += data_type.size(components);
+                attribute
+            })
+            .collect();
+        VertexLayout {
+            buffers: vec![smitten_core::backend::VertexBufferLayout {
+                stride: offset.max(4),
+                step: smitten_core::backend::VertexStep::PerVertex,
+            }],
+            attributes,
+        }
+    }
+
     #[test]
-    fn the_mesh_vertex_shader_compiles_to_spirv() {
-        let spirv = mesh_vertex().unwrap();
-        assert_eq!(spirv[..4], 0x0723_0203u32.to_le_bytes());
+    fn a_mesh_vertex_shader_reads_the_attributes_it_knows_in_order() {
+        let shader = mesh_vertex(
+            &layout(&[
+                ("Weight", VertexDataType::Float, 1),
+                (VERTEX_COLOR, VertexDataType::UNorm8, 3),
+                (VERTEX_POSITION, VertexDataType::Float, 3),
+            ]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(shader.spirv[..4], 0x0723_0203u32.to_le_bytes());
+        // Position first, then color; the weight is not read.
+        assert_eq!(shader.locations, [2, 1]);
+    }
+
+    #[test]
+    fn every_attribute_type_and_size_makes_a_valid_mesh_vertex_shader() {
+        for data_type in [
+            VertexDataType::Float,
+            VertexDataType::UNorm8,
+            VertexDataType::UNorm16,
+        ] {
+            for components in 1..=4 {
+                let shader = mesh_vertex(
+                    &layout(&[
+                        (VERTEX_POSITION, data_type, components),
+                        (VERTEX_TEX_COORD, data_type, components),
+                        (VERTEX_COLOR, data_type, components),
+                    ]),
+                    components == 4,
+                )
+                .unwrap_or_else(|error| panic!("{data_type:?} x{components}: {error}"));
+                assert_eq!(shader.locations, [0, 1, 2]);
+            }
+        }
+        // Even with none of them.
+        assert!(
+            mesh_vertex(&layout(&[]), true)
+                .unwrap()
+                .locations
+                .is_empty()
+        );
     }
 
     #[test]
