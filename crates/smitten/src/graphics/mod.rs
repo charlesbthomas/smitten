@@ -38,7 +38,7 @@ use smitten_core::backend::{Backend, ColorMask, Frame, Pass, Scissor, TextureId,
 use crate::context;
 use smitten_core::StencilMode;
 
-use crate::{BlendMode, Color, CompareMode, Filter, StencilAction};
+use crate::{BlendAlphaMode, BlendMode, Color, CompareMode, Filter, StencilAction};
 use batch::Batch;
 pub(crate) use screen::Screen;
 
@@ -243,6 +243,7 @@ impl GraphicsState {
         self.batch.clear();
         self.batch.set_shader(None);
         self.batch.blend = BlendMode::default();
+        self.batch.blend_alpha = BlendAlphaMode::default();
         self.batch.stencil = StencilMode::Off;
         self.batch.color_mask = ColorMask::ALL;
         self.batch.wireframe = false;
@@ -970,14 +971,65 @@ pub fn point_size() -> f32 {
 
 /// Sets how what is drawn combines with what is already there.
 ///
+/// Colors are taken to be multiplied by their alpha as they are drawn,
+/// except with the modes that only work premultiplied (see
+/// [`BlendMode::default_alpha_mode`]). Use [`set_blend_mode_ex`] to draw
+/// premultiplied colors, such as a canvas, in another mode.
+///
 /// The blend mode stays set until changed, even across frames.
 pub fn set_blend_mode(mode: BlendMode) {
-    context::with(|ctx| ctx.gfx.batch.blend = mode);
+    set_blend_mode_ex(mode, mode.default_alpha_mode());
+}
+
+/// Sets the blend mode and whether the colors drawn are already
+/// multiplied by their alpha, the equivalent of LÖVE's
+/// `setBlendMode(mode, alphamode)`.
+///
+/// ```no_run
+/// use smitten::{graphics, BlendAlphaMode, BlendMode};
+///
+/// # let canvas = graphics::new_canvas(64, 64);
+/// // Add a canvas full of soft glows onto the screen.
+/// graphics::set_blend_mode_ex(BlendMode::Add, BlendAlphaMode::Premultiplied);
+/// graphics::draw(&canvas, 0.0, 0.0);
+/// ```
+///
+/// Panics for [`BlendMode::Multiply`], [`BlendMode::Lighten`] or
+/// [`BlendMode::Darken`] with [`BlendAlphaMode::AlphaMultiply`], as LÖVE
+/// raises an error: those modes only work premultiplied.
+/// [`BlendMode::Premultiplied`] is always premultiplied whatever `alpha`
+/// says.
+pub fn set_blend_mode_ex(mode: BlendMode, alpha: BlendAlphaMode) {
+    assert!(
+        !(mode.needs_premultiplied()
+            && mode != BlendMode::Premultiplied
+            && alpha == BlendAlphaMode::AlphaMultiply),
+        "the {mode:?} blend mode only works with BlendAlphaMode::Premultiplied"
+    );
+    context::with(|ctx| {
+        ctx.gfx.batch.blend = mode;
+        ctx.gfx.batch.blend_alpha = alpha;
+    });
 }
 
 /// Returns the current blend mode.
 pub fn blend_mode() -> BlendMode {
     context::with(|ctx| ctx.gfx.batch.blend)
+}
+
+/// Returns the current blend mode and alpha mode, the equivalent of
+/// LÖVE's `getBlendMode`. [`BlendMode::Premultiplied`] comes back as
+/// itself, with [`BlendAlphaMode::Premultiplied`].
+pub fn blend_mode_ex() -> (BlendMode, BlendAlphaMode) {
+    context::with(|ctx| {
+        let mode = ctx.gfx.batch.blend;
+        let alpha = if mode == BlendMode::Premultiplied {
+            BlendAlphaMode::Premultiplied
+        } else {
+            ctx.gfx.batch.blend_alpha
+        };
+        (mode, alpha)
+    })
 }
 
 /// Limits drawing to a rectangle of the screen or the active canvas.
