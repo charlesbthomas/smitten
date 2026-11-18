@@ -14,7 +14,7 @@ slicing a `ByteData`.
 
 ## Summary
 
-About 45 of LÖVE's 900 functions and methods are still missing, plus 9
+About 39 of LÖVE's 900 functions and methods are still missing, plus 9
 that only make sense in Lua. That is about **95% of the full API**, and
 everything a typical 2D game uses. What is left is almost all lower-level
 GPU features: depth buffers, instancing, custom vertex formats, vertex
@@ -27,13 +27,13 @@ shaders, volume textures and canvas formats.
 | event | 6 | 0 | 100% |
 | filesystem | 48 | 9 Lua-only | 100% of what applies |
 | font | 5, plus Rasterizer and GlyphData | 0 | 100% |
-| graphics | 268 | 32 | 88% |
+| graphics | 268 | 28 | 90% |
 | image | 17 | 1 | 94% |
 | joystick | 26 | 0 | 100% |
 | keyboard | 9 | 0 | 100% |
 | math | 50 | 0 | 100% |
 | mouse | 19 | 0 | 100% |
-| physics | 272 | 10 | 96% |
+| physics | 272 | 8 | 97% |
 | sound | 16 | 0 | 100% |
 | system | 8 | 0 | 100% |
 | thread | 16 | 0 (Rust threads plus `Channel`) | 100% |
@@ -91,12 +91,7 @@ shaders, volume textures and canvas formats.
 
 ### SpriteBatch
 
-- `SpriteBatch:addLayer`, `setLayer`: batches of an `ArrayImage`.
 - `SpriteBatch:attachAttribute`.
-
-### Video
-
-- `Video:getStream`, `Video:setSource`.
 
 ## physics
 
@@ -104,8 +99,6 @@ shaders, volume textures and canvas formats.
   `setNextVertex`, `setPreviousVertex`, `getNextVertex`,
   `getPreviousVertex`. These stop bodies catching on the joins between
   edges.
-- `Contact:resetFriction`, `resetRestitution`. They only matter if a change
-  made in pre-solve should outlast the step.
 
 ## timer
 

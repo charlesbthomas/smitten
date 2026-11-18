@@ -1,6 +1,9 @@
-use smitten_core::backend::Vertex;
+use std::ops::Range;
 
-use super::{Image, Quad, Transform};
+use smitten_core::Filter;
+use smitten_core::backend::{TextureId, Vertex};
+
+use super::{ArrayImage, Image, Quad, Transform};
 use crate::Color;
 
 /// Many copies of one image, or of parts of it, kept ready to draw in one
@@ -23,13 +26,20 @@ use crate::Color;
 /// graphics::draw_sprite_batch(&map, 0.0, 0.0);
 /// ```
 ///
+/// A batch can also draw the layers of an [`ArrayImage`], made with
+/// [`SpriteBatch::from_array_image`]. Each sprite then picks its layer,
+/// with [`SpriteBatch::add_layer`] and friends, so a tile map can draw
+/// tiles from many layers in one batch.
+///
 /// Unlike LÖVE's, a batch grows as needed: the size given when creating
 /// it only reserves memory up front.
 #[derive(Debug, Clone)]
 pub struct SpriteBatch {
-    image: Image,
+    source: Source,
     /// Six vertices per sprite, in the batch's own coordinates.
     vertices: Vec<Vertex>,
+    /// The layer each sprite shows. Always 0 for a batch of an [`Image`].
+    layers: Vec<u32>,
     /// Tints the sprites added or changed from now on.
     color: Color,
     /// The sprites drawn, as start and count.
@@ -53,6 +63,13 @@ pub enum SpriteBatchUsage {
     Stream,
 }
 
+/// What a batch draws.
+#[derive(Debug, Clone)]
+enum Source {
+    Image(Image),
+    Array(ArrayImage),
+}
+
 const VERTICES_PER_SPRITE: usize = 6;
 
 impl SpriteBatch {
@@ -65,9 +82,26 @@ impl SpriteBatch {
     /// Creates an empty batch as [`SpriteBatch::new`] does, with a usage
     /// hint, the third argument of LÖVE's `newSpriteBatch`.
     pub fn with_usage(image: &Image, capacity: usize, usage: SpriteBatchUsage) -> SpriteBatch {
+        SpriteBatch::with_source(Source::Image(image.clone()), capacity, usage)
+    }
+
+    /// Creates an empty batch that draws layers of `image`, with room
+    /// reserved for `capacity` sprites, the equivalent of `newSpriteBatch`
+    /// with an `ArrayImage`. Add sprites with [`SpriteBatch::add_layer`];
+    /// the plain `add` methods show layer 0.
+    pub fn from_array_image(
+        image: &ArrayImage,
+        capacity: usize,
+        usage: SpriteBatchUsage,
+    ) -> SpriteBatch {
+        SpriteBatch::with_source(Source::Array(image.clone()), capacity, usage)
+    }
+
+    fn with_source(source: Source, capacity: usize, usage: SpriteBatchUsage) -> SpriteBatch {
         SpriteBatch {
-            image: image.clone(),
+            source,
             vertices: Vec::with_capacity(capacity * VERTICES_PER_SPRITE),
+            layers: Vec::with_capacity(capacity),
             color: Color::WHITE,
             draw_range: None,
             usage,
@@ -114,7 +148,7 @@ impl SpriteBatch {
     /// See [`crate::graphics::draw_ex`] for what they mean.
     #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:add.
     pub fn add_ex(&mut self, x: f32, y: f32, r: f32, sx: f32, sy: f32, ox: f32, oy: f32) -> usize {
-        let quad = super::whole_image(&self.image);
+        let quad = self.whole();
         self.add_quad_ex(&quad, x, y, r, sx, sy, ox, oy)
     }
 
@@ -137,9 +171,68 @@ impl SpriteBatch {
         ox: f32,
         oy: f32,
     ) -> usize {
+        self.push_sprite(0, quad, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy))
+    }
+
+    /// Adds the whole of layer `layer` of the batch's [`ArrayImage`] at
+    /// `(x, y)` and returns the sprite's index, the equivalent of
+    /// `SpriteBatch:addLayer`.
+    ///
+    /// Panics if the batch draws a plain [`Image`], or the layer does not
+    /// exist.
+    pub fn add_layer(&mut self, layer: u32, x: f32, y: f32) -> usize {
+        self.add_layer_ex(layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
+    }
+
+    /// Adds a whole layer with the full set of LÖVE's `draw` arguments.
+    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:addLayer.
+    pub fn add_layer_ex(
+        &mut self,
+        layer: u32,
+        x: f32,
+        y: f32,
+        r: f32,
+        sx: f32,
+        sy: f32,
+        ox: f32,
+        oy: f32,
+    ) -> usize {
+        let quad = self.whole();
+        self.add_layer_quad_ex(layer, &quad, x, y, r, sx, sy, ox, oy)
+    }
+
+    /// Adds the part of layer `layer` described by `quad` at `(x, y)`.
+    pub fn add_layer_quad(&mut self, layer: u32, quad: &Quad, x: f32, y: f32) -> usize {
+        self.add_layer_quad_ex(layer, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0)
+    }
+
+    /// Adds part of a layer with the full set of LÖVE's `draw` arguments.
+    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:addLayer.
+    pub fn add_layer_quad_ex(
+        &mut self,
+        layer: u32,
+        quad: &Quad,
+        x: f32,
+        y: f32,
+        r: f32,
+        sx: f32,
+        sy: f32,
+        ox: f32,
+        oy: f32,
+    ) -> usize {
+        self.check_layer(layer);
+        self.push_sprite(
+            layer,
+            quad,
+            &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
+        )
+    }
+
+    fn push_sprite(&mut self, layer: u32, quad: &Quad, transform: &Transform) -> usize {
         let index = self.count();
-        let sprite = self.sprite(quad, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy));
+        let sprite = self.sprite(quad, transform);
         self.vertices.extend_from_slice(&sprite);
+        self.layers.push(layer);
         index
     }
 
@@ -165,7 +258,7 @@ impl SpriteBatch {
         ox: f32,
         oy: f32,
     ) {
-        let quad = super::whole_image(&self.image);
+        let quad = self.whole();
         self.set_quad_ex(index, &quad, x, y, r, sx, sy, ox, oy);
     }
 
@@ -190,14 +283,107 @@ impl SpriteBatch {
         ox: f32,
         oy: f32,
     ) {
+        self.replace_sprite(
+            index,
+            0,
+            quad,
+            &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
+        );
+    }
+
+    /// Replaces the sprite at `index` with the whole of layer `layer` at
+    /// `(x, y)`, the equivalent of `SpriteBatch:setLayer`.
+    ///
+    /// Panics if no sprite has that index, the batch draws a plain
+    /// [`Image`], or the layer does not exist.
+    pub fn set_layer(&mut self, index: usize, layer: u32, x: f32, y: f32) {
+        self.set_layer_ex(index, layer, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    }
+
+    /// Replaces the sprite at `index` with a whole layer, with the full
+    /// set of LÖVE's `draw` arguments.
+    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:setLayer.
+    pub fn set_layer_ex(
+        &mut self,
+        index: usize,
+        layer: u32,
+        x: f32,
+        y: f32,
+        r: f32,
+        sx: f32,
+        sy: f32,
+        ox: f32,
+        oy: f32,
+    ) {
+        let quad = self.whole();
+        self.set_layer_quad_ex(index, layer, &quad, x, y, r, sx, sy, ox, oy);
+    }
+
+    /// Replaces the sprite at `index` with the part of layer `layer`
+    /// described by `quad`, at `(x, y)`.
+    pub fn set_layer_quad(&mut self, index: usize, layer: u32, quad: &Quad, x: f32, y: f32) {
+        self.set_layer_quad_ex(index, layer, quad, x, y, 0.0, 1.0, 1.0, 0.0, 0.0);
+    }
+
+    /// Replaces the sprite at `index` with part of a layer, with the full
+    /// set of LÖVE's `draw` arguments.
+    #[allow(clippy::too_many_arguments)] // Mirrors SpriteBatch:setLayer.
+    pub fn set_layer_quad_ex(
+        &mut self,
+        index: usize,
+        layer: u32,
+        quad: &Quad,
+        x: f32,
+        y: f32,
+        r: f32,
+        sx: f32,
+        sy: f32,
+        ox: f32,
+        oy: f32,
+    ) {
+        self.check_layer(layer);
+        self.replace_sprite(
+            index,
+            layer,
+            quad,
+            &Transform::from_draw_args(x, y, r, sx, sy, ox, oy),
+        );
+    }
+
+    /// The layer the sprite at `index` shows. Always 0 in a batch of a
+    /// plain [`Image`].
+    ///
+    /// Panics if no sprite has that index.
+    pub fn layer(&self, index: usize) -> u32 {
+        self.check_index(index);
+        self.layers[index]
+    }
+
+    fn check_index(&self, index: usize) {
         let count = self.count();
         assert!(
             index < count,
             "sprite index {index} is out of range: the batch holds {count} sprites"
         );
-        let sprite = self.sprite(quad, &Transform::from_draw_args(x, y, r, sx, sy, ox, oy));
+    }
+
+    fn check_layer(&self, layer: u32) {
+        let Source::Array(image) = &self.source else {
+            panic!("only a sprite batch of an ArrayImage has layers");
+        };
+        assert!(
+            layer < image.layer_count(),
+            "layer {layer} does not exist: the array image has {} layers",
+            image.layer_count()
+        );
+    }
+
+    fn replace_sprite(&mut self, index: usize, layer: u32, quad: &Quad, transform: &Transform) {
+        self.check_index(index);
+        let sprite = self.sprite(quad, transform);
         let start = index * VERTICES_PER_SPRITE;
         self.vertices[start..start + VERTICES_PER_SPRITE].copy_from_slice(&sprite);
+        self.layers[index] = layer;
     }
 
     /// Tints the sprites added or changed from now on. Sprites already in
@@ -217,6 +403,7 @@ impl SpriteBatch {
     /// is rebuilt every frame does not allocate.
     pub fn clear(&mut self) {
         self.vertices.clear();
+        self.layers.clear();
     }
 
     /// How many sprites the batch holds.
@@ -224,15 +411,96 @@ impl SpriteBatch {
         self.vertices.len() / VERTICES_PER_SPRITE
     }
 
-    /// The image the batch draws.
-    pub fn image(&self) -> &Image {
-        &self.image
+    /// The image the batch draws, or `None` if it draws an
+    /// [`ArrayImage`].
+    pub fn image(&self) -> Option<&Image> {
+        match &self.source {
+            Source::Image(image) => Some(image),
+            Source::Array(_) => None,
+        }
+    }
+
+    /// The array image the batch draws, or `None` if it draws a plain
+    /// [`Image`].
+    pub fn array_image(&self) -> Option<&ArrayImage> {
+        match &self.source {
+            Source::Array(image) => Some(image),
+            Source::Image(_) => None,
+        }
     }
 
     /// Draws the batch with a different image from now on. Quads made for
     /// the old image's size will show the same fraction of the new one.
+    /// Every sprite shows layer 0 if the batch drew an [`ArrayImage`].
     pub fn set_image(&mut self, image: &Image) {
-        self.image = image.clone();
+        self.source = Source::Image(image.clone());
+        self.layers.fill(0);
+    }
+
+    /// Draws the batch with a different array image from now on. Sprites
+    /// keep their layers, so the new image needs at least as many.
+    ///
+    /// Panics if a sprite shows a layer the new image does not have.
+    pub fn set_array_image(&mut self, image: &ArrayImage) {
+        if let Some(&highest) = self.layers.iter().max() {
+            assert!(
+                highest < image.layer_count(),
+                "a sprite shows layer {highest}, but the array image has {} layers",
+                image.layer_count()
+            );
+        }
+        self.source = Source::Array(image.clone());
+    }
+
+    /// The texture to draw with, and the filter to sample it with.
+    pub(crate) fn texture(&self) -> (TextureId, Filter) {
+        match &self.source {
+            Source::Image(image) => (image.texture(), image.filter()),
+            Source::Array(image) => (image.texture(), image.filter()),
+        }
+    }
+
+    /// Whether the batch draws layers of an [`ArrayImage`].
+    pub(crate) fn is_layered(&self) -> bool {
+        matches!(self.source, Source::Array(_))
+    }
+
+    /// A quad covering the whole image, or one whole layer.
+    fn whole(&self) -> Quad {
+        let (width, height) = match &self.source {
+            Source::Image(image) => (image.width() as f32, image.height() as f32),
+            Source::Array(image) => (image.width() as f32, image.height() as f32),
+        };
+        Quad::new(0.0, 0.0, width, height, width, height)
+    }
+
+    /// The sprites that are drawn, after the draw range.
+    fn drawn(&self) -> Range<usize> {
+        let count = self.count();
+        match self.draw_range {
+            Some((start, length)) => {
+                let start = start.min(count);
+                start..start.saturating_add(length).min(count)
+            }
+            None => 0..count,
+        }
+    }
+
+    /// The drawn sprites split into runs that show the same layer, as
+    /// `(layer, vertices)` with the vertex range counted from the first
+    /// vertex [`SpriteBatch::write_vertices`] writes.
+    pub(crate) fn layer_runs(&self) -> Vec<(u32, Range<usize>)> {
+        let drawn = self.drawn();
+        let mut runs: Vec<(u32, Range<usize>)> = Vec::new();
+        for (offset, &layer) in self.layers[drawn].iter().enumerate() {
+            let start = offset * VERTICES_PER_SPRITE;
+            let end = start + VERTICES_PER_SPRITE;
+            match runs.last_mut() {
+                Some((last, range)) if *last == layer => range.end = end,
+                _ => runs.push((layer, start..end)),
+            }
+        }
+        runs
     }
 
     fn sprite(&self, quad: &Quad, transform: &Transform) -> [Vertex; VERTICES_PER_SPRITE] {
@@ -267,16 +535,9 @@ impl SpriteBatch {
     /// Appends the batch's triangles to `out`, placed by `transform` and
     /// tinted by `tint`.
     pub(crate) fn write_vertices(&self, transform: &Transform, tint: Color, out: &mut Vec<Vertex>) {
-        let vertices = match self.draw_range {
-            Some((start, count)) => {
-                let start = (start * VERTICES_PER_SPRITE).min(self.vertices.len());
-                let end = start
-                    .saturating_add(count.saturating_mul(VERTICES_PER_SPRITE))
-                    .min(self.vertices.len());
-                &self.vertices[start..end]
-            }
-            None => &self.vertices[..],
-        };
+        let drawn = self.drawn();
+        let vertices =
+            &self.vertices[drawn.start * VERTICES_PER_SPRITE..drawn.end * VERTICES_PER_SPRITE];
         out.reserve(vertices.len());
         out.extend(vertices.iter().map(|vertex| {
             let (x, y) = transform.apply(vertex.position[0], vertex.position[1]);
@@ -424,5 +685,63 @@ mod tests {
         let vertices = drawn(&batch, &transform, Color::WHITE);
 
         assert_eq!(vertices[0].position, [12.0, 24.0]);
+    }
+
+    fn layered() -> SpriteBatch {
+        let image = ArrayImage::for_tests(TextureId(2), 16, 16, 3);
+        SpriteBatch::from_array_image(&image, 4, SpriteBatchUsage::default())
+    }
+
+    #[test]
+    fn sprites_of_an_array_image_keep_their_layers() {
+        let mut batch = layered();
+        assert_eq!(batch.add_layer(2, 0.0, 0.0), 0);
+        assert_eq!(batch.add(16.0, 0.0), 1);
+        assert_eq!(batch.layer(0), 2);
+        assert_eq!(batch.layer(1), 0);
+
+        batch.set_layer(1, 1, 32.0, 0.0);
+        assert_eq!(batch.layer(1), 1);
+        let vertices = drawn(&batch, &Transform::IDENTITY, Color::WHITE);
+        // A whole layer is the size of the array image.
+        assert_eq!(vertices[2].position, [16.0, 16.0]);
+        assert_eq!(vertices[6].position, [32.0, 0.0]);
+        assert!(batch.image().is_none());
+        assert!(batch.array_image().is_some());
+    }
+
+    #[test]
+    fn neighbouring_sprites_on_one_layer_share_a_run() {
+        let mut batch = layered();
+        for layer in [0, 0, 1, 1, 1, 0] {
+            batch.add_layer(layer, 0.0, 0.0);
+        }
+        assert_eq!(batch.layer_runs(), [(0, 0..12), (1, 12..30), (0, 30..36)]);
+        // Runs are counted from the first sprite drawn.
+        batch.set_draw_range(Some((1, 3)));
+        assert_eq!(batch.layer_runs(), [(0, 0..6), (1, 6..18)]);
+        assert_eq!(drawn(&batch, &Transform::IDENTITY, Color::WHITE).len(), 18);
+    }
+
+    #[test]
+    #[should_panic(expected = "layer 3 does not exist")]
+    fn a_missing_layer_panics() {
+        layered().add_layer(3, 0.0, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "only a sprite batch of an ArrayImage has layers")]
+    fn a_plain_image_has_no_layers() {
+        batch().add_layer(0, 0.0, 0.0);
+    }
+
+    #[test]
+    fn switching_to_a_plain_image_shows_layer_zero() {
+        let mut batch = layered();
+        batch.add_layer(2, 0.0, 0.0);
+        let image = Image::from_texture(TextureId(1), 64, 32, Filter::Nearest, Kind::Image);
+        batch.set_image(&image);
+        assert_eq!(batch.layer(0), 0);
+        assert!(!batch.is_layered());
     }
 }

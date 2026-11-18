@@ -600,9 +600,20 @@ impl GraphicsState {
         let mut vertices = std::mem::take(&mut self.scratch);
         vertices.clear();
         sprites.write_vertices(&transform, self.color, &mut vertices);
-        let image = sprites.image();
-        self.batch
-            .push(Some(image.texture()), image.filter(), &vertices);
+        let (texture, filter) = sprites.texture();
+        if sprites.is_layered() {
+            assert!(
+                self.shader.is_none(),
+                "a sprite batch of an ArrayImage cannot be drawn with a custom shader active; \
+                 send the array image to the shader with Shader::send_texture instead"
+            );
+            for (layer, range) in sprites.layer_runs() {
+                self.batch
+                    .push_layer(Some(texture), layer, filter, &vertices[range]);
+            }
+        } else {
+            self.batch.push(Some(texture), filter, &vertices);
+        }
         self.scratch = vertices;
     }
 
@@ -1693,6 +1704,13 @@ pub fn draw_quad_ex(
 /// for `capacity` sprites. See [`SpriteBatch`].
 pub fn new_sprite_batch(image: &Image, capacity: usize) -> SpriteBatch {
     SpriteBatch::new(image, capacity)
+}
+
+/// Creates an empty sprite batch that draws layers of `image`, with room
+/// reserved for `capacity` sprites, the equivalent of `newSpriteBatch`
+/// with an `ArrayImage`. See [`SpriteBatch::add_layer`].
+pub fn new_array_sprite_batch(image: &ArrayImage, capacity: usize) -> SpriteBatch {
+    SpriteBatch::from_array_image(image, capacity, SpriteBatchUsage::default())
 }
 
 /// Draws every sprite in a batch, with the batch's origin at `(x, y)`.

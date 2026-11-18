@@ -1,6 +1,6 @@
 //! Playing a video and drawing it, the equivalent of LÖVE's `Video`.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -130,6 +130,47 @@ impl Video {
     /// pause and seek the video instead of the source.
     pub fn source(&self) -> Option<&Source> {
         self.source.as_ref()
+    }
+
+    /// Gives the video a different sound track, or none, the equivalent
+    /// of `Video:setSource`. The new source jumps to the video's position,
+    /// and plays if the video is playing, and from then on the picture
+    /// follows it. The old source is paused and handed back, so it can be
+    /// played on its own.
+    ///
+    /// Any source works, such as a dub in another language. The video's
+    /// length becomes the longer of the picture and the new sound.
+    pub fn set_source(&mut self, source: Option<Source>) -> Option<Source> {
+        let position = self.tell();
+        let old = std::mem::replace(&mut self.source, source);
+        if let Some(old) = &old {
+            old.pause();
+        }
+        let position = position.min(self.duration());
+        self.position.set(position);
+        if self.playing.get() {
+            self.started.set(Some(timer::time()));
+        }
+        if let Some(source) = &self.source {
+            source.seek(position);
+            if self.playing.get() {
+                source.play();
+            } else {
+                source.pause();
+            }
+        }
+        old
+    }
+
+    /// The decoder the picture comes from, the equivalent of
+    /// `Video:getStream`. It reads the file's size, frame rate and length,
+    /// and where the picture is up to. Play, pause and seek the video
+    /// instead of the stream.
+    ///
+    /// Let go of it before drawing the video or asking for its image,
+    /// which move the stream on and panic while it is held.
+    pub fn stream(&self) -> Ref<'_, VideoStream> {
+        self.stream.borrow()
     }
 
     /// Width in pixels.
