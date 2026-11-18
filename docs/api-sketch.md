@@ -89,6 +89,7 @@ fn main() {
 | `love.graphics.setBlendMode("add")` | `graphics::set_blend_mode(BlendMode::Add)` | `Alpha`, `Add`, `Subtract`, `Multiply`, `Replace`. |
 | `love.graphics.setBlendMode("alpha", "premultiplied")` | `graphics::set_blend_mode(BlendMode::Premultiplied)` | Use it to draw a canvas with see-through parts, as in LÖVE. |
 | `love.graphics.setScissor(x, y, w, h)` / `setScissor()` | `graphics::set_scissor(x, y, w, h)` / `clear_scissor()` | |
+| `love.graphics.clear(color, stencil)` / `clear(false, …)` | `graphics::clear_ex(Some(color), Some(stencil))` / `clear_ex(None, …)` | `None` leaves that part alone. |
 | `love.graphics.stencil(fn)` | `graphics::stencil(\|\| { ... })` | `stencil_ex(action, value, keep_values, fn)` takes the other arguments. |
 | `love.graphics.setStencilTest("greater", 0)` / `setStencilTest()` | `graphics::set_stencil_test(CompareMode::Greater, 0)` / `clear_stencil_test()` | |
 | `love.graphics.newSpriteBatch(image, size)` | `graphics::new_sprite_batch(&image, size)` | Grows as needed; the size only reserves memory. |

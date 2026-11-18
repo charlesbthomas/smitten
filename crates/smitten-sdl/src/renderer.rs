@@ -1131,13 +1131,13 @@ impl Renderer {
                     // The depth half of the texture is never used.
                     load_op: SDL_GPU_LOADOP_DONT_CARE,
                     store_op: SDL_GPU_STOREOP_DONT_CARE,
-                    stencil_load_op: if pass.clear_stencil || fresh {
+                    stencil_load_op: if pass.clear_stencil.is_some() || fresh {
                         SDL_GPU_LOADOP_CLEAR
                     } else {
                         SDL_GPU_LOADOP_LOAD
                     },
                     stencil_store_op: SDL_GPU_STOREOP_STORE,
-                    clear_stencil: 0,
+                    clear_stencil: pass.clear_stencil.unwrap_or(0),
                     ..Default::default()
                 };
                 let render_pass = SDL_BeginGPURenderPass(commands, &info, 1, &stencil_info);
@@ -1580,8 +1580,10 @@ fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
         StencilMode::Write(action) => (
             match action {
                 StencilAction::Replace => SDL_GPU_STENCILOP_REPLACE,
-                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
-                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
+                StencilAction::Increment => SDL_GPU_STENCILOP_INCREMENT_AND_CLAMP,
+                StencilAction::Decrement => SDL_GPU_STENCILOP_DECREMENT_AND_CLAMP,
+                StencilAction::IncrementWrap => SDL_GPU_STENCILOP_INCREMENT_AND_WRAP,
+                StencilAction::DecrementWrap => SDL_GPU_STENCILOP_DECREMENT_AND_WRAP,
                 StencilAction::Invert => SDL_GPU_STENCILOP_INVERT,
             },
             SDL_GPU_COMPAREOP_ALWAYS,
@@ -1598,6 +1600,8 @@ fn stencil_state(mode: StencilMode) -> SDL_GPUDepthStencilState {
                 CompareMode::LessEqual => SDL_GPU_COMPAREOP_GREATER_OR_EQUAL,
                 CompareMode::Greater => SDL_GPU_COMPAREOP_LESS,
                 CompareMode::GreaterEqual => SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+                CompareMode::Never => SDL_GPU_COMPAREOP_NEVER,
+                CompareMode::Always => SDL_GPU_COMPAREOP_ALWAYS,
             },
             0,
         ),

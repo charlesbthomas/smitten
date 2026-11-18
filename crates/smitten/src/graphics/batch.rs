@@ -91,8 +91,21 @@ impl Batch {
         self.target = target;
     }
 
-    /// Fills the current target with `color`, replacing its contents.
+    /// Fills the current target with `color`, replacing its contents, and
+    /// resets its stencil values to zero.
     pub fn clear_target(&mut self, color: Color) {
+        self.clear_target_ex(Some(color), Some(0));
+    }
+
+    /// Fills the current target with `color` and sets its stencil values
+    /// to `stencil`, each only if given.
+    pub fn clear_target_ex(&mut self, color: Option<Color>, stencil: Option<u8>) {
+        let Some(color) = color else {
+            if let Some(value) = stencil {
+                self.clear_stencil_to(value);
+            }
+            return;
+        };
         // Draws still waiting to reach this target would be painted over,
         // so drop them rather than send them to the GPU.
         if let Some(last) = self.passes.last()
@@ -108,7 +121,7 @@ impl Batch {
         self.passes.push(Pass {
             target: self.target,
             clear: Some(color),
-            clear_stencil: true,
+            clear_stencil: stencil,
             first_call: self.calls.len() as u32,
             call_count: 0,
         });
@@ -117,10 +130,16 @@ impl Batch {
     /// Resets the current target's stencil values to zero, keeping its
     /// picture.
     pub fn clear_stencil(&mut self) {
+        self.clear_stencil_to(0);
+    }
+
+    /// Sets the current target's stencil values to `value`, keeping its
+    /// picture.
+    pub fn clear_stencil_to(&mut self, value: u8) {
         self.passes.push(Pass {
             target: self.target,
             clear: None,
-            clear_stencil: true,
+            clear_stencil: Some(value),
             first_call: self.calls.len() as u32,
             call_count: 0,
         });
@@ -196,7 +215,7 @@ impl Batch {
             self.passes.push(Pass {
                 target: self.target,
                 clear: None,
-                clear_stencil: false,
+                clear_stencil: None,
                 first_call: self.calls.len() as u32,
                 call_count: 0,
             });
@@ -590,7 +609,13 @@ mod tests {
         let passes: Vec<_> = batch
             .passes
             .iter()
-            .map(|pass| (pass.clear.is_some(), pass.clear_stencil, pass.call_count))
+            .map(|pass| {
+                (
+                    pass.clear.is_some(),
+                    pass.clear_stencil.is_some(),
+                    pass.call_count,
+                )
+            })
             .collect();
         // Clearing the stencil keeps the picture drawn so far.
         assert_eq!(passes, [(true, true, 1), (false, true, 3)]);

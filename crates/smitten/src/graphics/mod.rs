@@ -713,10 +713,33 @@ fn whole_image(image: &Image) -> Quad {
 // Screen
 
 /// Fills the screen, or the active canvas, with `color`, replacing
-/// whatever was there. The scissor does not limit it.
+/// whatever was there, and resets its stencil values to 0. The scissor
+/// does not limit it. See [`clear_ex`] to clear only some of that.
 pub fn clear(color: Color) {
     context::with(|ctx| ctx.gfx.batch.clear_target(color));
 }
+
+/// Clears only the parts of the screen, or the active canvas, that are
+/// given, the equivalent of LÖVE's `clear(color, stencil)` and
+/// `clear(false, …)`.
+///
+/// `color` fills the picture, replacing what was there, and `stencil`
+/// sets every stencil value. `None` leaves that part as it is, so
+/// `clear_ex(None, Some(0))` resets the stencil and keeps the picture.
+/// [`clear`] is `clear_ex(Some(color), Some(0))`. The scissor does not
+/// limit it.
+pub fn clear_ex(color: Option<Color>, stencil: Option<u8>) {
+    context::with(|ctx| ctx.gfx.batch.clear_target_ex(color, stencil));
+}
+
+/// Tells the GPU that the contents of the screen, or of the active
+/// canvas, are no longer needed, the equivalent of `love.graphics.discard`.
+///
+/// LÖVE offers this as a speed hint for mobile GPUs: what is there
+/// afterwards is undefined until it is drawn over or cleared. Smitten's
+/// targets always keep their contents, so this does nothing, and code
+/// ported from LÖVE can keep calling it.
+pub fn discard() {}
 
 /// Sets the color every frame is cleared to before `draw` runs.
 pub fn set_background_color(color: Color) {
@@ -861,7 +884,8 @@ pub fn stencil(draw: impl FnOnce()) {
 /// Changes the stencil values of the pixels covered by what `draw` draws.
 ///
 /// `action` says how: [`StencilAction::Replace`] sets them to `value`,
-/// while the other actions count up, count down or flip them and ignore
+/// while the other actions count up, count down (stopping at 255 and 0,
+/// or wrapping around with the `Wrap` actions) or flip them and ignore
 /// `value`. With `keep_values` the existing values are built on;
 /// otherwise they are all reset to 0 first.
 pub fn stencil_ex(action: StencilAction, value: u8, keep_values: bool, draw: impl FnOnce()) {
