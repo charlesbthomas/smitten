@@ -273,7 +273,9 @@ pub(crate) mod tests {
     /// with no start delay or end padding left in.
     #[test]
     fn ogg_vorbis_decodes_to_its_own_length() {
-        let bytes: Arc<[u8]> = include_bytes!("../../../examples/assets/loop.ogg").as_slice().into();
+        let bytes: Arc<[u8]> = include_bytes!("../../../examples/assets/loop.ogg")
+            .as_slice()
+            .into();
         let decoder = Decoder::open(bytes).unwrap();
         assert_eq!(decoder.total_frames(), Some(176_400));
         let decoded = decoder.decode_all();
