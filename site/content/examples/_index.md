@@ -4,7 +4,7 @@ description = "Example games and demos that come with Smitten, with screenshots 
 template = "section.html"
 +++
 
-Smitten's repository comes with three small games and a demo of each part
+Smitten's repository comes with four small games and a demo of each part
 of the framework. They live in
 [`crates/examples/examples`](https://github.com/charlesbthomas/smitten/tree/main/crates/examples/examples),
 and their images, sounds and shaders in `crates/examples/assets`. Run any
@@ -57,6 +57,28 @@ block that falls off costs a heart, and the best height is kept between
 runs. Built on [physics](@/guide/physics.md). P saves a screenshot.
 
 `cargo run --example topple` · [Source](https://github.com/charlesbthomas/smitten/blob/main/crates/examples/examples/topple.rs)
+
+### Undercroft
+
+{{ figure(src="undercroft.png", alt="A hooded hero in a torchlit dungeon corridor, with a rat and a pale husk nearby, red dots marking the paths they plan to take, and remembered rooms drawn dim blue.") }}
+
+A turn-based dungeon crawl. Every floor is built from a seed: rooms joined
+by corridors, stocked with gold, tonics and monsters. Find the stairs and go
+deeper. Walk into a monster to fight it. Monsters that see you follow you
+around corners, and press P to see the paths they plan to take.
+
+Besides being a game, Undercroft shows tile art painted in code into an
+`ImageData`, each floor drawn as one sprite batch, fog of war made from a
+light map with wall shadows cut out by the stencil, A* pathfinding for the
+monsters and for click-to-walk, and a run saved as a text file in the save
+directory.
+
+W, A, S, D or the arrow keys walk, and clicking a tile you have seen walks
+there. Space waits, Q drinks a tonic and Return takes the stairs. F5 saves
+and F9 loads, and the game saves on every new floor and when you quit.
+`--seed 1234` starts a run on the floors that seed builds.
+
+`cargo run --example undercroft` · [Source](https://github.com/charlesbthomas/smitten/blob/main/crates/examples/examples/undercroft.rs)
 
 ## Demos
 
