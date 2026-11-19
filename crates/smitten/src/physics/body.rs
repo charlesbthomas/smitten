@@ -19,8 +19,7 @@ pub enum BodyType {
     Kinematic,
 }
 
-/// A thing that moves in a [`World`](super::World), the equivalent of
-/// LÖVE's `Body`.
+/// A thing that moves in a [`World`](super::World).
 ///
 /// Cloning is cheap and gives another handle to the same body. A body
 /// stays in its world until [`Body::destroy`] is called, even if every
@@ -172,10 +171,10 @@ impl Body {
     /// Pushes the body's center with a force for the next update only.
     /// Call it every frame for a steady push, such as a thruster.
     ///
-    /// How much a force moves a body depends on its mass, which depends
-    /// on [`World::set_meter`](super::World::set_meter), as in LÖVE. To
-    /// say how fast the body should speed up instead, whatever it weighs,
-    /// use [`Body::apply_acceleration`].
+    /// How much a force moves a body depends on its mass, which depends on
+    /// [`World::set_meter`](super::World::set_meter). To say how fast the
+    /// body should speed up instead, whatever it weighs, use
+    /// [`Body::apply_acceleration`].
     pub fn apply_force(&self, position: impl Into<Vec2>) {
         let Vec2 { x, y } = position.into();
         self.change(|body| body.add_force(Vector::new(x, y), true));
@@ -505,9 +504,9 @@ impl Body {
         self.linear_velocity_from_world_point((x, y))
     }
 
-    /// The body's `(center_x, center_y, mass, inertia)`: its center of
-    /// mass relative to its origin, its mass, and its inertia around that
-    /// center (as [`Body::inertia`] gives it). LÖVE's `getMassData`.
+    /// The body's `(center_x, center_y, mass, inertia)`: its center of mass
+    /// relative to its origin, its mass, and its inertia around that center
+    /// (as [`Body::inertia`] gives it).
     pub fn mass_data(&self) -> (f32, f32, f32, f32) {
         self.read(|body| {
             let props = &body.mass_properties().local_mprops;
@@ -523,8 +522,8 @@ impl Body {
     /// Sets the body's mass, center of mass relative to its origin, and
     /// inertia around that center, in place of what its fixtures give.
     /// Their densities then count for nothing until
-    /// [`Body::reset_mass_data`] is called or a fixture is added, as in
-    /// LÖVE. Only dynamic bodies have mass.
+    /// [`Body::reset_mass_data`] is called or a fixture is added. Only
+    /// dynamic bodies have mass.
     pub fn set_mass_data(&self, center: impl Into<Vec2>, mass: f32, inertia: f32) {
         let Vec2 {
             x: center_x,
@@ -583,9 +582,7 @@ impl Body {
     }
 
     /// Every pair of fixtures touching now where one is this body's, with
-    /// how hard they were pushed apart, as [`World::touching`] gives
-    /// them. LÖVE's `Body:getContacts`.
-    #[doc(alias = "Body:getContacts")]
+    /// how hard they were pushed apart, as [`World::touching`] gives them.
     pub fn contacts(&self) -> Vec<Touch> {
         self.world()
             .touching()
@@ -680,7 +677,7 @@ impl Body {
             inner.world.bodies.get(self.handle).is_some(),
             "this body was destroyed"
         );
-        // Density is given per square meter, as in LÖVE; the engine wants
+        // Density is given per square meter; the engine wants
         // it per square unit.
         let density = super::fixture::DEFAULT_DENSITY / (inner.meter * inner.meter);
         let collider = collider
@@ -705,9 +702,8 @@ impl Body {
         Fixture::new(&self.world, handle)
     }
 
-    /// Gives the body a copy of `shape` as a new fixture, LÖVE's
-    /// `newFixture`. The fixture's density starts at 1.0.
-    #[doc(alias = "love.physics.newFixture")]
+    /// Gives the body a copy of `shape` as a new fixture. The fixture's
+    /// density starts at 1.0.
     pub fn add_shape(&self, shape: &Shape) -> Fixture {
         let fixture = self.add(ColliderBuilder::new(shape.shape.clone()).position(shape.offset));
         fixture.set_ghosts(shape);

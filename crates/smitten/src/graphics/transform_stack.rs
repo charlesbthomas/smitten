@@ -2,8 +2,7 @@
 
 use super::*;
 
-/// The most [`push`]es that can wait for a [`pop`] at once, the size of
-/// LÖVE's stack.
+/// The most [`push`]es that can wait for a [`pop`] at once.
 pub const MAX_STACK_DEPTH: usize = 64;
 
 /// Saves the current transform so [`pop`] can restore it.
@@ -15,7 +14,7 @@ pub fn push() {
 }
 
 /// Saves the transform and every other drawing setting so [`pop`] can
-/// restore them, the equivalent of `love.graphics.push("all")`.
+/// restore them.
 ///
 /// That is the color, the background color, the font, the blend mode,
 /// the shader, the canvas, the scissor, the stencil test, the line width,
@@ -35,7 +34,6 @@ pub fn push() {
 ///     graphics::pop();
 /// }
 /// ```
-#[doc(alias = "love.graphics.push")]
 pub fn push_all() {
     push_kind(StackType::All);
 }
@@ -88,22 +86,19 @@ pub fn scoped_all<R>(draw: impl FnOnce() -> R) -> R {
     result
 }
 
-/// How many [`push`]es are waiting for a [`pop`], the equivalent of
-/// `love.graphics.getStackDepth`. It is 0 at the start of every `draw`.
-#[doc(alias = "love.graphics.getStackDepth")]
+/// How many [`push`]es are waiting for a [`pop`]. It is 0 at the start of
+/// every `draw`.
 pub fn stack_depth() -> usize {
     context::with(|ctx| ctx.gfx.stack.len())
 }
 
-/// Puts every drawing setting back to how a game starts, the equivalent
-/// of `love.graphics.reset`.
+/// Puts every drawing setting back to how a game starts.
 ///
 /// The color becomes white and the background black, drawing goes back to
 /// the screen with the built-in shader and font, the scissor and stencil
 /// test are removed, the blend mode, line and point settings, color mask,
 /// wireframe drawing and default filter go back to their defaults, and the
 /// transform to the origin. What [`push`] saved is kept.
-#[doc(alias = "love.graphics.reset")]
 pub fn reset() {
     context::with(|ctx| ctx.gfx.reset_state());
 }

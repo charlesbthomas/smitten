@@ -1,5 +1,4 @@
-//! Sound as samples that can be read and changed, the equivalent of
-//! `love.sound`.
+//! Sound as samples that can be read and changed.
 //!
 //! A [`SoundData`] holds a whole sound decoded into memory. Read its
 //! samples to draw a waveform or react to loudness, or write them to make
@@ -17,7 +16,7 @@ use std::time::Duration;
 use crate::audio::AudioError;
 use crate::audio::decode::{self, Decoded, Frame};
 
-/// A sound's samples, the equivalent of LÖVE's `SoundData`.
+/// A sound's samples, decoded into memory.
 ///
 /// Samples are from -1.0 to 1.0. A stereo sound's samples are interleaved:
 /// left, right, left, right. Sample indexes count per channel, so index 10
@@ -108,10 +107,9 @@ impl SoundData {
         &mut self.samples
     }
 
-    /// Makes a sound from raw PCM samples, interleaved for stereo, the
-    /// way LÖVE stores a `SoundData` of that bit depth. `bit_depth` is 8,
-    /// for unsigned bytes centred on 128 as in WAV files, or 16, for
-    /// signed little-endian pairs of bytes.
+    /// Makes a sound from raw PCM samples, interleaved for stereo.
+    /// `bit_depth` is 8, for unsigned bytes centred on 128 as in WAV files,
+    /// or 16, for signed little-endian pairs of bytes.
     ///
     /// Smitten keeps samples as floats whatever they came from. A partial
     /// sample at the end of `bytes` is ignored.
@@ -141,11 +139,9 @@ impl SoundData {
 
     /// The samples as raw PCM, interleaved for stereo, in the layout
     /// [`from_pcm`](Self::from_pcm) reads: 8 bit unsigned or 16 bit signed
-    /// little-endian. This is what LÖVE's `SoundData:getString` gives for
-    /// a sound of that bit depth. Samples are clipped to -1.0 to 1.0.
+    /// little-endian. Samples are clipped to -1.0 to 1.0.
     ///
     /// Panics if `bit_depth` is not 8 or 16.
-    #[doc(alias = "SoundData:getString")]
     pub fn to_pcm(&self, bit_depth: u8) -> Vec<u8> {
         let clipped = self.samples.iter().map(|sample| sample.clamp(-1.0, 1.0));
         match bit_depth {
@@ -221,11 +217,9 @@ impl SoundData {
 }
 
 impl SoundData {
-    /// Loads and decodes a sound file, the equivalent of
-    /// `love.sound.newSoundData(path)`.
+    /// Loads and decodes a sound file.
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
-    #[doc(alias = "love.sound.newSoundData")]
     pub fn load(path: impl AsRef<Path>) -> Result<SoundData, AudioError> {
         let path = path.as_ref();
         let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
@@ -240,8 +234,7 @@ impl SoundData {
 /// hands back at a time. At 44.1 kHz this is about a tenth of a second.
 pub const DEFAULT_DECODER_BUFFER_SIZE: usize = 4_096;
 
-/// Reads a sound file a piece at a time, the equivalent of LÖVE's
-/// `Decoder`.
+/// Reads a sound file a piece at a time.
 ///
 /// Each call to [`Decoder::decode`] returns the next piece as a
 /// [`SoundData`], which suits analysing a long sound or feeding a
@@ -264,8 +257,6 @@ pub struct Decoder {
 impl Decoder {
     /// Starts reading the contents of an audio file. Each piece is
     /// `buffer_size` samples per channel long, apart from the last.
-    ///
-    /// Note that LÖVE measures the buffer in bytes instead.
     pub fn from_bytes(
         bytes: impl Into<Arc<[u8]>>,
         buffer_size: usize,
@@ -364,8 +355,7 @@ impl Decoder {
 }
 
 impl Clone for Decoder {
-    /// Makes a decoder for the same file, back at its start, as
-    /// `Decoder:clone` does in LÖVE.
+    /// Makes a decoder for the same file, back at its start.
     fn clone(&self) -> Self {
         Decoder::from_bytes(self.bytes.clone(), self.buffer_size)
             .expect("a sound that opened once can be opened again")
@@ -384,12 +374,11 @@ impl std::fmt::Debug for Decoder {
 }
 
 impl Decoder {
-    /// Opens a sound file for reading a piece at a time, the equivalent of
-    /// `love.sound.newDecoder(path, bufferSize)`. Each piece is `buffer_size`
-    /// samples per channel, such as [`DEFAULT_DECODER_BUFFER_SIZE`].
+    /// Opens a sound file for reading a piece at a time. Each piece is
+    /// `buffer_size` samples per channel, such as
+    /// [`DEFAULT_DECODER_BUFFER_SIZE`].
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
-    #[doc(alias = "love.sound.newDecoder")]
     pub fn load(path: impl AsRef<Path>, buffer_size: usize) -> Result<Decoder, AudioError> {
         let path = path.as_ref();
         let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {

@@ -21,10 +21,10 @@ use crate::{Color, context};
 mod rasterizer;
 pub use rasterizer::{GlyphData, GlyphFormat, Rasterizer};
 
-/// The typeface LÖVE also uses by default.
+/// The built-in typeface, Bitstream Vera Sans.
 static DEFAULT_FONT: &[u8] = include_bytes!("fonts/Vera.ttf");
 
-/// The size of LÖVE's default font.
+/// The built-in font's size.
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 12.0;
 
 /// The size of the text on the error screen.
@@ -49,8 +49,7 @@ pub enum Align {
     Justify,
 }
 
-/// How a TrueType font's outlines are fitted to the pixel grid, the
-/// equivalent of LÖVE's `HintingMode`.
+/// How a TrueType font's outlines are fitted to the pixel grid.
 ///
 /// Smitten draws outlines without hinting, so `Normal`, `Light` and
 /// `None` look the same: smooth and true to the outline. `Mono` draws
@@ -69,7 +68,7 @@ pub enum Hinting {
     None,
 }
 
-/// A typeface at one size, the equivalent of LÖVE's `Font`.
+/// A typeface at one size.
 ///
 /// Cloning is cheap and gives another handle to the same font.
 #[derive(Clone)]
@@ -121,8 +120,7 @@ impl Drop for Inner {
     }
 }
 
-/// Options for making a font, the arguments LÖVE's `newFont` takes after
-/// the size.
+/// Options for making a font, besides its size.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FontSettings {
     /// How outlines are fitted to pixels.
@@ -142,9 +140,9 @@ impl Font {
         Font::from_bytes_with(bytes, size, FontSettings::default())
     }
 
-    /// Creates a font with the full set of LÖVE's `newFont` arguments:
-    /// its size, and how its outlines are fitted to pixels and how sharp
-    /// its glyphs are, as [`FontSettings`] says.
+    /// Creates a font with every setting given: its size, and how its
+    /// outlines are fitted to pixels and how sharp its glyphs are, as
+    /// [`FontSettings`] says.
     pub fn from_bytes_with(
         bytes: &[u8],
         size: f32,
@@ -194,8 +192,7 @@ impl Font {
         }
     }
 
-    /// Creates a bitmap font from the bytes of an image file, the
-    /// equivalent of `love.graphics.newImageFont`.
+    /// Creates a bitmap font from the bytes of an image file.
     ///
     /// The image holds the characters of `glyphs` in a row from left to
     /// right. The color of its top-left pixel is the spacer: a column of
@@ -204,7 +201,6 @@ impl Font {
     ///
     /// `extra_spacing` is added after each character, in units, and may be
     /// negative. One pixel of the image is one unit.
-    #[doc(alias = "love.graphics.newImageFont")]
     pub fn from_image(bytes: &[u8], glyphs: &str, extra_spacing: f32) -> Result<Font, FontError> {
         let (filter, built) = context::with(|ctx| {
             (
@@ -222,7 +218,7 @@ impl Font {
     /// their ids. [`Font::load`](crate::graphics::Font::load) loads
     /// a `.fnt` file and its pages for you.
     ///
-    /// Only the text form of `.fnt` files is read, as in LÖVE.
+    /// Only the text form of `.fnt` files is read.
     pub fn from_bmfont(fnt: &str, pages: &[&[u8]]) -> Result<Font, FontError> {
         let file = BMFontFile::parse(fnt).map_err(FontError::Parse)?;
         Font::from_bmfont_file(&file, pages, PathBuf::new())
@@ -265,7 +261,6 @@ impl Font {
     }
 
     /// Creates the built-in font, Bitstream Vera Sans, at `size` units.
-    #[doc(alias = "love.graphics.newFont")]
     pub fn default_at(size: f32) -> Font {
         Font::from_bytes(DEFAULT_FONT, size).expect("the built-in font is valid")
     }
@@ -314,8 +309,7 @@ impl Font {
     }
 
     /// Where the baseline of the first line is drawn, in units below the
-    /// top of the text, the equivalent of LÖVE's `Font:getBaseline`.
-    #[doc(alias = "Font:getBaseline")]
+    /// top of the text.
     pub fn baseline(&self) -> f32 {
         let face = self.inner.face.borrow();
         (face.ascent * face.scale).round() / face.scale
@@ -345,8 +339,7 @@ impl Font {
     }
 
     /// Whether this font or its fallbacks can draw every character of
-    /// `text`, the equivalent of LÖVE's `Font:hasGlyphs`.
-    #[doc(alias = "Font:hasGlyphs")]
+    /// `text`.
     pub fn has_glyphs(&self, text: &str) -> bool {
         self.with_faces(|faces| {
             text.chars()
@@ -354,14 +347,13 @@ impl Font {
         })
     }
 
-    /// Sets the fonts that draw the characters this one lacks, the
-    /// equivalent of LÖVE's `Font:setFallbacks`. Each character is drawn
-    /// by the first font in the list that has it; one no font has takes
-    /// no room. Line heights and the baseline stay this font's own.
+    /// Sets the fonts that draw the characters this one lacks. Each
+    /// character is drawn by the first font in the list that has it; one no
+    /// font has takes no room. Line heights and the baseline stay this
+    /// font's own.
     ///
     /// Only this font's own fallbacks are used, not theirs. Fonts that
     /// are each other's fallbacks keep each other alive.
-    #[doc(alias = "Font:setFallbacks")]
     pub fn set_fallbacks(&self, fallbacks: &[&Font]) {
         let mut list: Vec<Font> = Vec::new();
         for &font in fallbacks {
@@ -797,7 +789,7 @@ impl BMFontFile {
                 "char" => {
                     let id = number_of("id")? as u32;
                     // Some tools write -1 for the character drawn for
-                    // missing ones; LÖVE has no use for it either.
+                    // missing ones; it has no use here.
                     let Some(character) = char::from_u32(id) else {
                         continue;
                     };
@@ -942,9 +934,8 @@ fn decode_bmfont(file: &BMFontFile, pages: &[&[u8]]) -> Result<(Face, Bitmaps), 
     ))
 }
 
-/// Says which color each glyph of a piece of colored text is, the way
-/// LÖVE's colored text tables work: each part of the text is tinted by
-/// the color before it.
+/// Says which color each glyph of a piece of colored text is: each part of
+/// the text is tinted by the color before it.
 ///
 /// Glyphs are matched to characters in order. Wrapping only drops spaces
 /// and line breaks, which have no glyphs, so those are left out.

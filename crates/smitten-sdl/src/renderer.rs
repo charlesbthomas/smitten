@@ -2723,9 +2723,9 @@ struct MeshUniforms {
 }
 
 /// The column-major matrix that takes pixels of a `width` by `height`
-/// target, from its top-left with y down, to SDL's clip space, with y up.
-/// z from -10 to 10 becomes depth 1 to 0, as LÖVE's projection makes it,
-/// so z 0 is depth 0.5 like everything `sprite.vert` draws.
+/// target, from its top-left with y down, to SDL's clip space, with y up. z
+/// from -10 to 10 becomes depth 1 to 0, so z 0 is depth 0.5 like everything
+/// `sprite.vert` draws.
 fn pixel_projection(width: u32, height: u32) -> [f32; 16] {
     let (width, height) = (width as f32, height as f32);
     [
@@ -2788,8 +2788,7 @@ fn clip_scissor(scissor: Option<Scissor>, width: u32, height: u32) -> Option<(i3
     ))
 }
 
-/// The GPU blend settings for a blend mode, worked out as LÖVE's
-/// `computeBlendState` does.
+/// The GPU blend settings for a blend mode.
 fn blend_state(mode: BlendMode, alpha: BlendAlphaMode) -> SDL_GPUColorTargetBlendState {
     const ONE: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ONE;
     const ZERO: SDL_GPUBlendFactor = SDL_GPU_BLENDFACTOR_ZERO;
@@ -3309,7 +3308,7 @@ unsafe fn create_sampler(
             Filter::Linear => SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
             Filter::Nearest => SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
         };
-        // Sharper means a larger mipmap, as in LÖVE.
+        // Sharper means a larger mipmap.
         info.mip_lod_bias = -f32::from_bits(mipmaps.sharpness);
         info.max_lod = 1000.0;
     }

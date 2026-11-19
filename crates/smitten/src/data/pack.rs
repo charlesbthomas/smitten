@@ -1,4 +1,4 @@
-//! Lua's `string.pack` formats, which `love.data.pack` uses.
+//! Packing values into bytes with Lua's `string.pack` formats.
 
 use super::DataError;
 
@@ -332,8 +332,8 @@ fn get_int(bytes: &[u8], little: bool, signed: bool) -> Result<i64, DataError> {
     Ok(value as i64)
 }
 
-/// Packs `values` into bytes as `format` says, like `love.data.pack`
-/// with Lua's `string.pack` formats.
+/// Packs `values` into bytes as `format` says, in Lua's `string.pack`
+/// formats.
 ///
 /// | Option | Packs |
 /// |---|---|
@@ -350,8 +350,8 @@ fn get_int(bytes: &[u8], little: bool, signed: bool) -> Result<i64, DataError> {
 /// | `x` | One zero byte |
 /// | `Xop` | Zero bytes up to the alignment of option `op`, which is not packed |
 ///
-/// Spaces are skipped. Sizes are those of 64-bit Linux and macOS, where
-/// LÖVE's `l` is 8 bytes; on 64-bit Windows LÖVE packs `l` as 4.
+/// Spaces are skipped. Sizes are those of 64-bit Linux and macOS, so `l` is
+/// 8 bytes on every system.
 ///
 /// ```
 /// use smitten::data::{self, Value};
@@ -362,7 +362,6 @@ fn get_int(bytes: &[u8], little: bool, signed: bool) -> Result<i64, DataError> {
 /// assert_eq!(values, [Value::Int(-2), Value::from("hi"), Value::Float(0.5)]);
 /// assert_eq!(next, bytes.len());
 /// ```
-#[doc(alias = "love.data.pack")]
 pub fn pack(format: &str, values: &[Value]) -> Result<Vec<u8>, DataError> {
     let mut parsed = Format::new(format);
     let mut out = Vec::new();
@@ -463,10 +462,8 @@ pub fn pack(format: &str, values: &[Value]) -> Result<Vec<u8>, DataError> {
     Ok(out)
 }
 
-/// How many bytes [`pack`] makes with `format`, like
-/// `love.data.getPackedSize`. Formats with `s` or `z` have no fixed size
-/// and are an error.
-#[doc(alias = "love.data.getPackedSize")]
+/// How many bytes [`pack`] makes with `format`. Formats with `s` or `z`
+/// have no fixed size and are an error.
 pub fn packed_size(format: &str) -> Result<usize, DataError> {
     let mut parsed = Format::new(format);
     let mut total: usize = 0;
@@ -481,9 +478,7 @@ pub fn packed_size(format: &str) -> Result<usize, DataError> {
     Ok(total)
 }
 
-/// Reads values that [`pack`] packed with the same `format`, like
-/// `love.data.unpack`.
-#[doc(alias = "love.data.unpack")]
+/// Reads values that [`pack`] packed with the same `format`.
 pub fn unpack(format: &str, bytes: &[u8]) -> Result<Vec<Value>, DataError> {
     unpack_at(format, bytes, 0).map(|(values, _)| values)
 }
@@ -491,8 +486,8 @@ pub fn unpack(format: &str, bytes: &[u8]) -> Result<Vec<Value>, DataError> {
 /// Like [`unpack`], but starts `offset` bytes in and also gives back the
 /// offset just past what was read, for reading what follows.
 ///
-/// LÖVE counts positions from 1, as Lua does; this counts from 0, so
-/// LÖVE's position `p` is offset `p - 1`.
+/// Offsets count from 0, where Lua counts positions from 1, so Lua's
+/// position `p` is offset `p - 1`.
 pub fn unpack_at(
     format: &str,
     bytes: &[u8],

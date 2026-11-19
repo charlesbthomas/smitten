@@ -1,4 +1,5 @@
-//! Drawing, the equivalent of `love.graphics`.
+//! Drawing: shapes, images, text, canvases, shaders and the settings they
+//! are drawn with.
 //!
 //! Positions are in pixels from the top-left corner of the window, with y
 //! pointing down. Everything drawn is tinted by the current color and moved
@@ -110,7 +111,7 @@ pub enum DrawMode {
     Line,
 }
 
-/// How the ends of an arc are joined, as LÖVE's `ArcType`.
+/// How the ends of an arc are joined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ArcType {
     /// Both ends are joined to the center, like a slice of pie.
@@ -218,7 +219,7 @@ impl Default for GraphicsState {
 }
 
 impl GraphicsState {
-    /// Resets what LÖVE resets before each `draw`: the screen and the
+    /// Resets what is reset before each `draw`: the screen and the
     /// transform. The color, line width, blend mode and scissor carry over
     /// between frames.
     ///

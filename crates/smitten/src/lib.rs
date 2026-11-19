@@ -1,10 +1,11 @@
-//! Smitten is a LÖVE-style 2D game framework for Rust.
+//! Smitten is a 2D game framework for Rust.
 //!
 //! A game implements [`Game`] and hands it to [`run`], or writes its own
-//! main loop with [`run_loop`]. While the game is
-//! running, the framework modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
-//! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`], [`math`], [`sound`], [`system`]) can be called from anywhere on the main thread,
-//! the same way `love.graphics` and friends work in LÖVE. [`data`], [`math`] and [`thread`]
+//! main loop with [`run_loop`]. While the game is running, the framework
+//! modules ([`graphics`], [`audio`], [`keyboard`], [`mouse`], [`touch`],
+//! [`joystick`], [`filesystem`], [`timer`], [`window`], [`event`],
+//! [`math`], [`sound`], [`system`]) can be called from anywhere on the main
+//! thread, with no handle to pass around. [`data`], [`math`] and [`thread`]
 //! also work on other threads and when no game is running.
 //!
 //! ```no_run
@@ -94,12 +95,10 @@ pub use smitten_core::{
 
 use std::path::Path;
 
-/// Smitten's version, such as `"0.1.0"`, the equivalent of the string
-/// `love.getVersion` builds.
+/// Smitten's version, such as `"0.1.0"`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Smitten's major, minor and patch version numbers, the equivalent of
-/// `love.getVersion`.
+/// Smitten's major, minor and patch version numbers.
 pub fn version() -> (u32, u32, u32) {
     let mut parts = VERSION
         .split(['.', '-', '+'])
@@ -111,8 +110,6 @@ pub fn version() -> (u32, u32, u32) {
 use smitten_core::backend::BackendEvent;
 
 /// The callbacks a game provides. Only [`Game::load`] is required.
-///
-/// Each method mirrors the LÖVE callback of the same name.
 pub trait Game: Sized + 'static {
     /// Called once after the window exists. Build the game's starting state.
     ///
@@ -218,10 +215,9 @@ pub trait Game: Sized + 'static {
     /// back.
     fn visible(&mut self, _visible: bool) {}
 
-    /// Called when the player drops a file on the window, with its
-    /// absolute path and where it was dropped, the equivalent of
-    /// `love.filedropped`. Several files dropped together arrive one call
-    /// each.
+    /// Called when the player drops a file on the window, with its absolute
+    /// path and where it was dropped. Several files dropped together arrive
+    /// one call each.
     ///
     /// [`filesystem::read`] and friends take the absolute path as it is.
     /// The file is not copied anywhere; save what the game needs to keep
@@ -232,8 +228,7 @@ pub trait Game: Sized + 'static {
     fn file_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
 
     /// Called when the player drops a directory on the window, with its
-    /// absolute path and where it was dropped, the equivalent of
-    /// `love.directorydropped`.
+    /// absolute path and where it was dropped.
     ///
     /// To read the files inside it like the game's own, mount it:
     ///
@@ -247,21 +242,19 @@ pub trait Game: Sized + 'static {
     /// ```
     fn directory_dropped(&mut self, _path: &Path, _x: f32, _y: f32) {}
 
-    /// Called with each event the game sent itself with [`event::push`],
-    /// the equivalent of a handler in `love.handlers`. They arrive at the
-    /// start of a frame, after the platform's events and before
-    /// `update`.
+    /// Called with each event the game sent itself with [`event::push`].
+    /// They arrive at the start of a frame, after the platform's events and
+    /// before `update`.
     fn custom_event(&mut self, _event: event::CustomEvent) {}
 
-    /// Called when the system is running out of memory, the equivalent of
-    /// `love.lowmemory`. Mobile systems send this before closing a game
-    /// to reclaim memory, so drop caches and anything that can be loaded
-    /// again.
+    /// Called when the system is running out of memory. Mobile systems send
+    /// this before closing a game to reclaim memory, so drop caches and
+    /// anything that can be loaded again.
     fn low_memory(&mut self) {}
 
-    /// Called when the display the window is on turns, as when a phone
-    /// is rotated, the equivalent of `love.displayrotated`. The safe area
-    /// (see [`window::safe_area`]) may have moved too.
+    /// Called when the display the window is on turns, as when a phone is
+    /// rotated. The safe area (see [`window::safe_area`]) may have moved
+    /// too.
     fn display_rotated(&mut self, _orientation: DisplayOrientation) {}
 
     /// Called when the game is asked to close. Return `true` to keep running.
@@ -276,11 +269,10 @@ pub trait Game: Sized + 'static {
 /// initialized, because there is nothing a game can do without a window.
 ///
 /// If the game panics, the window stays open and shows the message and
-/// where it came from until the player presses Escape, like LÖVE's error
-/// screen. The panic then continues as usual.
+/// where it came from until the player presses Escape. The panic then
+/// continues as usual.
 ///
-/// To write the loop yourself, as LÖVE allows by replacing `love.run`,
-/// use [`run_loop`] instead.
+/// To write the loop yourself, use [`run_loop`] instead.
 pub fn run<G: Game>(config: Config) {
     main_loop::run_with(config, |_| {
         let mut game = match G::load() {

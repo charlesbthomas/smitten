@@ -15,7 +15,7 @@ use super::{
     WheelJoint,
 };
 
-/// LÖVE's default: 30 units to a meter.
+/// The default: 30 units to a meter.
 const DEFAULT_METER: f32 = 30.0;
 
 pub(super) struct Inner {
@@ -88,8 +88,7 @@ type Motion = (Vector, f32, Vector);
 
 pub(super) type Shared = Rc<RefCell<Inner>>;
 
-/// A space in which bodies move and collide, the equivalent of LÖVE's
-/// `World`.
+/// A space in which bodies move and collide.
 ///
 /// Cloning is cheap and gives another handle to the same world. Bodies,
 /// fixtures and joints keep their world alive.
@@ -120,12 +119,12 @@ pub struct Contact {
     /// crash. Zero when they were moving apart, and when they stopped
     /// touching.
     pub speed: f32,
-    /// Every point where they touch, in world coordinates: one or two,
-    /// or none for a sensor or once they have stopped touching. `point`
-    /// is the middle of these. LÖVE's `Contact:getPositions`.
+    /// Every point where they touch, in world coordinates: one or two, or
+    /// none for a sensor or once they have stopped touching. `point` is the
+    /// middle of these.
     pub points: Vec<Vec2>,
     /// Which piece of each fixture is touched: the index of the segment
-    /// of a chain, 0 for any other shape. LÖVE's `Contact:getChildren`.
+    /// of a chain, 0 for any other shape.
     pub children: (usize, usize),
 }
 
@@ -285,8 +284,8 @@ impl Touch {
 }
 
 /// A contact about to be solved, handed to the callback given to
-/// [`World::set_pre_solve`], the equivalent of the contact in LÖVE's
-/// `preSolve`. Change its public fields to change how it is solved.
+/// [`World::set_pre_solve`]. Change its public fields to change how it is
+/// solved.
 ///
 /// Do not call methods on `a` and `b` inside the callback: the world is
 /// busy and they panic. Compare them with `==` or look them up in a map,
@@ -324,25 +323,21 @@ pub struct PreSolve {
 
 impl PreSolve {
     /// Puts [`PreSolve::friction`] back to the value mixed from the two
-    /// fixtures, the equivalent of `Contact:resetFriction`. Changes only
-    /// ever last one update here, so this undoes one made earlier in the
-    /// same callback.
-    #[doc(alias = "Contact:resetFriction")]
+    /// fixtures. Changes only ever last one update here, so this undoes one
+    /// made earlier in the same callback.
     pub fn reset_friction(&mut self) {
         self.friction = self.fixture_friction;
     }
 
-    /// Puts [`PreSolve::restitution`] back to the value mixed from the
-    /// two fixtures, the equivalent of `Contact:resetRestitution`.
-    #[doc(alias = "Contact:resetRestitution")]
+    /// Puts [`PreSolve::restitution`] back to the value mixed from the two
+    /// fixtures.
     pub fn reset_restitution(&mut self) {
         self.restitution = self.fixture_restitution;
     }
 }
 
-/// Two fixtures about to be checked for a collision, handed to the
-/// callback given to [`World::set_contact_filter`], the equivalent of
-/// the two fixtures LÖVE's contact filter is called with.
+/// Two fixtures about to be checked for a collision, handed to the callback
+/// given to [`World::set_contact_filter`].
 ///
 /// As in [`PreSolve`], do not call methods on `a` and `b` inside the
 /// callback: compare them, or use the user data copied here.
@@ -484,7 +479,6 @@ impl World {
     /// `(gravity_x, gravity_y)` units per second, every second. Positive y
     /// is down, so `World::new(0.0, 9.81 * 30.0)` is Earth's gravity at
     /// the default 30 units to a meter.
-    #[doc(alias = "love.physics.newWorld")]
     pub fn new(gravity: impl Into<Vec2>) -> World {
         let Vec2 {
             x: gravity_x,
@@ -555,7 +549,7 @@ impl World {
             inner.ghosts = callbacks.ghosts;
         }
         coupling::solve(&mut inner);
-        // A force lasts for one update, as in LÖVE. The engine would keep
+        // A force lasts for one update. The engine would keep
         // applying it until told otherwise.
         for (_, body) in inner.world.bodies.iter_mut() {
             body.reset_forces(false);
@@ -602,8 +596,7 @@ impl World {
     }
 
     /// The fixtures that started or stopped touching during the last
-    /// [`World::update`], in the order it happened. This takes the place
-    /// of LÖVE's `beginContact` and `endContact` callbacks.
+    /// [`World::update`], in the order it happened.
     ///
     /// A fixture that was destroyed while touching something is reported
     /// as having stopped; it then answers `true` to
@@ -645,12 +638,11 @@ impl World {
         self.inner.borrow().meter
     }
 
-    /// Says how many units make a meter, like `love.physics.setMeter`.
+    /// Says how many units make a meter.
     ///
     /// Set it before creating bodies, to roughly the size of a small crate
     /// in your game. It scales the simulation's tolerances, and the mass
     /// fixtures created afterwards get from their density.
-    #[doc(alias = "love.physics.setMeter")]
     pub fn set_meter(&self, units: f32) {
         assert!(
             units.is_finite() && units > 0.0,
@@ -663,7 +655,6 @@ impl World {
 
     /// Creates a body at `(x, y)`. It has no shape until fixtures are
     /// added to it, for example with [`Body::add_rectangle`].
-    #[doc(alias = "love.physics.newBody")]
     pub fn new_body(&self, position: impl Into<Vec2>, body_type: BodyType) -> Body {
         let Vec2 { x, y } = position.into();
         let builder = match body_type {
@@ -716,9 +707,8 @@ impl World {
     }
 
     /// Every pair of fixtures touching now, with how hard the last update
-    /// pushed them apart. This takes the place of LÖVE's `postSolve`
-    /// callback and of `World:getContacts`. Sensors are not included;
-    /// see [`World::contacts`] for those.
+    /// pushed them apart. Sensors are not included; see [`World::contacts`]
+    /// for those.
     pub fn touching(&self) -> Vec<Touch> {
         let inner = self.inner.borrow();
         let mut touches = Vec::new();
@@ -754,9 +744,9 @@ impl World {
     }
 
     /// Calls `callback` for every pair of fixtures about to be pushed
-    /// apart, during each [`World::update`], before the push is worked
-    /// out. This is LÖVE's `preSolve`: the callback can turn the contact
-    /// off, for a one-way platform, or change its friction or bounce.
+    /// apart, during each [`World::update`], before the push is worked out.
+    /// The callback can turn the contact off, for a one-way platform, or
+    /// change its friction or bounce.
     ///
     /// The world is busy while the callback runs, so it must not call
     /// methods of the world or of its bodies, fixtures and joints; doing
@@ -793,10 +783,9 @@ impl World {
         self.inner.borrow().pre_solve.is_some()
     }
 
-    /// Calls `callback` for pairs of fixtures that come close, during
-    /// each [`World::update`], to decide whether they collide: `false`
-    /// lets them pass through each other and leaves them out of
-    /// [`World::contacts`]. This is LÖVE's `World:setContactFilter`.
+    /// Calls `callback` for pairs of fixtures that come close, during each
+    /// [`World::update`], to decide whether they collide: `false` lets them
+    /// pass through each other and leaves them out of [`World::contacts`].
     ///
     /// It is asked only about fixtures whose [filters](Fixture::set_filter)
     /// already let them collide, and is asked again at each update while
@@ -813,7 +802,6 @@ impl World {
     /// // Fixtures with user data 1 pass through everything.
     /// world.set_contact_filter(|pair| pair.a_data != 1 && pair.b_data != 1);
     /// ```
-    #[doc(alias = "World:setContactFilter")]
     pub fn set_contact_filter(&self, callback: impl FnMut(&ContactFilter) -> bool + 'static) {
         self.inner.borrow_mut().contact_filter = Some(Box::new(callback));
     }
@@ -847,9 +835,7 @@ impl World {
     }
 
     /// How many pairs of fixtures are close enough to be checked for
-    /// touching: those whose bounding boxes overlap, touching or not, as
-    /// LÖVE's `World:getContactCount` counts them.
-    #[doc(alias = "World:getContactCount")]
+    /// touching: those whose bounding boxes overlap, touching or not.
     pub fn contact_count(&self) -> usize {
         let inner = self.inner.borrow();
         inner.world.contact_pairs().count() + inner.world.intersection_pairs().count()
@@ -898,13 +884,11 @@ impl World {
         }
     }
 
-    /// Every fixture whose bounding box overlaps the box from
-    /// `(left, top)` to `(right, bottom)`, sensors included. This is
-    /// LÖVE's `World:queryBoundingBox`: like it, it goes by each fixture's
+    /// Every fixture whose bounding box overlaps the box from `(left, top)`
+    /// to `(right, bottom)`, sensors included. It goes by each fixture's
     /// bounding box, so a fixture near a corner may be listed without its
-    /// shape quite reaching the box. Check with [`Fixture::test_point`]
-    /// or [`World::fixtures_at`] where that matters.
-    #[doc(alias = "World:queryBoundingBox")]
+    /// shape quite reaching the box. Check with [`Fixture::test_point`] or
+    /// [`World::fixtures_at`] where that matters.
     pub fn fixtures_in_box(&self, left: f32, top: f32, right: f32, bottom: f32) -> Vec<Fixture> {
         let query = Aabb::new(
             Vector::new(left.min(right), top.min(bottom)),
@@ -921,9 +905,8 @@ impl World {
     }
 
     /// Every fixture the line from `(x1, y1)` to `(x2, y2)` runs into,
-    /// nearest first. Sensors are ignored. Where [`World::ray_cast`]
-    /// stops at the first, this is LÖVE's `rayCast` with a callback that
-    /// keeps going.
+    /// nearest first. Sensors are ignored. [`World::ray_cast`] stops at the
+    /// first.
     pub fn ray_cast_all(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Vec<RayHit> {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
@@ -1030,7 +1013,7 @@ impl World {
     /// Ties `(x1, y1)` on the first body to `(x2, y2)` on the second with
     /// a rope: they can come closer but never get further apart than
     /// `max_length`.
-    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newRopeJoint.
+    #[allow(clippy::too_many_arguments)] // One argument per anchor and setting.
     pub fn new_rope_joint(
         &self,
         a: &Body,
@@ -1054,7 +1037,7 @@ impl World {
     /// Holds `(x1, y1)` on the first body and `(x2, y2)` on the second at
     /// the distance they are apart now, like a rigid rod with a pivot at
     /// each end. For a springy rod, use [`World::new_spring_joint`].
-    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newDistanceJoint.
+    #[allow(clippy::too_many_arguments)] // One argument per anchor and setting.
     pub fn new_distance_joint(
         &self,
         a: &Body,
@@ -1111,7 +1094,7 @@ impl World {
     ///
     /// The joint can have a motor and limits; see
     /// [`JointOf::set_motor_enabled`] and [`JointOf::set_limits`].
-    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newPrismaticJoint.
+    #[allow(clippy::too_many_arguments)] // One argument per anchor and setting.
     pub fn new_prismatic_joint(
         &self,
         a: &Body,
@@ -1152,7 +1135,7 @@ impl World {
     /// The wheel can be driven by a motor (see
     /// [`JointOf::set_motor_enabled`]), and the suspension tuned with
     /// [`JointOf::set_frequency`] and [`JointOf::set_damping_ratio`].
-    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newWheelJoint.
+    #[allow(clippy::too_many_arguments)] // One argument per anchor and setting.
     pub fn new_wheel_joint(
         &self,
         a: &Body,
@@ -1233,12 +1216,12 @@ impl World {
     }
 
     /// Holds the second body where it is now relative to the first, and
-    /// pulls it back when it moves away, with no more than a
-    /// [maximum force](JointOf::set_max_force) and
+    /// pulls it back when it moves away, with no more than a [maximum
+    /// force](JointOf::set_max_force) and
     /// [torque](JointOf::set_max_torque). Change where it is held with
-    /// [`JointOf::set_linear_offset`] and [`JointOf::set_angular_offset`] to
-    /// steer it. `correction_factor`, from 0.0 to 1.0, says how quickly it
-    /// is pulled back; LÖVE uses 0.3.
+    /// [`JointOf::set_linear_offset`] and [`JointOf::set_angular_offset`]
+    /// to steer it. `correction_factor`, from 0.0 to 1.0, says how quickly
+    /// it is pulled back; 0.3 is a good start.
     pub fn new_motor_joint(
         &self,
         a: &Body,
@@ -1271,7 +1254,7 @@ impl World {
     /// contacts. One difference shows: while one side rests on the
     /// ground, the two keep a slight speed against each other, too small
     /// to see, and so never fall asleep.
-    #[allow(clippy::too_many_arguments)] // Mirrors love.physics.newPulleyJoint.
+    #[allow(clippy::too_many_arguments)] // One argument per anchor and setting.
     pub fn new_pulley_joint(
         &self,
         a: &Body,

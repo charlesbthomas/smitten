@@ -181,7 +181,7 @@ impl Data {
     }
 
     /// Moves to `index`. A queue can only go back to the start, which
-    /// empties it, as stopping a queueable source does in LÖVE.
+    /// empties it, as stopping a queueable source does.
     fn seek(&mut self, index: u64) {
         match self {
             Data::Static(_) => {}
@@ -271,7 +271,7 @@ impl Voice {
     }
 
     /// What the listener hears of this voice right now. Only mono sounds
-    /// are positioned, as in LÖVE; stereo ones are heard as they are.
+    /// are positioned; stereo ones are heard as they are.
     fn heard(&self, listener: &Listener) -> Heard {
         if self.data.channels() == 1 {
             self.placement.heard(listener, self.volume)
@@ -431,8 +431,8 @@ impl Mixer {
         id
     }
 
-    /// Called when the game drops its handle. A sound that is still
-    /// playing is allowed to finish, as in LÖVE.
+    /// Called when the game drops its handle. A sound that is still playing
+    /// is allowed to finish.
     pub fn release(&mut self, id: u64) {
         match self.voices.get_mut(&id) {
             Some(voice) if voice.playing && !voice.looping => voice.orphaned = true,

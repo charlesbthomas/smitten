@@ -8,16 +8,13 @@ impl Image {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
-    #[doc(alias = "love.graphics.newImage")]
     pub fn load(path: impl AsRef<Path>) -> Result<Image, ImageError> {
         image::load(path.as_ref(), ImageSettings::default())
     }
 }
 
 impl Image {
-    /// Loads an image file with options such as mipmaps, the equivalent of
-    /// `love.graphics.newImage(path, settings)`.
-    #[doc(alias = "love.graphics.newImage")]
+    /// Loads an image file with options such as mipmaps.
     pub fn load_with(path: impl AsRef<Path>, settings: ImageSettings) -> Result<Image, ImageError> {
         image::load(path.as_ref(), settings)
     }
@@ -26,15 +23,13 @@ impl Image {
 impl ImageData {
     /// Loads an image file into memory, where its pixels can be read and
     /// changed. See [`ImageData`].
-    #[doc(alias = "love.image.newImageData")]
     pub fn load(path: impl AsRef<Path>) -> Result<ImageData, ImageError> {
         let (width, height, rgba) = image::load_rgba(path.as_ref())?;
         Ok(ImageData::from_rgba(width, height, rgba))
     }
 }
 
-/// Draws `item` placed by `params`, the equivalent of
-/// `love.graphics.draw`. A position is enough for `params`, and
+/// Draws `item` placed by `params`. A position is enough for `params`, and
 /// [`DrawParams`] adds rotation, scale, an origin, shear and a
 /// [`Transform`].
 ///
@@ -51,8 +46,6 @@ impl ImageData {
 /// graphics::draw(&sheet.region(&frame), DrawParams::at((40.0, 10.0)).scale(4.0));
 /// # }
 /// ```
-#[doc(alias = "love.graphics.draw")]
-#[doc(alias = "drawLayer")]
 pub fn draw(item: &impl Drawable, params: impl Into<DrawParams>) {
     item.draw_transformed(&params.into().to_transform());
 }
@@ -118,11 +111,10 @@ impl draw::sealed::Sealed for Text {
 }
 impl Drawable for Text {}
 
-/// Draws `instances` copies of a mesh at once, placed by `params`, as
-/// LÖVE's `drawInstanced`. Each copy is drawn in the same place, so give
-/// them something to tell them apart: attributes attached with
-/// [`VertexAttributeStep::PerInstance`] through
-/// [`Mesh::attach_attribute_with`], which advance once per copy, or
+/// Draws `instances` copies of a mesh at once, placed by `params`. Each
+/// copy is drawn in the same place, so give them something to tell them
+/// apart: attributes attached with [`VertexAttributeStep::PerInstance`]
+/// through [`Mesh::attach_attribute_with`], which advance once per copy, or
 /// `instance_index` in a [`Shader`]'s `position`, which counts the copies
 /// from 0.
 ///

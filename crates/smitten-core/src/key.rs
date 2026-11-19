@@ -1,11 +1,11 @@
 /// A physical key, named by its position on a US layout.
 ///
-/// Most variants name a position, which is what LÖVE calls a scancode.
-/// The symbol keys from [`Key::Exclaim`] to [`Key::Underscore`] are the
-/// exception: no US key sits where they do, so they are only ever
-/// returned by `keyboard::layout_key`
-/// on layouts that have them as a key of their own, such as `!` on a
-/// French keyboard, and are never held or pressed by position.
+/// Most variants name a position, which is often called a scancode. The
+/// symbol keys from [`Key::Exclaim`] to [`Key::Underscore`] are the
+/// exception: no US key sits where they do, so they are only ever returned
+/// by `keyboard::layout_key` on layouts that have them as a key of their
+/// own, such as `!` on a French keyboard, and are never held or pressed by
+/// position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[allow(missing_docs)] // The variants are named for what they are.
@@ -115,7 +115,7 @@ pub enum Key {
     Kp8,
     /// The keypad's 9 key.
     Kp9,
-    /// The keypad's `.` key, LÖVE's `kp.`.
+    /// The keypad's `.` key, named `kp.`.
     KpPeriod,
     /// The keypad's `,` key, which some keypads have instead of `.`.
     KpComma,
@@ -146,7 +146,7 @@ pub enum Key {
     /// Num Lock, or Clear on a Mac keypad.
     NumLock,
     ScrollLock,
-    /// Print Screen, LÖVE's `printscreen` scancode and `print` key.
+    /// Print Screen, named `printscreen`.
     PrintScreen,
     SysReq,
     Pause,
@@ -172,27 +172,27 @@ pub enum Key {
     Mute,
     VolumeUp,
     VolumeDown,
-    /// The media play or pause key, LÖVE's `audioplay`.
+    /// The media play or pause key, named `audioplay`.
     MediaPlayPause,
-    /// LÖVE's `audiostop`.
+    /// Named `audiostop`.
     MediaStop,
-    /// LÖVE's `audionext`.
+    /// Named `audionext`.
     MediaNextTrack,
-    /// LÖVE's `audioprev`.
+    /// Named `audioprev`.
     MediaPreviousTrack,
     MediaSelect,
     MediaEject,
-    /// The browser search key, LÖVE's `appsearch`.
+    /// The browser search key, named `appsearch`.
     AppSearch,
-    /// The browser home key, LÖVE's `apphome`.
+    /// The browser home key, named `apphome`.
     AppHome,
-    /// The browser back key, LÖVE's `appback`.
+    /// The browser back key, named `appback`.
     AppBack,
-    /// The browser forward key, LÖVE's `appforward`.
+    /// The browser forward key, named `appforward`.
     AppForward,
-    /// The browser refresh key, LÖVE's `apprefresh`.
+    /// The browser refresh key, named `apprefresh`.
     AppRefresh,
-    /// The browser bookmarks key, LÖVE's `appbookmarks`.
+    /// The browser bookmarks key, named `appbookmarks`.
     AppBookmarks,
     /// The extra key beside the left Shift on ISO keyboards, `<>` on a
     /// German one.
@@ -451,8 +451,8 @@ impl Key {
         Key::Underscore,
     ];
 
-    /// LÖVE's name for the key, such as `"space"`, `"lshift"` or `"kp+"`,
-    /// as used for scancodes. [`Display`](std::fmt::Display) writes it and
+    /// The key's name, such as `"space"`, `"lshift"` or `"kp+"`.
+    /// [`Display`](std::fmt::Display) writes it and
     /// [`FromStr`](std::str::FromStr) reads it back, so a key can be saved
     /// in a settings file.
     pub fn name(self) -> &'static str {
@@ -655,7 +655,7 @@ impl std::fmt::Display for Key {
 impl std::str::FromStr for Key {
     type Err = crate::ParseNameError;
 
-    /// Reads LÖVE's name for a key, as [`Key::name`] gives it.
+    /// Reads a key's name, as [`Key::name`] gives it.
     fn from_str(name: &str) -> Result<Key, Self::Err> {
         Key::ALL
             .into_iter()

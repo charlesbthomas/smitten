@@ -1,4 +1,4 @@
-//! The error screen, the equivalent of LÖVE's blue screen.
+//! The error screen.
 //!
 //! When a game panics, the window stays open and shows what went wrong and
 //! where, instead of vanishing and leaving the message in a terminal that
@@ -17,7 +17,7 @@ use smitten_core::backend::BackendEvent;
 use crate::graphics::Align;
 use crate::{Color, Key, context};
 
-/// The background LÖVE's error screen uses.
+/// The error screen's blue background.
 const BACKGROUND: Color = Color {
     r: 89.0 / 255.0,
     g: 157.0 / 255.0,
@@ -54,7 +54,7 @@ pub struct ErrorReport {
     pub location: Option<String>,
 }
 
-/// Replaces the error screen, the equivalent of `love.errorhandler`.
+/// Replaces the error screen.
 ///
 /// When the game panics, the game is dropped, music stops, and the
 /// graphics state is reset. Then `handler` is called once with what went
@@ -81,7 +81,6 @@ pub struct ErrorReport {
 ///     })
 /// });
 /// ```
-#[doc(alias = "love.errorhandler")]
 pub fn set_error_handler<D>(handler: impl FnOnce(&ErrorReport) -> Option<D> + 'static)
 where
     D: FnMut() + 'static,

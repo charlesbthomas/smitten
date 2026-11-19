@@ -1,24 +1,22 @@
 //! Where sounds are, and how that changes what the listener hears: quieter
 //! with distance, panned toward the side they are on, and shifted in pitch
-//! when they move, as OpenAL does for LÖVE.
+//! when they move, as OpenAL does.
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
-/// How a sound gets quieter with distance, the equivalent of LÖVE's
-/// `love.audio.setDistanceModel`.
+/// How a sound gets quieter with distance.
 ///
 /// Each model is the OpenAL formula of the same name. `reference` and
 /// `max` are a source's attenuation distances and `rolloff` its rolloff.
 /// The clamped models treat anything nearer than `reference` as being at
 /// `reference` and anything farther than `max` as being at `max`.
-#[doc(alias = "love.audio.setDistanceModel")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DistanceModel {
     /// Distance does not change the volume.
     None,
     /// `reference / (reference + rolloff * (distance - reference))`.
     Inverse,
-    /// The default, as in LÖVE.
+    /// The default, as in OpenAL.
     #[default]
     InverseClamped,
     /// Falls in a straight line from full volume at `reference` to silent

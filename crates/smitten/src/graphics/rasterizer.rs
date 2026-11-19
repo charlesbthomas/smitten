@@ -1,6 +1,5 @@
-//! Rasterizers and glyph data, the equivalents of LÖVE's `Rasterizer`
-//! and `GlyphData` from `love.font`. A child of the text module so it can
-//! share the font's measuring code.
+//! Rasterizers and glyph data. A child of the text module so it can share
+//! the font's measuring code.
 
 use glam::Vec2;
 use std::path::Path;
@@ -14,9 +13,8 @@ use super::{
 use crate::context;
 use crate::graphics::ImageData;
 
-/// A font's characters before they are on the GPU, the equivalent of
-/// LÖVE's `Rasterizer`. It measures text and draws single characters
-/// into [`GlyphData`], and
+/// A font's characters before they are on the GPU. It measures text and
+/// draws single characters into [`GlyphData`], and
 /// [`Font::from_rasterizer`] turns it into a font.
 ///
 /// Its metrics are in units, as a [`Font`]'s are. A rasterizer can be
@@ -28,8 +26,7 @@ pub struct Rasterizer {
     bitmaps: Option<Bitmaps>,
 }
 
-/// How the pixels of a [`GlyphData`] are laid out, the part of LÖVE's
-/// `PixelFormat` that glyphs use.
+/// How the pixels of a [`GlyphData`] are laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GlyphFormat {
     /// Two bytes a pixel, luminance then alpha, as TrueType glyphs are.
@@ -50,9 +47,8 @@ impl GlyphFormat {
     }
 }
 
-/// The picture and measurements of one character, the equivalent of
-/// LÖVE's `GlyphData`. Made by [`Rasterizer::glyph_data`] or
-/// [`crate::font::Rasterizer::glyph_data`].
+/// The picture and measurements of one character. Made by
+/// [`Rasterizer::glyph_data`] or [`crate::font::Rasterizer::glyph_data`].
 ///
 /// Everything here is in the pixels of the picture, which are the
 /// rasterizer's units times its DPI scale.
@@ -74,7 +70,7 @@ impl GlyphData {
         self.glyph
     }
 
-    /// The character as a string, the equivalent of `getGlyphString`.
+    /// The character as a string.
     pub fn glyph_string(&self) -> String {
         self.glyph.to_string()
     }
@@ -106,9 +102,9 @@ impl GlyphData {
         (self.bearing_x, self.bearing_y).into()
     }
 
-    /// The box the picture covers from the pen on the baseline, as `[x,
-    /// y, width, height]`, with `y` how far below the baseline its bottom
-    /// reaches, the same as LÖVE's `getBoundingBox`.
+    /// The box the picture covers from the pen on the baseline, as `[x, y,
+    /// width, height]`, with `y` how far below the baseline its bottom
+    /// reaches.
     pub fn bounding_box(&self) -> [f32; 4] {
         let min_y = self.height as f32 - self.bearing_y;
         [
@@ -154,11 +150,9 @@ fn screen_scale() -> f32 {
 }
 
 impl Rasterizer {
-    /// A rasterizer for a TrueType or OpenType file's bytes, the
-    /// equivalent of `love.font.newTrueTypeRasterizer`: at `size` units,
-    /// fitted to pixels as `hinting` says, at `dpi_scale` pixels a unit,
-    /// or `None` to match the screen (1.0 without a running game).
-    #[doc(alias = "love.font.newTrueTypeRasterizer")]
+    /// A rasterizer for a TrueType or OpenType file's bytes: at `size`
+    /// units, fitted to pixels as `hinting` says, at `dpi_scale` pixels a
+    /// unit, or `None` to match the screen (1.0 without a running game).
     pub fn from_bytes(
         bytes: &[u8],
         size: f32,
@@ -173,18 +167,14 @@ impl Rasterizer {
         })
     }
 
-    /// A rasterizer for the built-in font at `size` units, the equivalent
-    /// of `love.font.newTrueTypeRasterizer(size)`.
-    #[doc(alias = "love.font.newTrueTypeRasterizer")]
+    /// A rasterizer for the built-in font at `size` units.
     pub fn default_at(size: f32) -> Rasterizer {
         Rasterizer::from_bytes(DEFAULT_FONT, size, Hinting::Normal, None)
             .expect("the built-in font is valid")
     }
 
-    /// A rasterizer for an image font, the equivalent of
-    /// `love.font.newImageRasterizer`. See [`Font::from_image`] for how
-    /// the image is laid out.
-    #[doc(alias = "love.font.newImageRasterizer")]
+    /// A rasterizer for an image font. See [`Font::from_image`] for how the
+    /// image is laid out.
     pub fn from_image(
         bytes: &[u8],
         glyphs: &str,
@@ -219,10 +209,8 @@ impl Rasterizer {
         })
     }
 
-    /// A rasterizer for an AngelCode BMFont, the equivalent of
-    /// `love.font.newBMFontRasterizer`: the text of its `.fnt` file and
-    /// the bytes of each page image, in the order of their ids.
-    #[doc(alias = "love.font.newBMFontRasterizer")]
+    /// A rasterizer for an AngelCode BMFont: the text of its `.fnt` file
+    /// and the bytes of each page image, in the order of their ids.
     pub fn from_bmfont(fnt: &str, pages: &[&[u8]]) -> Result<Rasterizer, FontError> {
         let file = BMFontFile::parse(fnt).map_err(FontError::Parse)?;
         Rasterizer::from_bmfont_file(&file, pages)
@@ -279,9 +267,7 @@ impl Rasterizer {
         }
     }
 
-    /// The widest advance of any of its characters, in units, the
-    /// equivalent of LÖVE's `Rasterizer:getAdvance`.
-    #[doc(alias = "Rasterizer:getAdvance")]
+    /// The widest advance of any of its characters, in units.
     pub fn advance(&self) -> f32 {
         match &self.face.source {
             Source::Vector(font) => (0..font.glyph_count())
@@ -394,9 +380,7 @@ impl std::fmt::Debug for Rasterizer {
 }
 
 impl Font {
-    /// Creates a font from a rasterizer, the equivalent of
-    /// `love.graphics.newFont(rasterizer)`.
-    #[doc(alias = "love.graphics.newFont")]
+    /// Creates a font from a rasterizer.
     pub fn from_rasterizer(rasterizer: &Rasterizer) -> Result<Font, FontError> {
         let (filter, atlas) = context::with(|ctx| {
             (

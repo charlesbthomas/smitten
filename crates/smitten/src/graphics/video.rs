@@ -1,4 +1,4 @@
-//! Playing a video and drawing it, the equivalent of LÖVE's `Video`.
+//! Playing a video and drawing it.
 
 use std::cell::{Cell, Ref, RefCell};
 use std::fmt;
@@ -23,8 +23,8 @@ use crate::video::{VideoError, VideoStream};
 /// [`Video::source`], and the picture follows the sound so the two stay
 /// together.
 ///
-/// Like a LÖVE video, it stops on its last frame at the end. Call
-/// [`Video::rewind`] to play it again.
+/// It stops on its last frame at the end. Call [`Video::rewind`] to play it
+/// again.
 pub struct Video {
     stream: RefCell<VideoStream>,
     image: Image,
@@ -147,15 +147,13 @@ impl Video {
         self.source.as_ref()
     }
 
-    /// Gives the video a different sound track, or none, the equivalent
-    /// of `Video:setSource`. The new source jumps to the video's position,
-    /// and plays if the video is playing, and from then on the picture
-    /// follows it. The old source is paused and handed back, so it can be
-    /// played on its own.
+    /// Gives the video a different sound track, or none. The new source
+    /// jumps to the video's position, and plays if the video is playing,
+    /// and from then on the picture follows it. The old source is paused
+    /// and handed back, so it can be played on its own.
     ///
     /// Any source works, such as a dub in another language. The video's
     /// length becomes the longer of the picture and the new sound.
-    #[doc(alias = "Video:setSource")]
     pub fn set_source(&mut self, source: Option<Source>) -> Option<Source> {
         let position = self.tell_secs();
         let old = std::mem::replace(&mut self.source, source);
@@ -178,14 +176,12 @@ impl Video {
         old
     }
 
-    /// The decoder the picture comes from, the equivalent of
-    /// `Video:getStream`. It reads the file's size, frame rate and length,
-    /// and where the picture is up to. Play, pause and seek the video
-    /// instead of the stream.
+    /// The decoder the picture comes from. It reads the file's size, frame
+    /// rate and length, and where the picture is up to. Play, pause and
+    /// seek the video instead of the stream.
     ///
     /// Let go of it before drawing the video or asking for its image,
     /// which move the stream on and panic while it is held.
-    #[doc(alias = "Video:getStream")]
     pub fn stream(&self) -> Ref<'_, VideoStream> {
         self.stream.borrow()
     }
@@ -280,12 +276,10 @@ impl fmt::Debug for Video {
 }
 
 impl Video {
-    /// Loads a video and its sound track, the equivalent of
-    /// `love.graphics.newVideo`. Videos are Ogg Theora files; see
+    /// Loads a video and its sound track. Videos are Ogg Theora files; see
     /// [`crate::video`] for how to make one.
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
-    #[doc(alias = "love.graphics.newVideo")]
     pub fn load(path: impl AsRef<Path>) -> Result<Video, VideoError> {
         Video::from_bytes(crate::video::read(path.as_ref())?, true)
     }

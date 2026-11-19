@@ -1,4 +1,4 @@
-//! Frame timing, the equivalent of `love.timer`.
+//! Frame timing: the time between frames, frames per second, and the clock.
 
 use crate::context;
 
@@ -44,14 +44,13 @@ impl TimerState {
     }
 }
 
-/// Measures the time since the last step and returns it in seconds, the
-/// equivalent of `love.timer.step`. [`delta`], [`fps`] and
-/// [`average_delta`] are worked out from these steps.
+/// Measures the time since the last step and returns it in seconds.
+/// [`delta`], [`fps`] and [`average_delta`] are worked out from these
+/// steps.
 ///
 /// Smitten steps once a frame before [`crate::Game::update`]. Only a
 /// custom main loop made with [`crate::run_loop`] needs to call this, once
 /// a frame; calling it anywhere else makes the next `dt` shorter.
-#[doc(alias = "love.timer.step")]
 pub fn step() -> f32 {
     context::with(|ctx| {
         let now = ctx.backend.ticks_ns();
@@ -64,10 +63,8 @@ pub fn delta() -> f32 {
     context::with(|ctx| ctx.timer.delta)
 }
 
-/// The average of the seconds between frames over the last second, the
-/// equivalent of `love.timer.getAverageDelta`. Steadier than [`delta`]
-/// for showing frame times. It is 0 for the first second.
-#[doc(alias = "love.timer.getAverageDelta")]
+/// The average of the seconds between frames over the last second. Steadier
+/// than [`delta`] for showing frame times. It is 0 for the first second.
 pub fn average_delta() -> f32 {
     context::with(|ctx| ctx.timer.average_delta)
 }
@@ -82,10 +79,8 @@ pub fn time() -> f64 {
     context::with(|ctx| ctx.backend.ticks_ns().saturating_sub(ctx.timer.start_ns) as f64 / 1e9)
 }
 
-/// Pauses the game for `duration`, the equivalent of `love.timer.sleep`.
-/// Nothing is drawn and no events are handled meanwhile, so keep it
-/// short.
-#[doc(alias = "love.timer.sleep")]
+/// Pauses the game for `duration`. Nothing is drawn and no events are
+/// handled meanwhile, so keep it short.
 pub fn sleep(duration: std::time::Duration) {
     std::thread::sleep(duration);
 }

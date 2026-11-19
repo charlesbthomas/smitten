@@ -1,4 +1,4 @@
-//! The game window, the equivalent of `love.window`.
+//! The game window: its size, position, fullscreen, icon and displays.
 
 use std::path::Path;
 
@@ -16,8 +16,7 @@ pub fn title() -> String {
     context::with(|ctx| ctx.backend.title())
 }
 
-/// Resizes the window to `width` by `height` units, the part of
-/// `love.window.setMode` that games use most. This calls
+/// Resizes the window to `width` by `height` units. This calls
 /// [`crate::Game::resized`] like any other change of size.
 ///
 /// If the platform refuses, a message is printed and nothing changes. A
@@ -125,10 +124,8 @@ pub fn desktop_dimensions() -> (u32, u32) {
     context::with(|ctx| ctx.backend.desktop_size())
 }
 
-/// The size in units of `display`'s desktop, the equivalent of
-/// `love.window.getDesktopDimensions(displayindex)`. Displays are counted
-/// from 0, where LÖVE counts from 1. `None` if there is no such display.
-#[doc(alias = "love.window.getDesktopDimensions")]
+/// The size in units of `display`'s desktop. Displays are counted from 0.
+/// `None` if there is no such display.
 pub fn desktop_dimensions_of(display: u32) -> Option<(u32, u32)> {
     context::with(|ctx| ctx.backend.display_desktop_size(display))
 }
@@ -139,16 +136,14 @@ pub fn display_count() -> u32 {
 }
 
 /// Which display the window is on, counted from 0 in the order the system
-/// lists them (LÖVE counts from 1). A window across two displays is on the
-/// one holding most of it.
+/// lists them. A window across two displays is on the one holding most of
+/// it.
 pub fn display() -> u32 {
     context::with(|ctx| ctx.backend.window_display())
 }
 
-/// The name the system gives `display`, such as the monitor's model, the
-/// equivalent of `love.window.getDisplayName`. Displays are counted from
-/// 0. `None` if there is no such display.
-#[doc(alias = "love.window.getDisplayName")]
+/// The name the system gives `display`, such as the monitor's model.
+/// Displays are counted from 0. `None` if there is no such display.
 pub fn display_name(display: u32) -> Option<String> {
     context::with(|ctx| ctx.backend.display_name(display))
 }
@@ -166,10 +161,8 @@ pub fn display_dpi_scale(display: u32) -> Option<f32> {
     })
 }
 
-/// Where the window's top-left corner is, as `(x, y, display)`: the
-/// display it is on, and the position from that display's top-left. This
-/// is the three values of `love.window.getPosition`, with the display
-/// counted from 0.
+/// Where the window's top-left corner is, as `(x, y, display)`: the display
+/// it is on, counted from 0, and the position from that display's top-left.
 pub fn position_on_display() -> (i32, i32, u32) {
     context::with(|ctx| {
         let (x, y) = ctx.backend.window_position();
@@ -180,8 +173,7 @@ pub fn position_on_display() -> (i32, i32, u32) {
 }
 
 /// Moves the window's top-left corner to `(x, y)` from the top-left of
-/// `display`, counted from 0, the three-argument form of
-/// `love.window.setPosition`. A display that is not connected is taken as
+/// `display`, counted from 0. A display that is not connected is taken as
 /// the first.
 pub fn set_position_on_display(x: i32, y: i32, display: u32) {
     context::with(|ctx| place(ctx, x, y, display));
@@ -196,13 +188,12 @@ fn place(ctx: &mut context::Context, x: i32, y: i32, display: u32) {
     ctx.backend.set_window_position(left + x, top + y);
 }
 
-/// Hides the window, the equivalent of `love.window.close`. The game keeps
-/// running: callbacks are still called and canvases are still drawn, but
-/// nothing reaches the screen. [`set_mode`] or [`open`] shows it again.
+/// Hides the window. The game keeps running: callbacks are still called and
+/// canvases are still drawn, but nothing reaches the screen. [`set_mode`]
+/// or [`open`] shows it again.
 ///
 /// Closing the window does not end the game. Use [`crate::event::quit`]
 /// for that.
-#[doc(alias = "love.window.close")]
 pub fn close() {
     context::with(|ctx| {
         ctx.backend.set_window_shown(false);
@@ -221,17 +212,13 @@ pub fn open() {
     });
 }
 
-/// Whether the window is open, the equivalent of `love.window.isOpen`. It
-/// is only closed after [`close`].
-#[doc(alias = "love.window.isOpen")]
+/// Whether the window is open. It is only closed after [`close`].
 pub fn is_open() -> bool {
     context::with(|ctx| !ctx.window_closed)
 }
 
-/// Lets the display turn off or start its screen saver while the game
-/// runs, the equivalent of `love.window.setDisplaySleepEnabled`. Games keep
-/// it awake by default, as in LÖVE.
-#[doc(alias = "love.window.setDisplaySleepEnabled")]
+/// Lets the display turn off or start its screen saver while the game runs.
+/// Games keep it awake by default.
 pub fn set_display_sleep_enabled(enabled: bool) {
     context::with(|ctx| ctx.backend.set_display_sleep(enabled));
 }
@@ -241,10 +228,9 @@ pub fn is_display_sleep_enabled() -> bool {
     context::with(|ctx| ctx.backend.display_sleep_enabled())
 }
 
-/// The window's settings, the flags table of `love.window.setMode` and
-/// `love.window.getMode`. Start from [`WindowMode::default`], which matches
-/// [`crate::Config`]'s defaults, or from [`mode`] to keep what the window
-/// has now.
+/// The window's settings, for [`set_mode`] and from [`mode`]. Start from
+/// [`WindowMode::default`], which matches [`crate::Config`]'s defaults, or
+/// from [`mode`] to keep what the window has now.
 ///
 /// Sizes and positions are in units, as everywhere else. Displays are
 /// counted from 0.
@@ -297,14 +283,12 @@ impl Default for WindowMode {
     }
 }
 
-/// The window's size in units and its settings, the equivalent of
-/// `love.window.getMode`.
+/// The window's size in units and its settings.
 ///
 /// The settings hold the window's current position, so passing them back
 /// to [`set_mode`] leaves the window where it is. They report
 /// [`WindowMode::centered`] as on, so clearing [`WindowMode::position`]
 /// centers the window instead.
-#[doc(alias = "love.window.getMode")]
 pub fn mode() -> (u32, u32, WindowMode) {
     let (width, height) = dimensions();
     let (x, y, display) = position_on_display();
@@ -327,9 +311,8 @@ pub fn mode() -> (u32, u32, WindowMode) {
     })
 }
 
-/// Changes the window's size and every setting at once, the equivalent of
-/// `love.window.setMode`. A size of 0 takes the size of the display's
-/// desktop, as in LÖVE. Opens the window if [`close`] hid it.
+/// Changes the window's size and every setting at once. A size of 0 takes
+/// the size of the display's desktop. Opens the window if [`close`] hid it.
 ///
 /// This calls [`crate::Game::resized`] if the size changed. Settings the
 /// platform refuses print a message and are left as they were; the rest
@@ -345,14 +328,13 @@ pub fn mode() -> (u32, u32, WindowMode) {
 ///     ..WindowMode::default()
 /// });
 /// ```
-#[doc(alias = "love.window.setMode")]
 pub fn set_mode(width: u32, height: u32, mode: WindowMode) -> bool {
     context::with(|ctx| apply_mode(ctx, width, height, &mode))
 }
 
-/// Changes some of the window's settings and leaves the rest, the
-/// equivalent of `love.window.updateMode`. `change` gets the current
-/// settings from [`mode`] to edit; `width` and `height` replace the size.
+/// Changes some of the window's settings and leaves the rest. `change` gets
+/// the current settings from [`mode`] to edit; `width` and `height` replace
+/// the size.
 ///
 /// ```no_run
 /// use smitten::window;
@@ -360,7 +342,6 @@ pub fn set_mode(width: u32, height: u32, mode: WindowMode) -> bool {
 /// let (width, height) = window::dimensions();
 /// window::update_mode(width, height, |mode| mode.borderless = true);
 /// ```
-#[doc(alias = "love.window.updateMode")]
 pub fn update_mode(width: u32, height: u32, change: impl FnOnce(&mut WindowMode)) -> bool {
     let (_, _, mut mode) = mode();
     change(&mut mode);
@@ -522,7 +503,7 @@ pub fn set_fullscreen(fullscreen: bool) {
 }
 
 /// Makes the game fill the whole screen in the way `kind` says, or puts it
-/// back in a window, the two-argument form of `love.window.setFullscreen`.
+/// back in a window.
 ///
 /// [`FullscreenType::Exclusive`] changes the display's resolution to the
 /// one closest to the window's size, so set the size first with
@@ -540,17 +521,14 @@ fn apply_fullscreen(ctx: &mut context::Context, fullscreen: bool, kind: Fullscre
     }
 }
 
-/// How the game fills the screen when it is fullscreen, the second value
-/// of `love.window.getFullscreen`.
+/// How the game fills the screen when it is fullscreen.
 pub fn fullscreen_type() -> FullscreenType {
     context::with(|ctx| ctx.backend.fullscreen_type())
 }
 
 /// The sizes in units that [`FullscreenType::Exclusive`] can switch
-/// `display` to, largest first, the equivalent of
-/// `love.window.getFullscreenModes`. Displays are counted from 0. Empty if
-/// there is no such display.
-#[doc(alias = "love.window.getFullscreenModes")]
+/// `display` to, largest first. Displays are counted from 0. Empty if there
+/// is no such display.
 pub fn fullscreen_modes(display: u32) -> Vec<(u32, u32)> {
     context::with(|ctx| ctx.backend.fullscreen_modes(display))
 }
@@ -560,15 +538,13 @@ pub fn fullscreen() -> bool {
     context::with(|ctx| ctx.backend.is_fullscreen())
 }
 
-/// How many pixels make up one unit, the equivalent of
-/// `love.window.getDPIScale`.
+/// How many pixels make up one unit.
 ///
 /// It is 1.0 on an ordinary display and 2.0 on one with twice the pixels
 /// in each direction, such as a Retina display, or a Windows display set
 /// to 200%. Smitten applies it for you: sizes and positions are in units,
 /// and drawing is simply sharper where this is higher. It is always 1.0
 /// when [`crate::Config::dpi_scaling`] is off.
-#[doc(alias = "love.window.getDPIScale")]
 pub fn dpi_scale() -> f32 {
     context::with(|ctx| ctx.gfx.screen.dpi)
 }
@@ -605,22 +581,18 @@ pub fn set_icon_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<(), ImageEr
 }
 
 /// The window's icon as last set, by [`set_icon`], its siblings or
-/// [`crate::Config::icon`], the equivalent of `love.window.getIcon`.
-/// `None` if the game has not set one.
-#[doc(alias = "love.window.getIcon")]
+/// [`crate::Config::icon`]. `None` if the game has not set one.
 pub fn icon() -> Option<ImageData> {
     context::with(|ctx| ctx.icon.clone())
 }
 
-/// The part of the window that nothing covers, as `(x, y, width,
-/// height)` in units from its top-left, the equivalent of
-/// `love.window.getSafeArea`.
+/// The part of the window that nothing covers, as `(x, y, width, height)`
+/// in units from its top-left.
 ///
 /// On a phone with a notch, rounded corners or an on-screen home bar,
 /// keep buttons and text inside this. Elsewhere it is the whole window,
 /// the same size as [`dimensions`]. It can change when the window is
 /// resized or the display rotates.
-#[doc(alias = "love.window.getSafeArea")]
 pub fn safe_area() -> (f32, f32, f32, f32) {
     context::with(|ctx| {
         let (x, y, width, height) = ctx.backend.safe_area();
@@ -634,41 +606,34 @@ pub fn safe_area() -> (f32, f32, f32, f32) {
     })
 }
 
-/// Which way up the display the window is on is, the equivalent of
-/// `love.window.getDisplayOrientation`. A desktop display reports the
-/// orientation its shape suggests, or [`DisplayOrientation::Unknown`]
-/// where the system cannot tell. See
-/// [`crate::Game::display_rotated`] to be told when it changes.
-#[doc(alias = "love.window.getDisplayOrientation")]
+/// Which way up the display the window is on is. A desktop display reports
+/// the orientation its shape suggests, or [`DisplayOrientation::Unknown`]
+/// where the system cannot tell. See [`crate::Game::display_rotated`] to be
+/// told when it changes.
 pub fn display_orientation() -> DisplayOrientation {
     context::with(|ctx| ctx.backend.display_orientation())
 }
 
-/// Converts a length in units to pixels, the equivalent of
-/// `love.window.toPixels`: it multiplies by [`dpi_scale`].
-#[doc(alias = "love.window.toPixels")]
+/// Converts a length in units to pixels: it multiplies by [`dpi_scale`].
 pub fn to_pixels(units: f32) -> f32 {
     units * dpi_scale()
 }
 
-/// Converts a length in pixels to units, the equivalent of
-/// `love.window.fromPixels`: it divides by [`dpi_scale`].
-#[doc(alias = "love.window.fromPixels")]
+/// Converts a length in pixels to units: it divides by [`dpi_scale`].
 pub fn from_pixels(pixels: f32) -> f32 {
     pixels / dpi_scale()
 }
 
-/// How many samples each pixel of the screen holds, 1 for none: the
-/// `msaa` of `love.window.getMode`. It may be fewer than
-/// [`Config::msaa`](crate::Config::msaa) asked for, if the GPU cannot do
-/// that many.
+/// How many samples each pixel of the screen holds, 1 for none. It may be
+/// fewer than [`Config::msaa`](crate::Config::msaa) asked for, if the GPU
+/// cannot do that many.
 pub fn msaa() -> u32 {
     context::with(|ctx| ctx.backend.screen_msaa())
 }
 
-/// Smooths the edges of what is drawn to the screen with `samples`
-/// samples per pixel, or stops for 0 or 1, the `msaa` flag of LÖVE's
-/// `setMode`. Returns how many samples the GPU gave, which may be fewer.
+/// Smooths the edges of what is drawn to the screen with `samples` samples
+/// per pixel, or stops for 0 or 1. Returns how many samples the GPU gave,
+/// which may be fewer.
 ///
 /// Canvases are not affected; see
 /// [`CanvasSettings::msaa`](crate::graphics::CanvasSettings::msaa). With a

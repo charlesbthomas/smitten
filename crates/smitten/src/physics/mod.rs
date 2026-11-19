@@ -1,4 +1,4 @@
-//! Rigid-body physics, the equivalent of `love.physics`.
+//! Rigid-body physics.
 //!
 //! A [`World`] holds [`Body`]s. Each body has one or more [`Fixture`]s,
 //! the shapes that collide, and bodies can be tied together with
@@ -28,13 +28,12 @@
 //! position and angle can be passed straight to
 //! [`DrawParams`](crate::graphics::DrawParams).
 //!
-//! Like LÖVE, the simulation is tuned by saying how many units make a
-//! meter ([`World::set_meter`], 30 by default): bodies behave best when
-//! they are between a tenth of a meter and ten meters across.
+//! The simulation is tuned by saying how many units make a meter
+//! ([`World::set_meter`], 30 by default): bodies behave best when they are
+//! between a tenth of a meter and ten meters across.
 //!
-//! The simulation is done by the Rapier engine, where LÖVE uses Box2D, so
-//! the API matches LÖVE's but the exact motion does not. This module works
-//! without a running game, except for [`World::draw_debug`].
+//! The simulation is done by the Rapier engine. This module works without a
+//! running game, except for [`World::draw_debug`].
 
 use glam::Vec2;
 
@@ -64,11 +63,9 @@ pub use world::{Contact, ContactFilter, PreSolve, RayHit, Touch, World};
 
 /// How far apart two fixtures are, and the closest points of each, as
 /// `(distance, (x1, y1), (x2, y2))` in world coordinates. Fixtures that
-/// overlap are 0 apart, and both points are then a point where they
-/// touch. LÖVE's `love.physics.getDistance`.
+/// overlap are 0 apart, and both points are then a point where they touch.
 ///
 /// Panics if the two belong to different worlds or either was destroyed.
-#[doc(alias = "love.physics.getDistance")]
 pub fn distance(a: &Fixture, b: &Fixture) -> (f32, Vec2, Vec2) {
     use rapier2d::parry::query::{self, ClosestPoints};
 

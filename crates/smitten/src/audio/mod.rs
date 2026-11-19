@@ -1,4 +1,4 @@
-//! Sound, the equivalent of `love.audio`.
+//! Playing sound.
 //!
 //! Load a sound with [`Source::load`] and call [`Source::play`]. Short sound
 //! effects should be [`SourceType::Static`]; music and other long sounds
@@ -8,12 +8,11 @@
 //!
 //! # Positional sound
 //!
-//! A mono source can be placed with [`Source::set_position`] and heard by
-//! a listener placed with [`set_position`]. It pans toward the side it is
-//! on, gets quieter with distance as [`DistanceModel`] describes, and
-//! changes pitch when it moves if it has a velocity. Stereo sources are
-//! not positioned, as in LÖVE, so music is unaffected by where the
-//! listener is.
+//! A mono source can be placed with [`Source::set_position`] and heard by a
+//! listener placed with [`set_position`]. It pans toward the side it is on,
+//! gets quieter with distance as [`DistanceModel`] describes, and changes
+//! pitch when it moves if it has a velocity. Stereo sources are not
+//! positioned, so music is unaffected by where the listener is.
 //!
 //! Distances are in whatever unit the game likes. With pixels, give
 //! sources a larger reference distance with
@@ -122,7 +121,7 @@ fn shared_mixer() -> Arc<Mutex<Mixer>> {
     })
 }
 
-/// A sound that can be played, the equivalent of LÖVE's `Source`.
+/// A sound that can be played.
 ///
 /// One source plays one copy of its sound at a time. To overlap the same
 /// sound with itself, [`Clone`] the source: the copy shares the decoded
@@ -190,12 +189,10 @@ impl Source {
         }
     }
 
-    /// Creates a source that plays the file a [`Decoder`] reads, the
-    /// equivalent of `love.audio.newSource(decoder, type)`. The source
+    /// Creates a source that plays the file a [`Decoder`] reads. The source
     /// starts from the beginning of the file, wherever the decoder is.
     ///
     /// [`Decoder`]: crate::sound::Decoder
-    #[doc(alias = "love.audio.newSource")]
     pub fn from_decoder(
         decoder: &crate::sound::Decoder,
         kind: SourceType,
@@ -304,25 +301,20 @@ impl Source {
         Duration::from_secs_f64(self.mixer().tell(self.id).max(0.0))
     }
 
-    /// Moves playback to `sample`, counted in sample frames of the sound
-    /// at its own rate, as LÖVE's `Source:seek(sample, "samples")`. A
-    /// queueable source cannot seek.
-    #[doc(alias = "Source:seek")]
+    /// Moves playback to `sample`, counted in sample frames of the sound at
+    /// its own rate. A queueable source cannot seek.
     pub fn seek_samples(&self, sample: u64) {
         self.mixer().seek_frame(self.id, sample);
     }
 
     /// Returns the playback position in sample frames of the sound at its
-    /// own rate, as LÖVE's `Source:tell("samples")`.
-    #[doc(alias = "Source:tell")]
+    /// own rate.
     pub fn tell_samples(&self) -> u64 {
         self.mixer().tell_frame(self.id)
     }
 
-    /// Returns the sound's length in sample frames, as LÖVE's
-    /// `Source:getDuration("samples")`. `None` when
+    /// Returns the sound's length in sample frames. `None` when
     /// [`duration`](Self::duration) is.
-    #[doc(alias = "Source:getDuration")]
     pub fn sample_count(&self) -> Option<u64> {
         self.mixer().frame_count(self.id)
     }
@@ -444,8 +436,8 @@ impl Source {
     }
 
     /// Keeps the sound's final volume, after distance and the cone, between
-    /// `min` and `max`. The minimum starts at 0.0. Unlike LÖVE, the maximum
-    /// starts unlimited, so a volume above 1.0 still makes a sound louder.
+    /// `min` and `max`. The minimum starts at 0.0 and the maximum starts
+    /// unlimited, so a volume above 1.0 still makes a sound louder.
     pub fn set_volume_limits(&self, min: f32, max: f32) {
         self.change_placement(|placement| {
             placement.min_volume = min.max(0.0);
@@ -459,15 +451,14 @@ impl Source {
         (placement.min_volume, placement.max_volume)
     }
 
-    /// Makes the air muffle the sound the farther it is from the listener,
-    /// as LÖVE's `Source:setAirAbsorption`. `amount` runs from 0.0, the
-    /// default, which leaves the sound alone, to 10.0. At 1.0 the high
-    /// frequencies lose about 0.05 dB per unit of distance, as in OpenAL,
-    /// which is what real air does if a unit is a metre.
+    /// Makes the air muffle the sound the farther it is from the listener.
+    /// `amount` runs from 0.0, the default, which leaves the sound alone,
+    /// to 10.0. At 1.0 the high frequencies lose about 0.05 dB per unit of
+    /// distance, as in OpenAL, which is what real air does if a unit is a
+    /// metre.
     ///
     /// Like the rest of positioning, it only affects mono sounds. It
     /// applies to what goes to effects as well as to the speakers.
-    #[doc(alias = "Source:setAirAbsorption")]
     pub fn set_air_absorption(&self, amount: f32) {
         self.change_placement(|placement| placement.air_absorption = amount.clamp(0.0, 10.0));
     }
@@ -498,9 +489,8 @@ impl Source {
         self.mixer().set_send(self.id, name, filter)
     }
 
-    /// Returns how the sound is sent through the effect called `name`, as
-    /// LÖVE's `Source:getEffect`, or `None` if it is not sent there.
-    #[doc(alias = "Source:getEffect")]
+    /// Returns how the sound is sent through the effect called `name`, or
+    /// `None` if it is not sent there.
     pub fn effect(&self, name: &str) -> Option<EffectSend> {
         self.mixer()
             .send_filter(self.id, name)
@@ -596,7 +586,6 @@ impl Source {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
-    #[doc(alias = "love.audio.newSource")]
     pub fn load(path: impl AsRef<Path>, kind: SourceType) -> Result<Source, AudioError> {
         let path = path.as_ref();
         let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {
@@ -618,9 +607,8 @@ impl Source {
     }
 }
 
-/// A source that plays sound the game makes as it runs, the equivalent of
-/// a source from `love.audio.newQueueableSource`. Hand it buffers with
-/// [`queue`](Self::queue) and call [`play`](Source::play).
+/// A source that plays sound the game makes as it runs. Hand it buffers
+/// with [`queue`](Self::queue) and call [`play`](Source::play).
 ///
 /// It derefs to [`Source`] for playing, volume, position and the rest. It
 /// cannot seek or loop.
@@ -758,11 +746,9 @@ pub fn volume() -> f32 {
     lock(&shared_mixer()).master_volume()
 }
 
-/// Starts or resumes every source in `sources` at the same moment, the
-/// equivalent of `love.audio.play` with several sources. Calling
-/// [`Source::play`] on each in turn could let the audio thread mix a
-/// buffer between two of them, putting them a few milliseconds apart.
-#[doc(alias = "love.audio.play")]
+/// Starts or resumes every source in `sources` at the same moment. Calling
+/// [`Source::play`] on each in turn could let the audio thread mix a buffer
+/// between two of them, putting them a few milliseconds apart.
 pub fn play(sources: &[&Source]) {
     let mixer = shared_mixer();
     let mut mixer = lock(&mixer);
@@ -888,35 +874,26 @@ pub fn remove_effect(name: &str) -> bool {
     lock(&shared_mixer()).remove_effect(name)
 }
 
-/// Whether effects work, the equivalent of `love.audio.isEffectsSupported`.
-/// Smitten mixes effects itself, so they always do.
-#[doc(alias = "love.audio.isEffectsSupported")]
+/// Whether effects work. Smitten mixes effects itself, so they always do.
 pub fn is_effects_supported() -> bool {
     true
 }
 
-/// How many effects can be defined at once, the equivalent of
-/// `love.audio.getMaxSceneEffects`. Smitten's own mixer has no limit
-/// other than the time it takes to run them, so this is `usize::MAX`.
-/// LÖVE's OpenAL usually allows a few dozen.
-#[doc(alias = "love.audio.getMaxSceneEffects")]
+/// How many effects can be defined at once. Smitten's own mixer has no
+/// limit other than the time it takes to run them, so this is `usize::MAX`.
 pub fn max_scene_effects() -> usize {
     usize::MAX
 }
 
-/// How many effects one source can be sent through at once, the
-/// equivalent of `love.audio.getMaxSourceEffects`. There is no limit, as
-/// with [`max_scene_effects`]; OpenAL usually allows 2 to 4.
-#[doc(alias = "love.audio.getMaxSourceEffects")]
+/// How many effects one source can be sent through at once. There is no
+/// limit, as with [`max_scene_effects`].
 pub fn max_source_effects() -> usize {
     usize::MAX
 }
 
-/// Asks to mix with music other apps are playing, the equivalent of
-/// `love.audio.setMixWithSystem`. Only phones and tablets can choose, and
-/// Smitten does not run on them yet, so this returns `false` and changes
-/// nothing, as LÖVE does on desktop systems.
-#[doc(alias = "love.audio.setMixWithSystem")]
+/// Asks to mix with music other apps are playing. Only phones and tablets
+/// can choose, and Smitten does not run on them yet, so this returns
+/// `false` and changes nothing.
 pub fn set_mix_with_system(mix: bool) -> bool {
     let _ = mix;
     false

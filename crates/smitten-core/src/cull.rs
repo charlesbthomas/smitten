@@ -1,10 +1,9 @@
-/// Which way round a triangle's corners go on screen, the equivalent of
-/// LÖVE's `VertexWinding`.
+/// Which way round a triangle's corners go on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VertexWinding {
     /// Clockwise as seen on screen, with y pointing down.
     Clockwise,
-    /// Counter-clockwise as seen on screen, with y pointing down. LÖVE's
+    /// Counter-clockwise as seen on screen, with y pointing down. The
     /// default front face.
     #[default]
     CounterClockwise,
@@ -20,8 +19,7 @@ impl VertexWinding {
     }
 }
 
-/// Which triangles of a mesh are left out, the equivalent of LÖVE's
-/// `CullMode`.
+/// Which triangles of a mesh are left out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CullMode {
     /// Every triangle is drawn. The default.

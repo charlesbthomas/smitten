@@ -1,5 +1,4 @@
-//! Text laid out once and drawn many times, the equivalent of LÖVE's
-//! `Text`.
+//! Text laid out once and drawn many times.
 
 use glam::Vec2;
 use std::cell::RefCell;
@@ -10,10 +9,9 @@ use super::text::{GlyphColors, joined};
 use super::{Align, DrawParams, Font, TextSpans, Transform};
 use crate::Color;
 
-/// Text laid out ahead of time, so drawing it costs no more than drawing
-/// an image: the equivalent of LÖVE's `Text`, made with
-/// [`Text::new`](crate::graphics::Text::new) and drawn with
-/// [`graphics::draw`](crate::graphics::draw).
+/// Text laid out ahead of time, so drawing it costs no more than drawing an
+/// image. Make it with [`Text::new`](crate::graphics::Text::new) and drawn
+/// with [`graphics::draw`](crate::graphics::draw).
 ///
 /// [`graphics::print`](crate::graphics::print) works out where every glyph
 /// goes each time it is called. A `Text` does that once, the first time it
@@ -54,7 +52,6 @@ struct Cache {
 impl Text {
     /// Makes a `Text` in `font` holding `text` at its top-left corner. An
     /// empty string makes it start out empty.
-    #[doc(alias = "love.graphics.newText")]
     pub fn new<'a>(font: &Font, text: impl Into<TextSpans<'a>>) -> Text {
         let mut made = Text {
             font: font.clone(),

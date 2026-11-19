@@ -1,7 +1,6 @@
 # Plan for a more idiomatic Rust API
 
-Smitten covers all of LÖVE 11.5 that makes sense in Rust (see
-[love-parity.md](love-parity.md)). Getting there meant mirroring LÖVE's
+Smitten covers all of LÖVE 11.5 that makes sense in Rust. Getting there meant mirroring LÖVE's
 names and argument lists closely, because that made each gap easy to find
 and check. Now that the gaps are closed, that mirroring is the main thing
 that makes the API feel like a Lua binding rather than a Rust crate.
@@ -9,7 +8,7 @@ that makes the API feel like a Lua binding rather than a Rust crate.
 This plan covers what to change, as of `main` at 1b34675 (after #95). It
 groups the changes into workstreams, puts them in dependency order,
 estimates their size and marks the decisions to make first. Sizes use the
-same terms as [love-parity-plan.md](love-parity-plan.md): **S** is under
+same terms as the earlier parity plan: **S** is under
 about 500 changed lines, **M** is 500 to 1,500, **L** is more than 1,500.
 
 Nearly every workstream breaks the public API. That is called out per
@@ -289,7 +288,7 @@ the `Game` trait stays as it is.
 - Delete thin wrappers left over from parity, such as
   `graphics::set_new_font` and `set_new_default_font` (which are
   `set_font(&Font::load(...))`).
-- Update [love-parity.md](love-parity.md) so it maps LÖVE names to the
+- Update `love-parity.md` so it maps LÖVE names to the
   new API instead of listing gaps.
 
 ### I. Layout and docs (M, not breaking)

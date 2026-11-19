@@ -15,7 +15,7 @@ layout(location = 1) out vec4 out_color;
 
 void main() {
     // Pixels run from the top-left with y down; clip space has y up.
-    // Depth 0.5 is where z 0 lands in LÖVE's projection, as for meshes.
+    // Depth 0.5 is where z 0 lands in the projection, as for meshes.
     vec2 clip = in_position * pixel_to_clip - 1.0;
     gl_Position = vec4(clip.x, -clip.y, 0.5, 1.0);
     out_uv = in_uv;

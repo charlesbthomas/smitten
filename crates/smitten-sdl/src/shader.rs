@@ -241,9 +241,9 @@ fn smitten_linear(color: vec4<f32>) -> vec4<f32> {
 ";
 
 /// Writes the built-in mesh vertex shader for `layout`: it reads the
-/// position, texture coordinate and color by their LÖVE names, with
-/// LÖVE's defaults for any the layout lacks. With `gamma_correct`, vertex
-/// colors are turned into linear light, as LÖVE does.
+/// position, texture coordinate and color by their standard names, with
+/// defaults for any the layout lacks. With `gamma_correct`, vertex colors
+/// are turned into linear light.
 pub(crate) fn mesh_vertex(
     layout: &VertexLayout,
     gamma_correct: bool,
@@ -732,9 +732,8 @@ fn smitten_vertex({parameters}) -> SmittenVertexOutput {{
     })
 }
 
-/// What an attribute a game's shader reads but the vertices lack reads
-/// as: white for the color, and (0, 0, 0, 1) for anything else, as in
-/// LÖVE.
+/// What an attribute a game's shader reads but the vertices lack reads as:
+/// white for the color, and (0, 0, 0, 1) for anything else.
 fn default_value(name: &str) -> [f32; 4] {
     if name == VERTEX_COLOR {
         [1.0; 4]

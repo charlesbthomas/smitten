@@ -1,5 +1,5 @@
 //! Starting and stopping the game, and the pieces of a frame for a game
-//! that writes its own main loop, the equivalent of replacing `love.run`.
+//! that writes its own main loop.
 
 use std::marker::PhantomData;
 
@@ -36,8 +36,8 @@ pub(crate) fn run_with(config: Config, body: impl FnOnce(&mut MainLoop)) {
 
     let outcome = error::catch(|| body(&mut MainLoop::new()));
 
-    // A panic is shown in the window, as LÖVE shows its error screen, and
-    // then carries on to end the program the way it would have.
+    // A panic is shown in the window on the error screen, and then
+    // carries on to end the program the way it would have.
     if let Err(panic) = outcome {
         error::show(panic.as_ref());
         context::uninstall();
@@ -47,7 +47,7 @@ pub(crate) fn run_with(config: Config, body: impl FnOnce(&mut MainLoop)) {
 }
 
 /// Opens the window and hands control to `main`, which runs the game's own
-/// main loop, the equivalent of replacing `love.run`. The game ends when
+/// main loop instead of the one [`crate::run`] provides. The game ends when
 /// `main` returns.
 ///
 /// [`Game`](crate::Game) and [`run`](crate::run) are the usual way in. A
@@ -103,14 +103,14 @@ pub fn run_loop(config: Config, main: impl FnOnce(&mut MainLoop)) {
 
 /// The steps of one frame, handed to the closure given to [`run_loop`].
 ///
-/// Each one is also a free function, as in LÖVE: [`event::pump`] and
-/// [`event::poll`], [`timer::step`], [`graphics::clear`],
-/// [`graphics::present`] and [`graphics::is_active`]. These methods add
-/// what `run` does around them, such as noticing a call to
-/// [`event::quit`] and reloading changed files, so prefer them in a loop.
+/// Each one is also a free function: [`event::pump`] and [`event::poll`],
+/// [`timer::step`], [`graphics::clear`], [`graphics::present`] and
+/// [`graphics::is_active`]. These methods add what `run` does around them,
+/// such as noticing a call to [`event::quit`] and reloading changed files,
+/// so prefer them in a loop.
 ///
-/// Drawing can happen at any point between two presents, as in LÖVE. The
-/// screen starts each frame cleared to [`graphics::background_color`].
+/// Drawing can happen at any point between two presents. The screen starts
+/// each frame cleared to [`graphics::background_color`].
 #[derive(Debug)]
 pub struct MainLoop {
     /// Only the main thread may use it, like the rest of the context.
@@ -125,15 +125,13 @@ impl MainLoop {
     }
 
     /// Takes everything that has happened since the last call: the
-    /// platform's events, then those sent with [`event::push`], the
-    /// equivalent of `love.event.pump` followed by `love.event.poll`.
-    /// The keyboard, mouse and joystick states are up to date when it
-    /// returns.
+    /// platform's events, then those sent with [`event::push`], as
+    /// [`event::pump`] followed by [`event::poll`] would. The keyboard,
+    /// mouse and joystick states are up to date when it returns.
     ///
     /// When the game called [`event::quit`], [`Event::Quit`] comes last.
     /// Nothing closes by itself in a custom loop: return from the closure
     /// on [`Event::Quit`] to end the game.
-    #[doc(alias = "love.event.pump")]
     pub fn poll(&mut self) -> Vec<Event> {
         event::pump();
         let mut events: Vec<Event> = event::poll().collect();
@@ -143,23 +141,21 @@ impl MainLoop {
         events
     }
 
-    /// Measures the seconds since the last step and returns them, the
-    /// equivalent of `love.timer.step`. Call it once a frame. It also
-    /// reloads any images, shaders, fonts and sounds whose files changed,
-    /// when [`Config::hot_reload`] is on.
+    /// Measures the seconds since the last step and returns them, as
+    /// [`timer::step`] does. Call it once a frame. It also reloads any
+    /// images, shaders, fonts and sounds whose files changed, when
+    /// [`Config::hot_reload`] is on.
     ///
     /// The clock starts when the window opens, so call this once after
     /// loading to keep the loading time out of the first frame.
-    #[doc(alias = "love.timer.step")]
     pub fn step(&mut self) -> f32 {
         let dt = timer::step();
         reload::check();
         dt
     }
 
-    /// Resets the transform and fills the screen with `color`, the
-    /// `love.graphics.origin` and `love.graphics.clear` that `love.run`
-    /// starts each frame with.
+    /// Resets the transform and fills the screen with `color`, as
+    /// [`crate::run`] does at the start of each frame.
     pub fn clear(&mut self, color: Color) {
         graphics::origin();
         graphics::clear(color);
