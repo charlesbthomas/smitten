@@ -39,8 +39,7 @@ fn main() {
 - **The whole LÖVE API.** Every LÖVE 11.5 function that means something in
   Rust on the desktop has a Smitten equivalent: graphics, audio, input,
   physics, files, video and the rest. LÖVE names that changed are search
-  aliases in
-  the API docs.
+  aliases in the API docs.
 - **Graphics:** shapes, images, text, canvases, WGSL shaders, the stencil,
   sprite batches, particles, meshes and automatic batching.
 - **Audio:** WAV, Ogg Vorbis, MP3 and FLAC, static or streamed, positional,
