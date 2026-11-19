@@ -4,14 +4,13 @@ description = "Worlds, bodies, fixtures, joints, contacts and ray casts."
 weight = 8
 +++
 
-{{ api(path="physics/index.html", text="smitten::physics") }} follows
-`love.physics`. A {{ api(path="physics/struct.World.html", text="World") }}
+{{ api(path="physics/index.html", text="smitten::physics") }} simulates
+rigid bodies. A {{ api(path="physics/struct.World.html", text="World") }}
 holds {{ api(path="physics/struct.Body.html", text="Bodies") }}, each body has
 one or more {{ api(path="physics/struct.Fixture.html", text="Fixtures") }} (the
 shapes that collide), and joints tie bodies together.
 
-The simulation is done by [Rapier](https://rapier.rs), where LÖVE uses
-Box2D, so the API carries over but the exact motion does not.
+The simulation is done by [Rapier](https://rapier.rs).
 
 ## A world with things in it
 
@@ -67,7 +66,7 @@ Fixtures are added to a body by shape: `add_circle`, `add_rectangle`,
 `add_polygon`, `add_edge` and `add_chain`, plus `add_circle_at` and
 `add_rectangle_at` for shapes away from the body's center. Each returns the
 `Fixture`, whose `set_friction`, `set_restitution`, `set_density`,
-`set_sensor` and filter settings work as in LÖVE.
+`set_sensor` and `set_filter` tune how it collides.
 
 Move bodies with `apply_force`, `apply_linear_impulse`, `apply_torque` and
 `set_linear_velocity`. `set_bullet(true)` keeps fast bodies from passing
@@ -80,8 +79,8 @@ meter; it is 30 by default.
 
 ## Contacts
 
-LÖVE's `beginContact` and `endContact` callbacks are
-`world.contacts()`, read after each update. Each
+`world.contacts()` reports what touched during the last update. Read
+it after each `world.update`. Each
 {{ api(path="physics/struct.Contact.html", text="Contact") }} says whether
 the two fixtures started or stopped touching, and where:
 

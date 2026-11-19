@@ -79,7 +79,6 @@ def main() -> int:
     for crate in CRATES:
         doc_args += ["-p", crate]
     run(*doc_args)
-    run(sys.executable, str(SITE / "tools" / "love_names.py"))
 
     zola = ["zola", "build", "--output-dir", str(PUBLIC), "--force"]
     if base_url:

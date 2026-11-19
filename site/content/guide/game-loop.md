@@ -47,14 +47,13 @@ fn main() {
   {{ api(path="graphics/fn.set_background_color.html", text="graphics::set_background_color") }}
   once in `load` doesn't need to clear it.
 
-As in LÖVE, the modules such as `graphics`, `audio` and `keyboard` can be
+The modules such as `graphics`, `audio` and `keyboard` can be
 called from anywhere on the main thread, not only from these methods. You
 never pass a context around.
 
 ## Other callbacks
 
-Every other method has an empty default, so write only the ones you need.
-They mirror LÖVE's callbacks:
+Every other method has an empty default, so write only the ones you need:
 
 | Method | Called when |
 |---|---|
@@ -75,8 +74,8 @@ They mirror LÖVE's callbacks:
 
 ## Config
 
-{{ api(path="struct.Config.html", text="Config") }} plays the part of LÖVE's
-`conf.lua`. Set the fields you care about and take the rest from
+{{ api(path="struct.Config.html", text="Config") }} holds the game's
+settings. Set the fields you care about and take the rest from
 `Config::default()`:
 
 ```rust
@@ -126,14 +125,13 @@ fn load() -> smitten::Result<Self> {
 much as `anyhow::Error` does, and `{:#}` prints the causes too. An `Err`
 from `load` stops the game and shows the error on the error screen.
 
-Functions that LÖVE makes raise an error on a programming mistake, such as
-popping the transform stack more often than you pushed, panic instead.
+A programming mistake, such as popping the transform stack more often
+than you pushed, panics rather than returning an error.
 
 ## The error screen
 
 When a game panics, the window doesn't vanish. It turns blue and shows the
-message and the file and line it came from, as LÖVE's error screen does,
-until the player presses Escape or closes the window. The message is still
+message and the file and line it came from until the player presses Escape or closes the window. The message is still
 printed to the terminal, and the program still ends with the panic.
 
 {{ figure(src="error-screen.png", alt="Smitten's blue error screen, showing a panic message and the file and line it came from.", caption="The built-in error screen.") }}
@@ -165,8 +163,8 @@ keep running, for instance to ask "Save before quitting?" first.
 
 ## Writing your own main loop
 
-The `Game` trait covers nearly every game. If you need full control, as a
-LÖVE game does by replacing `love.run`, use
+The `Game` trait covers nearly every game. If you need full control over
+the frame, use
 {{ api(path="fn.run_loop.html", text="smitten::run_loop") }}. It hands you a
 {{ api(path="struct.MainLoop.html", text="MainLoop") }} with the steps of a
 frame: `poll`, `step`, `clear` and `present`. This one runs its game logic

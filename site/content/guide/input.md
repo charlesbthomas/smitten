@@ -4,7 +4,7 @@ description = "Keyboard, mouse, gamepads, joysticks and touch."
 weight = 6
 +++
 
-Input comes two ways, as in LÖVE. Callbacks on your
+Input comes two ways. Callbacks on your
 {{ api(path="trait.Game.html", text="Game") }} report each change as it
 happens, and the `keyboard`, `mouse`, `joystick` and `touch` modules answer
 "is this held right now?" from anywhere.
@@ -51,7 +51,7 @@ off by default; `keyboard::set_key_repeat(true)` turns it on, and the
 {{ api(path="enum.Key.html", text="Key") }} names follow the key's position on
 a US layout, so W, A, S and D are the same keys on an AZERTY keyboard.
 `keyboard::layout_key` and `is_layout_down` work with the letter printed on
-the key instead. A `Key` prints LÖVE's name with `Display` and parses it
+the key instead. A `Key` prints a short name with `Display` and parses it
 with `FromStr`, so `"lshift".parse::<Key>()` works for saved key bindings.
 
 ### Typing text
