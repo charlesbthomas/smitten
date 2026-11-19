@@ -8,8 +8,8 @@ use crate::Color;
 use super::{Image, Quad, Transform};
 
 /// Where and how [`draw`](super::draw) places something: the position,
-/// rotation, scale, origin and shear of LÖVE's `draw` arguments, and an
-/// optional [`Transform`] applied around them.
+/// rotation, scale, origin and shear, and an optional [`Transform`] applied
+/// around them.
 ///
 /// Anything that turns into a position works where `DrawParams` is asked
 /// for, so the plain case stays short:
@@ -25,8 +25,8 @@ use super::{Image, Quad, Transform};
 /// # }
 /// ```
 ///
-/// The parts are applied as in LÖVE: the origin is moved to `(0, 0)`, the
-/// result is sheared, scaled, rotated, and then moved to `position`. A
+/// The parts are applied in this order: the origin is moved to `(0, 0)`,
+/// the result is sheared, scaled, rotated, and then moved to `position`. A
 /// `transform` set as well is applied last, to the placed result.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DrawParams {
@@ -199,7 +199,7 @@ impl<T: sealed::Sealed + ?Sized> sealed::Sealed for &T {
 }
 
 /// Part of an image, drawn by [`draw`](super::draw). Made with
-/// [`Image::region`], the equivalent of passing a quad to LÖVE's `draw`.
+/// [`Image::region`].
 #[derive(Debug, Clone, Copy)]
 pub struct ImageRegion<'a> {
     pub(crate) image: &'a Image,
@@ -216,8 +216,8 @@ impl Image {
 }
 
 /// Text for [`print`](super::print), [`printf`](super::printf) and
-/// [`Text`](super::Text): a plain string, or a list of parts each tinted
-/// by its own color as well as the current one, LÖVE's `coloredtext`.
+/// [`Text`](super::Text): a plain string, or a list of parts each tinted by
+/// its own color as well as the current one.
 ///
 /// ```no_run
 /// use smitten::{Color, graphics};
@@ -225,7 +225,6 @@ impl Image {
 /// graphics::print("Hello", (10.0, 10.0));
 /// graphics::print(&[(Color::WHITE, "Score: "), (Color::rgb(1.0, 0.8, 0.2), "120")], (10.0, 30.0));
 /// ```
-#[doc(alias = "coloredtext")]
 #[derive(Debug, Clone, Copy)]
 pub enum TextSpans<'a> {
     /// A string in the current color.

@@ -1,4 +1,4 @@
-//! Touch screen state, the equivalent of `love.touch`.
+//! Touch screen state: the fingers on the screen and where they are.
 //!
 //! Positions are in the same coordinates as [`crate::mouse`]: units from
 //! the top-left corner of the window, or of the design area when the game

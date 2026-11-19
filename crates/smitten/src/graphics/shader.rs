@@ -13,7 +13,7 @@ use crate::reload::Asset;
 use crate::{Color, context};
 
 /// A program that decides the color of every pixel drawn while it is
-/// active, the equivalent of LÖVE's `Shader`.
+/// active.
 ///
 /// A shader is written in WGSL and defines one function, `effect`, which
 /// is given the drawing color, the texture coordinate and the pixel's
@@ -72,11 +72,10 @@ use crate::{Color, context};
 /// The types it can be are `texture_2d<f32>`, `texture_2d_array<f32>`,
 /// `texture_cube<f32>`, `texture_3d<f32>` and `texture_depth_2d`.
 ///
-/// A `texture_depth_2d` is LÖVE's `sampler2DShadow`: its sampler is a
-/// `sampler_comparison`, and it takes a readable depth canvas with a
-/// depth sample mode set by [`Image::set_depth_sample_mode`]. Until one is
-/// sent, every comparison reads as passing. This is how a shadow map is
-/// read:
+/// A `texture_depth_2d` is a shadow sampler: its sampler is a
+/// `sampler_comparison`, and it takes a readable depth canvas with a depth
+/// sample mode set by [`Image::set_depth_sample_mode`]. Until one is sent,
+/// every comparison reads as passing. This is how a shadow map is read:
 ///
 /// ```wgsl
 /// var shadow: texture_depth_2d;
@@ -96,8 +95,8 @@ use crate::{Color, context};
 /// When several canvases are drawn to at once with
 /// [`set_canvases`](super::set_canvases), `effect`'s color goes to all of
 /// them. To give each its own, define `effects` in place of `effect`,
-/// returning a struct named `Outputs` with a `vec4<f32>` for each canvas
-/// in order, the equivalent of writing `love_Canvases[i]` in LÖVE:
+/// returning a struct named `Outputs` with a `vec4<f32>` for each canvas in
+/// order:
 ///
 /// ```wgsl
 /// struct Outputs {
@@ -119,9 +118,9 @@ use crate::{Color, context};
 /// # Vertex shaders
 ///
 /// A shader can also move the vertices of what it draws by defining
-/// `position`, the equivalent of LÖVE's vertex shader. It is given the
-/// matrix that takes the vertex to the screen and the vertex's position,
-/// and returns where on the screen it goes:
+/// `position`, its vertex stage. It is given the matrix that takes the
+/// vertex to the screen and the vertex's position, and returns where on the
+/// screen it goes:
 ///
 /// ```wgsl
 /// struct Params { time: f32 }
@@ -147,12 +146,12 @@ use crate::{Color, context};
 /// from the attribute of the same name, such as `VertexColor` or one
 /// attached with [`Mesh::attach_attribute`](super::Mesh::attach_attribute),
 /// and must be `f32` or `vec2<f32>` to `vec4<f32>`. One that the vertices
-/// lack reads as (0, 0, 0, 1), as in LÖVE.
+/// lack reads as (0, 0, 0, 1).
 ///
 /// When copies of a mesh are drawn with
 /// [`draw_instanced`](super::draw_instanced), `instance_index` in
-/// `position` is the `u32` number of the copy being drawn, from 0, as
-/// LÖVE's `love_InstanceID`. It is 0 in `effect` and for other draws.
+/// `position` is the `u32` number of the copy being drawn, from 0. It is 0
+/// in `effect` and for other draws.
 ///
 /// To pass values from `position` to `effect`, declare a struct named
 /// `Varyings`, write it through `varyings` in `position` and read it in
@@ -205,7 +204,6 @@ impl Drop for Inner {
 
 impl Shader {
     /// Compiles a shader from WGSL source.
-    #[doc(alias = "love.graphics.newShader")]
     pub fn new(source: &str) -> Result<Shader, ShaderError> {
         let info =
             context::with(|ctx| ctx.backend.create_shader(source)).map_err(ShaderError::Compile)?;
@@ -225,7 +223,6 @@ impl Shader {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes,
     /// which normally means inside the game's `assets` folder.
-    #[doc(alias = "love.graphics.newShader")]
     pub fn from_file(path: impl AsRef<Path>) -> Result<Shader, ShaderError> {
         let path = path.as_ref();
         let source = crate::filesystem::read_string(path).map_err(|source| ShaderError::Read {
@@ -260,15 +257,13 @@ impl Shader {
             .unwrap_or_else(|error| panic!("{error}"));
     }
 
-    /// Sets the `vec4<f32>` member of `Params` called
-    /// `name` to `color`, the equivalent of `Shader:sendColor`. With
-    /// gamma-correct rendering, the color is converted from sRGB to linear
-    /// light first, as colors from `set_color` are; [`Shader::send`] sends
-    /// it unchanged.
+    /// Sets the `vec4<f32>` member of `Params` called `name` to `color`.
+    /// With gamma-correct rendering, the color is converted from sRGB to
+    /// linear light first, as colors from `set_color` are; [`Shader::send`]
+    /// sends it unchanged.
     ///
     /// Panics if there is no such member or it has a different type. Use
     /// [`Shader::try_send_color`] to handle the failure instead.
-    #[doc(alias = "Shader:sendColor")]
     pub fn send_color(&self, name: &str, color: Color) {
         self.try_send_color(name, color)
             .unwrap_or_else(|error| panic!("{error}"));
@@ -294,8 +289,7 @@ impl Shader {
     }
 
     /// Sets the first elements of the array member of `Params` called
-    /// `name`, the equivalent of `shader:send(name, value1, value2, ...)`.
-    /// Elements past those sent keep their values.
+    /// `name`. Elements past those sent keep their values.
     ///
     /// ```no_run
     /// # let shader = smitten::graphics::Shader::new("").unwrap();
@@ -367,7 +361,7 @@ impl Shader {
     }
 
     /// Sets the matrix member of `Params` called `name`, with the matrix
-    /// given as LÖVE's `MatrixLayout` says: a list of rows or of columns.
+    /// given as [`MatrixLayout`] says: a list of rows or of columns.
     ///
     /// [`Shader::send`] takes a matrix as a list of columns, as WGSL and
     /// most Rust math libraries store it. A matrix written out by hand
@@ -397,10 +391,9 @@ impl Shader {
         self.send(name, layout.to_columns(matrix));
     }
 
-    /// Sends a texture to the one the shader declares as `name`, the
-    /// equivalent of `shader:send(name, image)`. Like [`Shader::send`],
-    /// it applies to what is drawn afterwards. The texture is sampled with
-    /// the filter it has now.
+    /// Sends a texture to the one the shader declares as `name`. Like
+    /// [`Shader::send`], it applies to what is drawn afterwards. The
+    /// texture is sampled with the filter it has now.
     ///
     /// Panics if the shader declares no such texture or one of another
     /// kind, which is always a bug in the game. Use
@@ -442,10 +435,9 @@ impl Shader {
         Ok(())
     }
 
-    /// Returns the compiler's warnings about the shader, as LÖVE's
-    /// `Shader:getWarnings`. The WGSL compiler reports problems only as
-    /// errors, from [`Shader::new`], so this is always empty.
-    #[doc(alias = "Shader:getWarnings")]
+    /// Returns the compiler's warnings about the shader. The WGSL compiler
+    /// reports problems only as errors, from [`Shader::new`], so this is
+    /// always empty.
     pub fn warnings(&self) -> String {
         String::new()
     }
@@ -630,11 +622,10 @@ fn kind_name(kind: TextureKind) -> &'static str {
     }
 }
 
-/// How the numbers of a matrix are listed, the equivalent of LÖVE's
-/// `MatrixLayout`. See [`Shader::send_matrix`].
+/// How the numbers of a matrix are listed. See [`Shader::send_matrix`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MatrixLayout {
-    /// Each inner array is a row, as a matrix is written on paper. LÖVE's
+    /// Each inner array is a row, as a matrix is written on paper. The
     /// default.
     #[default]
     Rows,

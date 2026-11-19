@@ -1,4 +1,4 @@
-//! Game files, the equivalent of `love.filesystem`.
+//! Game files: reading what the game shipped with and saving what it makes.
 //!
 //! A game reads from two places and writes to one:
 //!
@@ -9,11 +9,11 @@
 //! - The **save directory** is a per-user folder the game may write to,
 //!   named after the game's identity.
 //!
-//! Relative paths are looked up in the save directory first and then in
-//! the asset directory, as in LÖVE, so a saved file can override a shipped
-//! one. [`Config::append_identity`] or [`set_append_identity`] reverse
-//! that, so shipped files win. Writing always goes to the save directory. Image, font, shader and
-//! sound loading use the same lookup.
+//! Relative paths are looked up in the save directory first and then in the
+//! asset directory, so a saved file can override a shipped one.
+//! [`Config::append_identity`] or [`set_append_identity`] reverse that, so
+//! shipped files win. Writing always goes to the save directory. Image,
+//! font, shader and sound loading use the same lookup.
 //!
 //! A game can also [`mount`] a zip archive or a directory, such as a
 //! downloaded level pack, so that the files inside it can be read like
@@ -206,11 +206,10 @@ pub fn set_identity(identity: &str) {
     });
 }
 
-/// Sets whether the asset directory is searched before the save
-/// directory, the `appendToPath` argument of `love.filesystem.setIdentity`
-/// and the runtime form of [`Config::append_identity`]. When it is on, a
-/// file in the save directory no longer overrides a shipped file of the
-/// same name. Writes still go to the save directory.
+/// Sets whether the asset directory is searched before the save directory,
+/// the runtime form of [`Config::append_identity`]. When it is on, a file
+/// in the save directory no longer overrides a shipped file of the same
+/// name. Writes still go to the save directory.
 pub fn set_append_identity(append: bool) {
     context::with(|ctx| ctx.fs.mounts.assets_first = append);
 }
@@ -270,8 +269,7 @@ pub enum FileType {
     Other,
 }
 
-/// What is known about a file or directory, as `love.filesystem.getInfo`
-/// reports it.
+/// What is known about a file or directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileInfo {
     /// Whether it is a file or a directory.
@@ -324,10 +322,10 @@ pub fn is_directory(path: impl AsRef<Path>) -> bool {
 
 /// Lists the files and directories inside `path`, by name and sorted.
 ///
-/// As in LÖVE, the save directory, the asset directory and anything
-/// mounted are looked at together, so the list has what the game shipped
-/// with and what it has saved. An empty path lists the top level. A
-/// directory that does not exist gives an empty list.
+/// The save directory, the asset directory and anything mounted are looked
+/// at together, so the list has what the game shipped with and what it has
+/// saved. An empty path lists the top level. A directory that does not
+/// exist gives an empty list.
 pub fn directory_items(path: impl AsRef<Path>) -> Vec<String> {
     let path = path.as_ref();
     if path.is_absolute() {
@@ -342,7 +340,7 @@ pub fn directory_items(path: impl AsRef<Path>) -> Vec<String> {
 }
 
 /// Makes the files in a zip archive, or a directory, readable as if they
-/// were the game's own, the equivalent of `love.filesystem.mount`.
+/// were the game's own.
 ///
 /// `archive` is looked up in the save directory and then the asset
 /// directory, or used as it is if absolute. Its contents appear under
@@ -357,7 +355,6 @@ pub fn directory_items(path: impl AsRef<Path>) -> Vec<String> {
 /// filesystem::mount("level-pack.zip", "levels").expect("the pack is there");
 /// let first = filesystem::read_string("levels/1.txt").expect("it has a first level");
 /// ```
-#[doc(alias = "love.filesystem.mount")]
 pub fn mount(archive: impl AsRef<Path>, mount_point: impl AsRef<Path>) -> io::Result<()> {
     add_mount(archive.as_ref(), mount_point.as_ref(), false)
 }
@@ -395,9 +392,8 @@ fn add_mount(archive: &Path, mount_point: &Path, last: bool) -> io::Result<()> {
     context::with(|ctx| ctx.fs.mounts.add(file, point, last))
 }
 
-/// Stops reading from an archive given to [`mount`], the equivalent of
-/// `love.filesystem.unmount`. Returns whether it was mounted.
-#[doc(alias = "love.filesystem.unmount")]
+/// Stops reading from an archive given to [`mount`]. Returns whether it was
+/// mounted.
 pub fn unmount(archive: impl AsRef<Path>) -> bool {
     let Ok(file) = mounted_file(archive.as_ref()) else {
         return false;
@@ -449,13 +445,11 @@ pub fn remove(path: impl AsRef<Path>) -> io::Result<()> {
     }
 }
 
-/// Where the system keeps programs' per-user data, the equivalent of
-/// `love.filesystem.getAppdataDirectory`: `%APPDATA%` on Windows,
+/// Where the system keeps programs' per-user data: `%APPDATA%` on Windows,
 /// `~/Library/Application Support` on macOS, and `$XDG_DATA_HOME` or
 /// `~/.local/share` elsewhere. The save directory is inside it.
 ///
 /// `None` if the system does not say.
-#[doc(alias = "love.filesystem.getAppdataDirectory")]
 pub fn appdata_directory() -> Option<PathBuf> {
     appdata_directory_from(
         |name| std::env::var_os(name),
@@ -483,25 +477,19 @@ fn appdata_directory_from(
     }
 }
 
-/// The user's home directory, the equivalent of
-/// `love.filesystem.getUserDirectory`. `None` if the system does not say.
-#[doc(alias = "love.filesystem.getUserDirectory")]
+/// The user's home directory. `None` if the system does not say.
 pub fn user_directory() -> Option<PathBuf> {
     std::env::home_dir().filter(|path| !path.as_os_str().is_empty())
 }
 
-/// The directory the game was started from, the equivalent of
-/// `love.filesystem.getWorkingDirectory`. Relative paths given to
+/// The directory the game was started from. Relative paths given to
 /// `std::fs` are taken from here; smitten's own functions do not use it.
-#[doc(alias = "love.filesystem.getWorkingDirectory")]
 pub fn working_directory() -> io::Result<PathBuf> {
     std::env::current_dir()
 }
 
-/// Where the game itself is, the equivalent of
-/// `love.filesystem.getSource`: under `cargo run`, the folder holding
-/// the game's `Cargo.toml`; otherwise the executable.
-#[doc(alias = "love.filesystem.getSource")]
+/// Where the game itself is: under `cargo run`, the folder holding the
+/// game's `Cargo.toml`; otherwise the executable.
 pub fn source() -> PathBuf {
     match std::env::var_os("CARGO_MANIFEST_DIR") {
         Some(folder) => PathBuf::from(folder),
@@ -509,34 +497,29 @@ pub fn source() -> PathBuf {
     }
 }
 
-/// The directory that holds [`source`], the equivalent of
-/// `love.filesystem.getSourceBaseDirectory`. For a released game this is
-/// the folder the executable is in, which is the place to look for files
-/// the player puts next to it.
-#[doc(alias = "love.filesystem.getSourceBaseDirectory")]
+/// The directory that holds [`source`]. For a released game this is the
+/// folder the executable is in, which is the place to look for files the
+/// player puts next to it.
 pub fn source_base_directory() -> PathBuf {
     source().parent().map(Path::to_path_buf).unwrap_or_default()
 }
 
-/// Whether the game is running as a released executable rather than
-/// under `cargo run`, the equivalent of `love.filesystem.isFused`.
+/// Whether the game is running as a released executable rather than under
+/// `cargo run`.
 ///
 /// A smitten game is always one executable, so this tells the two ways
 /// of running it apart instead: it is `false` when `cargo run` started
 /// the game, and `true` otherwise. The save directory is the same either
 /// way.
-#[doc(alias = "love.filesystem.isFused")]
 pub fn is_fused() -> bool {
     std::env::var_os("CARGO_MANIFEST_DIR").is_none()
 }
 
-/// The directory or archive a read of `path` would come from, the
-/// equivalent of `love.filesystem.getRealDirectory`: the save directory,
-/// the asset directory, or a file given to [`mount`].
+/// The directory or archive a read of `path` would come from: the save
+/// directory, the asset directory, or a file given to [`mount`].
 ///
 /// `None` if nothing is at `path`, or if `path` is absolute or could
 /// leave the game's files, since such a path is not looked up.
-#[doc(alias = "love.filesystem.getRealDirectory")]
 pub fn real_directory(path: impl AsRef<Path>) -> Option<PathBuf> {
     let names = match context::with(|ctx| lookup(ctx, path.as_ref())) {
         Lookup::Disk(_) => return None,
@@ -548,8 +531,7 @@ pub fn real_directory(path: impl AsRef<Path>) -> Option<PathBuf> {
     })
 }
 
-/// Turns following symbolic links on or off, the equivalent of
-/// `love.filesystem.setSymlinksEnabled`. They are on to begin with.
+/// Turns following symbolic links on or off. They are on to begin with.
 ///
 /// While they are off, a link in the save directory, the asset directory
 /// or a mounted directory is reported by [`info`] as
@@ -557,14 +539,11 @@ pub fn real_directory(path: impl AsRef<Path>) -> Option<PathBuf> {
 /// directory is found. This keeps a game from reading outside its files
 /// through a link someone has put there. Absolute paths, and writing,
 /// are not affected.
-#[doc(alias = "love.filesystem.setSymlinksEnabled")]
 pub fn set_symlinks_enabled(enabled: bool) {
     context::with(|ctx| ctx.fs.mounts.follow_symlinks = enabled);
 }
 
-/// Whether symbolic links are followed, the equivalent of
-/// `love.filesystem.areSymlinksEnabled`. See [`set_symlinks_enabled`].
-#[doc(alias = "love.filesystem.areSymlinksEnabled")]
+/// Whether symbolic links are followed. See [`set_symlinks_enabled`].
 pub fn are_symlinks_enabled() -> bool {
     context::with(|ctx| ctx.fs.mounts.follow_symlinks)
 }

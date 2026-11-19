@@ -7,12 +7,11 @@ use smitten_core::backend::CompressedFormat;
 
 use super::ImageError;
 
-/// Pixels compressed in a form the GPU reads directly, the equivalent of
-/// LÖVE's `CompressedImageData`. Load one with
-/// [`CompressedImageData::from_file`](super::CompressedImageData::from_file) and draw
-/// it with [`Image::from_compressed_data`](super::Image::from_compressed_data),
-/// or let [`Image::load`](super::Image::load) load a `.dds` or
-/// `.ktx` file.
+/// Pixels compressed in a form the GPU reads directly. Load one with
+/// [`CompressedImageData::from_file`](super::CompressedImageData::from_file)
+/// and draw it with
+/// [`Image::from_compressed_data`](super::Image::from_compressed_data), or
+/// let [`Image::load`](super::Image::load) load a `.dds` or `.ktx` file.
 ///
 /// A compressed image takes a quarter to an eighth of the GPU memory of an
 /// ordinary one and loads without decoding, but its pixels cannot be read
@@ -299,7 +298,7 @@ fn parse_dds(bytes: &[u8]) -> Result<CompressedImageData, String> {
                 );
             }
             // DXGI_FORMAT values. The sRGB variants are read as plain
-            // colors, as LÖVE does without gamma correction.
+            // colors, as they are without gamma correction.
             match word(128) {
                 71 | 72 => CompressedFormat::Bc1,
                 74 | 75 => CompressedFormat::Bc2,

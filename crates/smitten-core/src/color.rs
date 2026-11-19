@@ -1,4 +1,4 @@
-/// An RGBA color with components from 0.0 to 1.0, as in LÖVE 11.
+/// An RGBA color with components from 0.0 to 1.0.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
     /// Red, from 0.0 to 1.0.
@@ -46,9 +46,7 @@ impl Color {
         }
     }
 
-    /// A color from components from 0 to 255, as image editors show them,
-    /// the equivalent of `love.math.colorFromBytes`.
-    #[doc(alias = "love.math.colorFromBytes")]
+    /// A color from components from 0 to 255, as image editors show them.
     pub fn from_rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
         let unit = |byte: u8| f32::from(byte) / 255.0;
         Self::rgba(unit(r), unit(g), unit(b), unit(a))
@@ -59,19 +57,16 @@ impl Color {
         Self::from_rgba8(r, g, b, 255)
     }
 
-    /// The components from 0 to 255, the equivalent of
-    /// `love.math.colorToBytes`. Components outside 0.0 to 1.0 are cut to
-    /// that range, and each is rounded to the nearest whole number.
-    #[doc(alias = "love.math.colorToBytes")]
+    /// The components from 0 to 255. Components outside 0.0 to 1.0 are cut
+    /// to that range, and each is rounded to the nearest whole number.
     pub fn to_rgba8(self) -> [u8; 4] {
         let byte = |unit: f32| (unit.clamp(0.0, 1.0) * 255.0).round() as u8;
         [byte(self.r), byte(self.g), byte(self.b), byte(self.a)]
     }
 
     /// Converts the color from the usual sRGB encoding to linear light,
-    /// where adding and averaging behave physically, the equivalent of
-    /// `love.math.gammaToLinear`. Alpha is kept as it is.
-    #[doc(alias = "love.math.gammaToLinear")]
+    /// where adding and averaging behave physically. Alpha is kept as it
+    /// is.
     pub fn to_linear(self) -> Self {
         let linear = |c: f32| {
             if c <= 0.04045 {
@@ -83,9 +78,8 @@ impl Color {
         Self::rgba(linear(self.r), linear(self.g), linear(self.b), self.a)
     }
 
-    /// Converts the color from linear light back to sRGB, the equivalent
-    /// of `love.math.linearToGamma`. Alpha is kept as it is.
-    #[doc(alias = "love.math.linearToGamma")]
+    /// Converts the color from linear light back to sRGB. Alpha is kept as
+    /// it is.
     pub fn to_gamma(self) -> Self {
         let gamma = |c: f32| {
             if c <= 0.003_130_8 {

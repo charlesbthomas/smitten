@@ -9,8 +9,7 @@ use super::Body;
 use super::coupling::{self, Coupling};
 use super::world::{Inner, Shared};
 
-/// What kind of connection a [`Joint`] is, the equivalent of LÖVE's
-/// `JointType`.
+/// What kind of connection a [`Joint`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum JointType {
     /// Two bodies that turn around a shared point. See
@@ -123,7 +122,7 @@ fn per_second(inner: &Inner) -> f32 {
     parameters.num_solver_iterations.max(1) as f32 / parameters.dt
 }
 
-/// A connection between two bodies, the equivalent of LÖVE's `Joint`.
+/// A connection between two bodies.
 ///
 /// Make one with the `new_..._joint` methods of
 /// [`World`](super::World). It stays in place until destroyed, or until

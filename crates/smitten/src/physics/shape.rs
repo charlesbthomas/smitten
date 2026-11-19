@@ -3,8 +3,7 @@ use rapier2d::prelude::*;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
-/// What kind of outline a [`Shape`] is, the equivalent of LÖVE's
-/// `ShapeType`.
+/// What kind of outline a [`Shape`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShapeType {
     /// A circle, made with [`Shape::circle`].
@@ -17,9 +16,8 @@ pub enum ShapeType {
     Chain,
 }
 
-/// An outline that can be given to a body as a fixture, the equivalent of
-/// LÖVE's `Shape` and its kinds (`CircleShape`, `PolygonShape`,
-/// `EdgeShape` and `ChainShape`).
+/// An outline that can be given to a body as a fixture: a circle, polygon,
+/// edge or chain.
 ///
 /// A shape is a plain value, measured from the origin of the body it goes
 /// on: make one, then attach a copy of it with [`Body::add_shape`]. The
@@ -66,9 +64,7 @@ impl Shape {
         }
     }
 
-    /// A circle centered on the body's origin. LÖVE's
-    /// `newCircleShape(radius)`.
-    #[doc(alias = "love.physics.newCircleShape")]
+    /// A circle centered on the body's origin.
     pub fn circle(radius: f32) -> CircleShape {
         Shape::circle_at((0.0, 0.0), radius)
     }
@@ -86,9 +82,8 @@ impl Shape {
         ))
     }
 
-    /// A rectangle of `width` by `height` centered on the body's origin.
-    /// LÖVE's `newRectangleShape(width, height)`. It is a polygon.
-    #[doc(alias = "love.physics.newRectangleShape")]
+    /// A rectangle of `width` by `height` centered on the body's origin. It
+    /// is a polygon.
     pub fn rectangle(size: impl Into<Vec2>) -> PolygonShape {
         let Vec2 {
             x: width,
@@ -121,10 +116,8 @@ impl Shape {
 
     /// A polygon with these corners, measured from the body's origin. A
     /// polygon with dents is filled out to the convex shape around it.
-    /// LÖVE's `newPolygonShape`.
     ///
     /// Panics if the points do not span an area.
-    #[doc(alias = "love.physics.newPolygonShape")]
     pub fn polygon(points: &[impl Into<Vec2> + Copy]) -> PolygonShape {
         let points = crate::math::tuples(points);
         let points = &points[..];
@@ -134,8 +127,7 @@ impl Shape {
         ShapeOf::wrap(Shape::new(shape, Pose::IDENTITY))
     }
 
-    /// A thin line from `(x1, y1)` to `(x2, y2)`. LÖVE's `newEdgeShape`.
-    #[doc(alias = "love.physics.newEdgeShape")]
+    /// A thin line from `(x1, y1)` to `(x2, y2)`.
     pub fn edge(anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> EdgeShape {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
@@ -146,10 +138,8 @@ impl Shape {
     }
 
     /// Lines through these points, joined back to the start if `closed`.
-    /// LÖVE's `newChainShape`.
     ///
     /// Panics with fewer than two points.
-    #[doc(alias = "love.physics.newChainShape")]
     pub fn chain(points: &[impl Into<Vec2> + Copy], closed: bool) -> ChainShape {
         let points = crate::math::tuples(points);
         let points = &points[..];
@@ -166,14 +156,14 @@ impl Shape {
         ))
     }
 
-    /// The ghost vertex before an edge or chain, if one was set, the
-    /// equivalent of `getPreviousVertex`. Other shapes have none.
+    /// The ghost vertex before an edge or chain, if one was set. Other
+    /// shapes have none.
     pub fn previous_vertex(&self) -> Option<Vec2> {
         self.previous.map(Vec2::from)
     }
 
-    /// The ghost vertex after an edge or chain, if one was set, the
-    /// equivalent of `getNextVertex`. Other shapes have none.
+    /// The ghost vertex after an edge or chain, if one was set. Other
+    /// shapes have none.
     pub fn next_vertex(&self) -> Option<Vec2> {
         self.next.map(Vec2::from)
     }
@@ -273,9 +263,7 @@ impl Shape {
     }
 
     /// The smallest box around the shape on a body at `(x, y)` turned by
-    /// `angle`, as `(left, top, right, bottom)`. LÖVE's
-    /// `Shape:computeAABB`.
-    #[doc(alias = "Shape:computeAABB")]
+    /// `angle`, as `(left, top, right, bottom)`.
     pub fn bounding_box(&self, position: impl Into<Vec2>, angle: f32) -> (f32, f32, f32, f32) {
         let Vec2 { x, y } = position.into();
         let aabb = self.shape.compute_aabb(&self.placed(x, y, angle));
@@ -283,12 +271,10 @@ impl Shape {
     }
 
     /// The `(center_x, center_y, mass, inertia)` the shape would give a
-    /// body at a `density` per square meter, with `meter` units to a
-    /// meter (pass [`World::meter`](super::World::meter)): its center of
-    /// mass from the body's origin, its mass, and its inertia around that
-    /// center. Lines and chains have no area and so no mass. LÖVE's
-    /// `Shape:computeMass`.
-    #[doc(alias = "Shape:computeMass")]
+    /// body at a `density` per square meter, with `meter` units to a meter
+    /// (pass [`World::meter`](super::World::meter)): its center of mass
+    /// from the body's origin, its mass, and its inertia around that
+    /// center. Lines and chains have no area and so no mass.
     pub fn compute_mass(&self, density: f32, meter: f32) -> (f32, f32, f32, f32) {
         let props = self
             .shape
@@ -305,10 +291,8 @@ impl Shape {
     /// Where the line from `(x1, y1)` to `(x2, y2)` first runs into the
     /// shape on a body at `(x, y)` turned by `angle`, as `(normal_x,
     /// normal_y, fraction)`: the way the surface faces there, and how far
-    /// along the line the hit is, from 0.0 to 1.0. LÖVE's
-    /// `Shape:rayCast`.
-    #[doc(alias = "Shape:rayCast")]
-    #[allow(clippy::too_many_arguments)] // Mirrors Shape:rayCast.
+    /// along the line the hit is, from 0.0 to 1.0.
+    #[allow(clippy::too_many_arguments)] // The line and the body placement are separate numbers.
     pub fn ray_cast(
         &self,
         anchor1: impl Into<Vec2>,
@@ -327,8 +311,7 @@ impl Shape {
     }
 
     /// Whether the shape, on a body at `(x, y)` turned by `angle`, covers
-    /// the point `(point_x, point_y)`. LÖVE's `Shape:testPoint`.
-    #[doc(alias = "Shape:testPoint")]
+    /// the point `(point_x, point_y)`.
     pub fn test_point(
         &self,
         position: impl Into<Vec2>,
@@ -479,14 +462,13 @@ pub mod shape_kind {
     }
 }
 
-/// A circle, the equivalent of LÖVE's `CircleShape`.
+/// A circle.
 pub type CircleShape = ShapeOf<shape_kind::Circle>;
-/// A convex polygon, rectangles included, the equivalent of LÖVE's
-/// `PolygonShape`.
+/// A convex polygon, rectangles included.
 pub type PolygonShape = ShapeOf<shape_kind::Polygon>;
-/// A single line, the equivalent of LÖVE's `EdgeShape`.
+/// A single line.
 pub type EdgeShape = ShapeOf<shape_kind::Edge>;
-/// Lines joined end to end, the equivalent of LÖVE's `ChainShape`.
+/// Lines joined end to end.
 pub type ChainShape = ShapeOf<shape_kind::Chain>;
 
 /// A shape as its own type, from [`Shape::typed`], to match on.
@@ -519,23 +501,18 @@ impl Shape {
 
 /// Circles.
 impl CircleShape {
-    /// The same circle with another radius. LÖVE's
-    /// `CircleShape:setRadius`, on a copy.
-    #[doc(alias = "CircleShape:setRadius")]
+    /// The same circle with another radius, as a copy.
     pub fn with_radius(&self, radius: f32) -> CircleShape {
         Shape::circle_at(self.point(), radius)
     }
 
-    /// A circle's center, measured from the body's origin. LÖVE's
-    /// `CircleShape:getPoint`.
-    #[doc(alias = "CircleShape:getPoint")]
+    /// A circle's center, measured from the body's origin.
     pub fn point(&self) -> Vec2 {
         self.center()
     }
 
     /// The same circle moved to be centered `(x, y)` from the body's
-    /// origin. LÖVE's `CircleShape:setPoint`, on a copy.
-    #[doc(alias = "CircleShape:setPoint")]
+    /// origin, as a copy.
     pub fn with_point(&self, position: impl Into<Vec2>) -> CircleShape {
         Shape::circle_at(position, self.radius())
     }
@@ -543,24 +520,21 @@ impl CircleShape {
 
 /// Edges and chains: their ghost vertices.
 impl<K: shape_kind::Lines> ShapeOf<K> {
-    /// Tells an edge, or the start of a chain, what comes before it, the
-    /// equivalent of `EdgeShape:setPreviousVertex` and
-    /// `ChainShape:setPreviousVertex`. The point is measured from the
-    /// body's origin like the shape's own.
+    /// Tells an edge, or the start of a chain, what comes before it. The
+    /// point is measured from the body's origin like the shape's own.
     ///
     /// Nothing collides with this ghost vertex. It lets a body sliding
     /// over the start of the line pass onto it smoothly from the line
     /// before, where it would otherwise catch on the join. A chain's own
     /// joins are smooth already; this is for where one edge or chain
     /// meets another.
-    #[doc(alias = "EdgeShape:setPreviousVertex")]
     pub fn set_previous_vertex(&mut self, position: impl Into<Vec2>) {
         let Vec2 { x, y } = position.into();
         self.inner.previous = Some((x, y));
     }
 
-    /// Tells an edge, or the end of a chain, what comes after it, the
-    /// equivalent of `setNextVertex`. See [`set_previous_vertex`](Self::set_previous_vertex).
+    /// Tells an edge, or the end of a chain, what comes after it. See
+    /// [`set_previous_vertex`](Self::set_previous_vertex).
     pub fn set_next_vertex(&mut self, position: impl Into<Vec2>) {
         let Vec2 { x, y } = position.into();
         self.inner.next = Some((x, y));
@@ -569,11 +543,9 @@ impl<K: shape_kind::Lines> ShapeOf<K> {
 
 /// Chains.
 impl ChainShape {
-    /// One line of a chain, counted from 0, as an edge. LÖVE's
-    /// `ChainShape:getChildEdge`.
+    /// One line of a chain, counted from 0, as an edge.
     ///
     /// Panics if the chain has no such line.
-    #[doc(alias = "ChainShape:getChildEdge")]
     pub fn child_edge(&self, index: usize) -> EdgeShape {
         let chain = self
             .shape

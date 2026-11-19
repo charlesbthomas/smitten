@@ -1,8 +1,8 @@
 //! The framework's global state.
 //!
-//! LÖVE lets a game call `love.graphics.draw` from anywhere. To give Rust the
-//! same feel, the running framework lives in a thread-local slot that the
-//! public modules reach into. It is only reachable on the thread that called
+//! A game can call `graphics::draw` from anywhere. To make that work, the
+//! running framework lives in a thread-local slot that the public modules
+//! reach into. It is only reachable on the thread that called
 //! [`crate::run`], which keeps this safe without locks.
 
 use std::cell::RefCell;

@@ -24,8 +24,7 @@ pub(super) enum Saved {
     All(Box<DrawState>),
 }
 
-/// Everything `push_all` saves: the same settings as LÖVE's
-/// `push("all")`.
+/// Everything `push_all` saves.
 pub(super) struct DrawState {
     transform: Transform,
     color: Color,
@@ -161,8 +160,8 @@ impl GraphicsState {
         }
     }
 
-    /// Puts every drawing setting back to how a game starts, as LÖVE's
-    /// `reset`. The font goes back to the built-in one.
+    /// Puts every drawing setting back to how a game starts. The font goes
+    /// back to the built-in one.
     pub(super) fn reset_state(&mut self) {
         self.font = None;
         self.restore_state(DrawState::initial());

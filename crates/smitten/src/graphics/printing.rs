@@ -9,16 +9,15 @@ impl Font {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
-    #[doc(alias = "love.graphics.newFont")]
     pub fn load(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
         Font::load_with(path, size, FontSettings::default())
     }
 }
 
 impl Font {
-    /// Loads a font file with the full set of LÖVE's `newFont` arguments:
-    /// its size, and how its outlines are fitted to pixels and how sharp
-    /// its glyphs are, as [`FontSettings`] says.
+    /// Loads a font file with every setting given: its size, and how its
+    /// outlines are fitted to pixels and how sharp its glyphs are, as
+    /// [`FontSettings`] says.
     pub fn load_with(
         path: impl AsRef<Path>,
         size: f32,
@@ -41,9 +40,9 @@ impl Font {
 }
 
 impl Font {
-    /// Loads an AngelCode BMFont from its `.fnt` file, whose page images are
-    /// found next to it. Only the text form of `.fnt` files is read, as in
-    /// LÖVE. [`Font::load`] does the same for a file ending in `.fnt`.
+    /// Loads an AngelCode BMFont from its `.fnt` file, whose page images
+    /// are found next to it. Only the text form of `.fnt` files is read.
+    /// [`Font::load`] does the same for a file ending in `.fnt`.
     pub fn load_bmfont(path: impl AsRef<Path>) -> Result<Font, FontError> {
         let path = path.as_ref();
         let font = Font::read_bmfont(path)?;
@@ -53,13 +52,12 @@ impl Font {
 }
 
 impl Font {
-    /// Loads a bitmap font: an image holding the characters of `glyphs` in a
-    /// row, separated by columns in the color of its top-left pixel. The
-    /// equivalent of `love.graphics.newImageFont`. See [`Font::from_image`].
+    /// Loads a bitmap font: an image holding the characters of `glyphs` in
+    /// a row, separated by columns in the color of its top-left pixel. See
+    /// [`Font::from_image`].
     ///
     /// Pixel fonts usually want `font.set_filter(Filter::Nearest)` so they
     /// stay crisp when enlarged.
-    #[doc(alias = "love.graphics.newImageFont")]
     pub fn load_image_font(path: impl AsRef<Path>, glyphs: &str) -> Result<Font, FontError> {
         Font::load_image_font_with(path, glyphs, 0.0)
     }
@@ -67,8 +65,7 @@ impl Font {
 
 impl Font {
     /// Loads a bitmap font with `extra_spacing` units added after each
-    /// character, which may be negative: LÖVE's `newImageFont` with its
-    /// `extraspacing` argument.
+    /// character, which may be negative.
     pub fn load_image_font_with(
         path: impl AsRef<Path>,
         glyphs: &str,
@@ -94,8 +91,8 @@ pub fn set_font(font: &Font) {
     context::with(|ctx| ctx.gfx.font = Some(font.clone()));
 }
 
-/// Returns the current font. Until one is set, this is the built-in font
-/// at 12 pixels, as in LÖVE.
+/// Returns the current font. Until one is set, this is the built-in font at
+/// 12 pixels.
 pub fn font() -> Font {
     context::with(|ctx| {
         let (default_filter, scale) = (ctx.gfx.default_filter, ctx.gfx.screen.draw_scale());
@@ -106,11 +103,9 @@ pub fn font() -> Font {
     })
 }
 
-/// Draws text in the current font and color, placed by `params`, the
-/// equivalent of `love.graphics.print`. Line breaks in the text start new
-/// lines. The text can be a string or colored parts, as [`TextSpans`]
-/// describes.
-#[doc(alias = "love.graphics.print")]
+/// Draws text in the current font and color, placed by `params`. Line
+/// breaks in the text start new lines. The text can be a string or colored
+/// parts, as [`TextSpans`] describes.
 pub fn print<'a>(text: impl Into<TextSpans<'a>>, params: impl Into<DrawParams>) {
     let local = params.into().to_transform();
     text.into().with_segments(|segments| {
@@ -121,9 +116,8 @@ pub fn print<'a>(text: impl Into<TextSpans<'a>>, params: impl Into<DrawParams>) 
     });
 }
 
-/// Draws text wrapped to `limit` pixels wide and aligned within that
-/// width, placed by `params`, the equivalent of `love.graphics.printf`.
-#[doc(alias = "love.graphics.printf")]
+/// Draws text wrapped to `limit` pixels wide and aligned within that width,
+/// placed by `params`.
 pub fn printf<'a>(
     text: impl Into<TextSpans<'a>>,
     params: impl Into<DrawParams>,
@@ -139,9 +133,8 @@ pub fn printf<'a>(
     });
 }
 
-/// One layer of an [`ArrayImage`] or array [`Canvas`], drawn by [`draw`]
-/// as LÖVE's `drawLayer` does. Made with [`ArrayImage::layer`] or
-/// [`Canvas::layer`].
+/// One layer of an [`ArrayImage`] or array [`Canvas`], for [`draw`]. Made
+/// with [`ArrayImage::layer`] or [`Canvas::layer`].
 ///
 /// Drawing panics if a custom shader is active: a shader reads an array
 /// image by declaring a `texture_2d_array<f32>` and being sent it with
@@ -185,7 +178,6 @@ impl ArrayImage {
     /// Layer `layer` of the image, counting from 0, to draw with [`draw`].
     ///
     /// Panics if there is no such layer.
-    #[doc(alias = "drawLayer")]
     pub fn layer(&self, layer: u32) -> Layer<'_> {
         Layer::of(self, layer)
     }
@@ -270,16 +262,13 @@ impl Layered for Canvas {
     }
 }
 
-/// Whether the GPU can draw images compressed in `format`, the
-/// equivalent of `love.graphics.getImageFormats`.
-#[doc(alias = "love.graphics.getImageFormats")]
+/// Whether the GPU can draw images compressed in `format`.
 pub fn is_compressed_format_supported(format: CompressedFormat) -> bool {
     context::with(|ctx| ctx.backend.supports_compressed_format(format))
 }
 
 /// Whether the GPU can draw images in `format`, made with
-/// [`Image::from_image_data`]. The uncompressed half of
-/// `love.graphics.getImageFormats`.
+/// [`Image::from_image_data`].
 pub fn is_image_format_supported(format: PixelFormat) -> bool {
     format.is_color() && context::with(|ctx| ctx.backend.supports_pixel_format(format, false))
 }
@@ -293,13 +282,11 @@ pub fn image_formats() -> Vec<PixelFormat> {
         .collect()
 }
 
-/// Whether a canvas can be made in `format` on this GPU, the equivalent
-/// of looking `format` up in `love.graphics.getCanvasFormats`. With
-/// `readable`, it must also be drawable and readable by shaders, as a
-/// canvas usually is.
+/// Whether a canvas can be made in `format` on this GPU. With `readable`,
+/// it must also be drawable and readable by shaders, as a canvas usually
+/// is.
 ///
-/// A depth canvas is readable when shaders can sample it; LÖVE's depth
-/// canvases are not by default.
+/// A depth canvas is readable when shaders can sample it.
 pub fn is_canvas_format_supported(format: PixelFormat, readable: bool) -> bool {
     context::with(|ctx| {
         ctx.backend.supports_pixel_format(format, true)
@@ -307,10 +294,8 @@ pub fn is_canvas_format_supported(format: PixelFormat, readable: bool) -> bool {
     })
 }
 
-/// The texture shapes this GPU supports, the equivalent of
-/// `love.graphics.getTextureTypes`. Every SDL GPU backend supports all
+/// The texture shapes this GPU supports. Every SDL GPU backend supports all
 /// four, for images and canvases alike.
-#[doc(alias = "love.graphics.getTextureTypes")]
 pub fn texture_types() -> [(TextureKind, bool); 4] {
     [
         (TextureKind::Flat, true),
@@ -320,10 +305,8 @@ pub fn texture_types() -> [(TextureKind, bool); 4] {
     ]
 }
 
-/// The formats canvases can have on this GPU, the equivalent of
-/// `love.graphics.getCanvasFormats(readable)`, in the order
+/// The formats canvases can have on this GPU, in the order
 /// [`PixelFormat::ALL`] lists them.
-#[doc(alias = "love.graphics.getCanvasFormats")]
 pub fn canvas_formats(readable: bool) -> Vec<PixelFormat> {
     PixelFormat::ALL
         .into_iter()
@@ -331,8 +314,7 @@ pub fn canvas_formats(readable: bool) -> Vec<PixelFormat> {
         .collect()
 }
 
-/// An optional graphics feature, the equivalent of LÖVE's
-/// `GraphicsFeature`. Ask about one with [`is_supported`].
+/// An optional graphics feature. Ask about one with [`is_supported`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum GraphicsFeature {
@@ -351,16 +333,14 @@ pub enum GraphicsFeature {
     PixelShaderHighp,
     /// The derivative functions in shaders, such as `dpdx`.
     ShaderDerivatives,
-    /// What LÖVE allows only with GLSL 3: integer types in shaders and
-    /// between [`Shader`] stages, sampling textures in `position`, and
-    /// `instance_index`. WGSL always has them.
+    /// Integer types in shaders and between [`Shader`] stages, sampling
+    /// textures in `position`, and `instance_index`. WGSL always has them.
     Glsl3,
     /// Drawing many copies of a mesh at once with [`draw_instanced`].
     Instancing,
 }
 
-/// Whether the GPU supports `feature`, the equivalent of the table
-/// `love.graphics.getSupported` returns.
+/// Whether the GPU supports `feature`.
 pub fn is_supported(feature: GraphicsFeature) -> bool {
     match feature {
         // SDL's GPU API has no border colors to build it from.
@@ -376,8 +356,7 @@ pub fn is_supported(feature: GraphicsFeature) -> bool {
     }
 }
 
-/// The largest sizes and counts the GPU allows, the equivalent of the
-/// table `love.graphics.getSystemLimits` returns. See [`system_limits`].
+/// The largest sizes and counts the GPU allows. See [`system_limits`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct SystemLimits {
@@ -403,14 +382,12 @@ pub struct SystemLimits {
     pub anisotropy: f32,
 }
 
-/// The largest sizes and counts the GPU allows, the equivalent of
-/// `love.graphics.getSystemLimits`.
+/// The largest sizes and counts the GPU allows.
 ///
 /// SDL's GPU API does not report most limits, so the texture sizes are
 /// the ones every GPU it supports on desktops has: Direct3D 12 feature
 /// level 11_0 promises them, and Vulkan and Metal desktop GPUs match. A
 /// phone's GPU may allow less. `canvas_msaa` is asked of the GPU.
-#[doc(alias = "love.graphics.getSystemLimits")]
 pub fn system_limits() -> SystemLimits {
     SystemLimits {
         point_size: f32::INFINITY,

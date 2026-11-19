@@ -1,5 +1,4 @@
-//! Files kept open for reading or writing a piece at a time, the
-//! equivalent of LÖVE's `File` object.
+//! Files kept open for reading or writing a piece at a time.
 
 use std::io::{self, BufRead, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -8,7 +7,7 @@ use super::search::symlink_refused;
 use super::{FileType, Lookup, lookup, save_path, with_search};
 use crate::context;
 
-/// What a [`File`] is opened for, as LÖVE's `FileMode`.
+/// What a [`File`] is opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FileMode {
     /// Reading, from wherever [`super::read`] would find the file.
@@ -23,8 +22,8 @@ pub enum FileMode {
     Closed,
 }
 
-/// How writes to a [`File`] are held back before they reach the disk, as
-/// LÖVE's `BufferMode`. Set it with [`File::set_buffer`].
+/// How writes to a [`File`] are held back before they reach the disk. Set
+/// it with [`File::set_buffer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BufferMode {
     /// Every write goes straight to the disk.
@@ -51,9 +50,8 @@ impl BufferMode {
 }
 
 impl Default for BufferMode {
-    /// Full buffering with [`BufferMode::DEFAULT_SIZE`] bytes. LÖVE starts
-    /// files with no buffering instead; smitten buffers so that writing a
-    /// piece at a time is not slow.
+    /// Full buffering with [`BufferMode::DEFAULT_SIZE`] bytes, so that
+    /// writing a piece at a time is not slow.
     fn default() -> Self {
         BufferMode::Full(BufferMode::DEFAULT_SIZE)
     }
@@ -98,8 +96,7 @@ pub struct File {
     buffer: BufferMode,
 }
 
-/// Opens a file to read or write a piece at a time, the equivalent of
-/// `love.filesystem.openFile` and `love.filesystem.newFile`.
+/// Opens a file to read or write a piece at a time.
 ///
 /// For [`FileMode::Read`], a relative path is looked up as in
 /// [`super::read`]: the save directory, then the asset directory and
@@ -108,7 +105,6 @@ pub struct File {
 /// path must be relative and the file is in the save directory, with any
 /// missing parent directories created. [`FileMode::Closed`] touches
 /// nothing and gives a `File` to [open](File::open) later.
-#[doc(alias = "love.filesystem.openFile")]
 pub fn open_file(path: impl AsRef<Path>, mode: FileMode) -> io::Result<File> {
     let mut file = File {
         stream: None,
@@ -202,20 +198,17 @@ impl File {
         self.mode
     }
 
-    /// Whether the file is open, the equivalent of `File:isOpen`.
-    #[doc(alias = "File:isOpen")]
+    /// Whether the file is open.
     pub fn is_open(&self) -> bool {
         self.stream.is_some()
     }
 
-    /// Opens a closed file again, by the name it was made with, the
-    /// equivalent of `File:open`. The path is looked up afresh, as
-    /// [`open_file`] does, and reading or writing starts at the
-    /// beginning, or at the end for [`FileMode::Append`].
+    /// Opens a closed file again, by the name it was made with. The path is
+    /// looked up afresh, as [`open_file`] does, and reading or writing
+    /// starts at the beginning, or at the end for [`FileMode::Append`].
     ///
     /// Fails if the file is already open; [close](File::close) it first
     /// to change its mode.
-    #[doc(alias = "File:open")]
     pub fn open(&mut self, mode: FileMode) -> io::Result<()> {
         if self.is_open() {
             return Err(io::Error::new(
@@ -244,13 +237,12 @@ impl File {
         Ok(())
     }
 
-    /// Flushes any buffered writes and closes the file, the equivalent of
-    /// `File:close`. The `File` keeps its name and can be
-    /// [opened](File::open) again. Closing a closed file does nothing.
+    /// Flushes any buffered writes and closes the file. The `File` keeps
+    /// its name and can be [opened](File::open) again. Closing a closed
+    /// file does nothing.
     ///
     /// The file is closed even if the flush fails; the error says the
     /// last writes may be lost.
-    #[doc(alias = "File:close")]
     pub fn close(&mut self) -> io::Result<()> {
         let stream = self.stream.take();
         self.mode = FileMode::Closed;
@@ -260,19 +252,17 @@ impl File {
         }
     }
 
-    /// How writes are buffered, the equivalent of `File:getBuffer`.
-    #[doc(alias = "File:getBuffer")]
+    /// How writes are buffered.
     pub fn buffer(&self) -> BufferMode {
         self.buffer
     }
 
-    /// Changes how writes are buffered, the equivalent of
-    /// `File:setBuffer`. Anything already buffered is written first. The
-    /// mode is kept if the file is closed and opened again.
+    /// Changes how writes are buffered. Anything already buffered is
+    /// written first. The mode is kept if the file is closed and opened
+    /// again.
     ///
     /// Only writing is affected. Reading always uses a buffer, which does
     /// not change what is read.
-    #[doc(alias = "File:setBuffer")]
     pub fn set_buffer(&mut self, mode: BufferMode) -> io::Result<()> {
         self.buffer = mode;
         let Some(Stream::Writer(writer)) = &mut self.stream else {
@@ -317,16 +307,13 @@ impl File {
         }
     }
 
-    /// How many bytes from the start the next read or write happens at,
-    /// the equivalent of `File:tell`.
-    #[doc(alias = "File:tell")]
+    /// How many bytes from the start the next read or write happens at.
     pub fn tell(&mut self) -> io::Result<u64> {
         self.stream_position()
     }
 
-    /// Whether everything has been read, the equivalent of `File:isEOF`.
-    /// Always true for a file opened for writing.
-    #[doc(alias = "File:isEOF")]
+    /// Whether everything has been read. Always true for a file opened for
+    /// writing.
     pub fn is_eof(&mut self) -> io::Result<bool> {
         match &mut self.stream {
             Some(Stream::Writer(_)) => Ok(true),
@@ -335,9 +322,7 @@ impl File {
         }
     }
 
-    /// Reads up to `count` bytes, fewer only at the end of the file, the
-    /// equivalent of `File:read(count)`.
-    #[doc(alias = "File:read")]
+    /// Reads up to `count` bytes, fewer only at the end of the file.
     pub fn read_bytes(&mut self, count: usize) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::new();
         Read::by_ref(self)
@@ -346,17 +331,14 @@ impl File {
         Ok(bytes)
     }
 
-    /// Reads everything from here to the end of the file, the equivalent
-    /// of `File:read()`.
-    #[doc(alias = "File:read")]
+    /// Reads everything from here to the end of the file.
     pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
         let mut bytes = Vec::new();
         self.read_to_end(&mut bytes)?;
         Ok(bytes)
     }
 
-    /// Writes all of `contents`, the equivalent of `File:write`.
-    #[doc(alias = "File:write")]
+    /// Writes all of `contents`.
     pub fn write_bytes(&mut self, contents: impl AsRef<[u8]>) -> io::Result<()> {
         self.write_all(contents.as_ref())
     }

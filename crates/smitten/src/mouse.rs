@@ -1,4 +1,4 @@
-//! Mouse state, the equivalent of `love.mouse`.
+//! Mouse state: buttons, the pointer's position and the cursor's look.
 //!
 //! Positions are in the same coordinates `graphics` draws to the screen
 //! in: units from the top-left corner of the window, or of the design
@@ -34,9 +34,7 @@ pub fn is_down(button: MouseButton) -> bool {
     context::with(|ctx| ctx.input.mouse_buttons.contains(&button))
 }
 
-/// Returns whether any of `buttons` is held, as LÖVE's
-/// `love.mouse.isDown` does when given several.
-#[doc(alias = "love.mouse.isDown")]
+/// Returns whether any of `buttons` is held.
 pub fn is_any_down(buttons: &[MouseButton]) -> bool {
     context::with(|ctx| {
         buttons
@@ -46,9 +44,8 @@ pub fn is_any_down(buttons: &[MouseButton]) -> bool {
 }
 
 /// Returns whether the platform can change the cursor's look with
-/// [`set_cursor`] and [`set_image_cursor`], the equivalent of
-/// `love.mouse.isCursorSupported`. It is `false` on phones and tablets.
-#[doc(alias = "love.mouse.isCursorSupported")]
+/// [`set_cursor`] and [`set_image_cursor`]. It is `false` on phones and
+/// tablets.
 pub fn is_cursor_supported() -> bool {
     context::with(|ctx| ctx.backend.cursor_supported())
 }
@@ -87,10 +84,8 @@ pub fn set_y(y: f32) {
     set_position((self::x(), y));
 }
 
-/// Chooses one of the operating system's cursors, the equivalent of
-/// `love.mouse.setCursor(love.mouse.getSystemCursor(name))`. It replaces
-/// an [`ImageCursor`].
-#[doc(alias = "love.mouse.setCursor")]
+/// Chooses one of the operating system's cursors. It replaces an
+/// [`ImageCursor`].
 pub fn set_cursor(cursor: Cursor) {
     let replaced = context::with(|ctx| match ctx.backend.set_cursor(cursor) {
         Ok(()) => {
@@ -113,8 +108,7 @@ pub fn cursor() -> Cursor {
     context::with(|ctx| ctx.input.cursor)
 }
 
-/// A cursor drawn from an image, the equivalent of the `Cursor` that
-/// `love.mouse.newCursor` returns.
+/// A cursor drawn from an image.
 ///
 /// Make one with [`ImageCursor::load`] and show it with [`set_image_cursor`].
 /// Clones share the same cursor, which is freed when the last clone is
@@ -191,20 +185,16 @@ impl std::fmt::Debug for ImageCursor {
 }
 
 impl ImageCursor {
-    /// Loads a cursor from an image file, the equivalent of
-    /// `love.mouse.newCursor(path, hot_x, hot_y)`. `(hot_x, hot_y)` is the pixel
+    /// Loads a cursor from an image file. `(hot_x, hot_y)` is the pixel
     /// that points.
-    #[doc(alias = "love.mouse.newCursor")]
     pub fn load(path: impl AsRef<Path>, hot_x: u32, hot_y: u32) -> Result<ImageCursor, ImageError> {
         let data = ImageData::load(path)?;
         ImageCursor::from_image_data(&data, hot_x, hot_y)
     }
 }
 
-/// Shows `cursor` while the pointer is over the window, the equivalent of
-/// `love.mouse.setCursor(cursor)`. [`set_cursor`] goes back to a system
-/// cursor.
-#[doc(alias = "love.mouse.setCursor")]
+/// Shows `cursor` while the pointer is over the window. [`set_cursor`] goes
+/// back to a system cursor.
 pub fn set_image_cursor(cursor: &ImageCursor) {
     let replaced = context::with(|ctx| match ctx.backend.set_image_cursor(cursor.inner.id) {
         Ok(()) => ctx.input.image_cursor.replace(cursor.clone()),

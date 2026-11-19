@@ -7,12 +7,11 @@ use rapier2d::prelude::*;
 use super::world::Shared;
 use super::{Body, RayHit, Shape};
 
-/// Box2D's defaults, which LÖVE games are tuned around.
+/// Box2D's defaults, which many games are tuned around.
 pub(super) const DEFAULT_DENSITY: f32 = 1.0;
 pub(super) const DEFAULT_FRICTION: f32 = 0.2;
 
-/// A shape attached to a [`Body`], the part that collides. The equivalent
-/// of LÖVE's `Fixture` and its `Shape` together.
+/// A shape attached to a [`Body`], the part that collides.
 ///
 /// Make one with the `add_` methods of [`Body`]. Cloning is cheap and
 /// gives another handle to the same fixture. Using a destroyed fixture
@@ -249,11 +248,9 @@ impl Fixture {
         }
     }
 
-    /// Gives the fixture a new shape, keeping everything else about it,
-    /// and updates its body's mass. This is how a circle grows or moves:
-    /// `fixture.set_shape(&fixture.shape().with_radius(20.0))`. LÖVE
-    /// changes a fixture's shape in place with methods such as
-    /// `CircleShape:setRadius`.
+    /// Gives the fixture a new shape, keeping everything else about it, and
+    /// updates its body's mass. This is how a circle grows or moves:
+    /// `fixture.set_shape(&fixture.shape().with_radius(20.0))`.
     pub fn set_shape(&self, shape: &Shape) -> &Fixture {
         let mut inner = self.world.borrow_mut();
         let world = &mut inner.world;
@@ -277,10 +274,8 @@ impl Fixture {
     }
 
     /// Where the line from `(x1, y1)` to `(x2, y2)` first runs into this
-    /// fixture, if it does. A line that starts inside it hits at once,
-    /// with a fraction of 0. LÖVE's `Fixture:rayCast`, with the hit point
-    /// worked out too.
-    #[doc(alias = "Fixture:rayCast")]
+    /// fixture, if it does. A line that starts inside it hits at once, with
+    /// a fraction of 0.
     pub fn ray_cast(&self, anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> Option<RayHit> {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();

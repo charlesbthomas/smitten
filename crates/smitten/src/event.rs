@@ -1,4 +1,5 @@
-//! Game-level events, the equivalent of `love.event`.
+//! Game-level events: the queue the platform's events and the game's own
+//! events go through.
 
 use std::any::Any;
 use std::collections::VecDeque;
@@ -335,8 +336,7 @@ impl EventQueue {
 }
 
 /// Records a platform event in the input state and turns it into a game
-/// event. A key repeat is dropped here while repeats are off, as LÖVE
-/// never reports them then.
+/// event. A key repeat is dropped here while repeats are off.
 fn accept(ctx: &mut Context, event: BackendEvent) -> Option<Event> {
     let event = crate::localize(ctx, event);
     ctx.input.apply(&event);
@@ -351,15 +351,13 @@ fn accept(ctx: &mut Context, event: BackendEvent) -> Option<Event> {
 }
 
 /// Takes everything that has happened on the platform, such as key presses
-/// and mouse movement, into the game's queue, the equivalent of
-/// `love.event.pump`. The keyboard, mouse and joystick states are updated
-/// straight away.
+/// and mouse movement, into the game's queue. The keyboard, mouse and
+/// joystick states are updated straight away.
 ///
 /// Smitten pumps at the start of every frame and hands what it finds to
 /// the [`crate::Game`] callbacks, so most games never call this. It is for
 /// a game that is busy for a long time inside one callback, such as while
 /// loading, and wants to see input meanwhile with [`poll`].
-#[doc(alias = "love.event.pump")]
 pub fn pump() {
     context::with(|ctx| {
         while let Some(event) = ctx.backend.poll_event() {
@@ -370,12 +368,12 @@ pub fn pump() {
     });
 }
 
-/// Takes every event in the queue, the equivalent of `love.event.poll`:
-/// those from the platform that [`pump`] collected, then those sent with
-/// [`push`]. Call [`pump`] first to collect what is new.
+/// Takes every event in the queue: those from the platform that [`pump`]
+/// collected, then those sent with [`push`]. Call [`pump`] first to collect
+/// what is new.
 ///
 /// Events taken this way are not handed to the [`crate::Game`] callbacks,
-/// as in LÖVE, where `poll` is how `love.run` finds them. Taking
+/// so a hand-written main loop must handle them itself. Taking
 /// [`Event::Quit`] keeps the game from closing unless it calls [`quit`].
 ///
 /// ```no_run
@@ -395,7 +393,6 @@ pub fn pump() {
 ///     }
 /// }
 /// ```
-#[doc(alias = "love.event.poll")]
 pub fn poll() -> impl Iterator<Item = Event> {
     let events: Vec<Event> = context::with(|ctx| {
         let platform = std::mem::take(&mut ctx.events.platform);
@@ -408,13 +405,12 @@ pub fn poll() -> impl Iterator<Item = Event> {
     events.into_iter()
 }
 
-/// Waits until something happens and takes it from the queue, the
-/// equivalent of `love.event.wait`. `timeout` is in seconds, and `None`
-/// waits as long as it takes. Returns `None` if the time ran out first.
+/// Waits until something happens and takes it from the queue. `timeout` is
+/// in seconds, and `None` waits as long as it takes. Returns `None` if the
+/// time ran out first.
 ///
 /// The game stands still meanwhile: nothing is updated or drawn. As with
 /// [`poll`], the event is not handed to the [`crate::Game`] callbacks.
-#[doc(alias = "love.event.wait")]
 pub fn wait(timeout: Option<f32>) -> Option<Event> {
     let queued = context::with(|ctx| {
         ctx.events
@@ -445,7 +441,7 @@ pub fn wait(timeout: Option<f32>) -> Option<Event> {
     }
 }
 
-/// Sends an event to the game, the equivalent of `love.event.push`.
+/// Sends an event to the game.
 ///
 /// [`crate::Game::custom_event`] receives it at the start of the next
 /// frame, after the events from the platform, such as key presses, and
@@ -482,15 +478,12 @@ pub fn wait(timeout: Option<f32>) -> Option<Event> {
 ///     }
 /// }
 /// ```
-#[doc(alias = "love.event.push")]
 pub fn push<T: Any>(event: T) {
     context::with(|ctx| ctx.events.pending.push_back(CustomEvent::new(event)));
 }
 
-/// Throws away the events pushed with [`push`] that have not been handed
-/// to the game yet, the equivalent of `love.event.clear` for the game's
-/// own events.
-#[doc(alias = "love.event.clear")]
+/// Throws away the events pushed with [`push`] that have not been handed to
+/// the game yet.
 pub fn clear() {
     context::with(|ctx| ctx.events.pending.clear());
 }

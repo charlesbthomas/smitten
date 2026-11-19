@@ -255,8 +255,7 @@ pub(crate) struct SearchPath {
     last: Vec<Mount>,
     /// Whether symbolic links on disk are followed.
     pub follow_symlinks: bool,
-    /// Whether the asset directory is looked at before the save
-    /// directory, like `t.appendidentity`.
+    /// Whether the asset directory is looked at before the save directory.
     pub assets_first: bool,
 }
 

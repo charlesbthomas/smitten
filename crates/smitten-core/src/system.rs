@@ -1,5 +1,4 @@
-/// A mouse cursor provided by the operating system, as LÖVE's
-/// `CursorType`.
+/// A mouse cursor provided by the operating system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Cursor {
     /// The ordinary arrow.
@@ -29,7 +28,7 @@ pub enum Cursor {
     SizeNesw,
 }
 
-/// Where the computer's power is coming from, as LÖVE's `PowerState`.
+/// Where the computer's power is coming from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PowerState {
     /// It could not be found out.
@@ -71,7 +70,7 @@ pub struct WindowState {
     pub visible: bool,
 }
 
-/// The icon a message box shows, as LÖVE's `MessageBoxType`.
+/// The icon a message box shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MessageBoxKind {
     #[default]
@@ -83,7 +82,7 @@ pub enum MessageBoxKind {
     Error,
 }
 
-/// Which way up a display is, as LÖVE's `DisplayOrientation`.
+/// Which way up a display is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DisplayOrientation {
     /// It could not be found out.
@@ -99,7 +98,7 @@ pub enum DisplayOrientation {
     PortraitFlipped,
 }
 
-/// How a window fills the screen, as LÖVE's `FullscreenType`.
+/// How a window fills the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FullscreenType {
     /// Covers the display at the desktop's own resolution. Switching is

@@ -14,7 +14,7 @@ use super::compressed::is_compressed_file;
 use super::stats::{Counted, Kind};
 use super::{CompressedImageData, GraphicsError};
 
-/// A picture that can be drawn, the equivalent of LÖVE's `Image`.
+/// A picture that can be drawn.
 ///
 /// Cloning is cheap and gives another handle to the same picture. Its GPU
 /// memory is freed when the last handle is dropped.
@@ -53,8 +53,7 @@ pub(crate) struct Inner {
     _counted: Counted,
 }
 
-/// Options for making an image, the equivalent of the settings table
-/// LÖVE's `newImage` takes.
+/// Options for making an image.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ImageSettings {
     /// Whether to make mipmaps: smaller copies of the image that the GPU
@@ -62,9 +61,9 @@ pub struct ImageSettings {
     /// They take a third more memory. See [`Image::set_mipmap_filter`].
     pub mipmaps: bool,
     /// With gamma-correct rendering, whether the pixels are used as they
-    /// are rather than decoded from sRGB, LÖVE's `linear` setting. Use it
-    /// for pictures that hold data, such as normal maps, rather than
-    /// colors. It changes nothing without gamma-correct rendering.
+    /// are rather than decoded from sRGB. Use it for pictures that hold
+    /// data, such as normal maps, rather than colors. It changes nothing
+    /// without gamma-correct rendering.
     pub linear: bool,
 }
 
@@ -198,26 +197,21 @@ impl Image {
         Vec2::new(self.width() as f32, self.height() as f32)
     }
 
-    /// Whether the pixels came from compressed data, such as a DDS file,
-    /// the equivalent of `Image:isCompressed`. A compressed image cannot
-    /// have its pixels replaced.
-    #[doc(alias = "Image:isCompressed")]
+    /// Whether the pixels came from compressed data, such as a DDS file. A
+    /// compressed image cannot have its pixels replaced.
     pub fn is_compressed(&self) -> bool {
         self.inner.compressed.get()
     }
 
-    /// How the image stores its pixels, the equivalent of
-    /// `Texture:getFormat`. An image loaded from a file, and a compressed
-    /// one, report [`PixelFormat::Rgba8`]; see [`Image::is_compressed`].
-    #[doc(alias = "Texture:getFormat")]
+    /// How the image stores its pixels. An image loaded from a file, and a
+    /// compressed one, report [`PixelFormat::Rgba8`]; see
+    /// [`Image::is_compressed`].
     pub fn format(&self) -> PixelFormat {
         self.inner.format.get()
     }
 
-    /// Whether the image can be drawn and sampled by shaders, the
-    /// equivalent of `Texture:isReadable`. Every image is; a canvas made
-    /// with `readable: Some(false)` is not.
-    #[doc(alias = "Texture:isReadable")]
+    /// Whether the image can be drawn and sampled by shaders. Every image
+    /// is; a canvas made with `readable: Some(false)` is not.
     pub fn is_readable(&self) -> bool {
         self.inner.readable.get()
     }
@@ -229,11 +223,9 @@ impl Image {
         self.inner.srgb.set(format.is_srgb());
     }
 
-    /// Whether the image's pixels are used as they are, rather than
-    /// decoded from sRGB, while rendering is gamma-correct, the
-    /// equivalent of `Image:isFormatLinear`. Always `false` without
-    /// gamma-correct rendering, as in LÖVE.
-    #[doc(alias = "Image:isFormatLinear")]
+    /// Whether the image's pixels are used as they are, rather than decoded
+    /// from sRGB, while rendering is gamma-correct. Always `false` without
+    /// gamma-correct rendering.
     pub fn is_format_linear(&self) -> bool {
         super::is_gamma_correct() && !self.inner.srgb.get()
     }
@@ -274,15 +266,13 @@ impl Image {
         });
     }
 
-    /// Creates an image from compressed pixels, the equivalent of
-    /// `love.graphics.newImage(compresseddata)`. Mipmaps in the data are
+    /// Creates an image from compressed pixels. Mipmaps in the data are
     /// used, blended as [`Image::set_mipmap_filter`] describes. Fails if
     /// the GPU cannot read the format, which
     /// [`graphics::is_compressed_format_supported`](super::is_compressed_format_supported)
     /// tells beforehand.
     ///
     /// Its pixels cannot be replaced.
-    #[doc(alias = "love.graphics.newImage")]
     pub fn from_compressed_data(data: &CompressedImageData) -> Result<Image, ImageError> {
         Image::from_compressed_data_with(data, ImageSettings::default())
     }
@@ -334,14 +324,13 @@ impl Image {
         self.inner.mipmap_filter.get()
     }
 
-    /// Sets how the image blends between its mipmaps, the equivalent of
-    /// `Image:setMipmapFilter`. [`Filter::Linear`] blends smoothly from one
-    /// to the next, and is how it starts out. `None` draws only the
-    /// full-size image. A positive `sharpness` picks larger mipmaps than
-    /// the GPU would, for a crisper image, and a negative one smaller.
+    /// Sets how the image blends between its mipmaps. [`Filter::Linear`]
+    /// blends smoothly from one to the next, and is how it starts out.
+    /// `None` draws only the full-size image. A positive `sharpness` picks
+    /// larger mipmaps than the GPU would, for a crisper image, and a
+    /// negative one smaller.
     ///
     /// Does nothing to an image made without mipmaps.
-    #[doc(alias = "Image:setMipmapFilter")]
     pub fn set_mipmap_filter(&self, filter: Option<Filter>, sharpness: f32) {
         if self.inner.mipmap_count.get() <= 1 {
             return;
@@ -356,12 +345,10 @@ impl Image {
     }
 
     /// Copies pixels from memory over part of the image, with their
-    /// top-left corner at `(x, y)`. The equivalent of
-    /// `Image:replacePixels`. Every handle to the image changes.
+    /// top-left corner at `(x, y)`. Every handle to the image changes.
     ///
     /// The pixels must fit inside the image. They are converted if `data`
     /// is in another format than the image.
-    #[doc(alias = "Image:replacePixels")]
     pub fn replace_pixels(
         &self,
         data: &super::ImageData,
@@ -394,11 +381,8 @@ impl Image {
         self.inner.texture.get()
     }
 
-    /// Records that the texture was made with `levels` mipmap levels,
-    /// blended as a new image's are.
-    /// The texture's shape, the equivalent of `Texture:getTextureType`.
-    /// Only a [`Canvas`](super::Canvas) can be other than flat.
-    #[doc(alias = "Texture:getTextureType")]
+    /// The texture's shape. Only a [`Canvas`](super::Canvas) can be other
+    /// than flat.
     pub fn texture_kind(&self) -> TextureKind {
         self.inner.kind.get()
     }
@@ -407,26 +391,22 @@ impl Image {
         self.inner.kind.set(kind);
     }
 
-    /// How a depth canvas is compared when a shader samples it, the
-    /// equivalent of `Texture:getDepthSampleMode`. `None`, as a depth
-    /// canvas starts out, reads plain depth values. Always `None` for
-    /// anything other than a depth canvas.
-    #[doc(alias = "Texture:getDepthSampleMode")]
+    /// How a depth canvas is compared when a shader samples it. `None`, as
+    /// a depth canvas starts out, reads plain depth values. Always `None`
+    /// for anything other than a depth canvas.
     pub fn depth_sample_mode(&self) -> Option<CompareMode> {
         self.inner.depth_sample_mode.get()
     }
 
-    /// Sets how a readable depth canvas is sampled, the equivalent of
-    /// `Texture:setDepthSampleMode`. With a compare mode, a shader reads
-    /// it as a `texture_depth_2d` with `textureSampleCompare`, which
-    /// compares the depth it gives with the one stored and returns 1
+    /// Sets how a readable depth canvas is sampled. With a compare mode, a
+    /// shader reads it as a `texture_depth_2d` with `textureSampleCompare`,
+    /// which compares the depth it gives with the one stored and returns 1
     /// where the comparison passes and 0 where it fails, blended between
     /// neighbouring pixels with the linear filter. That is how shadow maps
     /// are read. With `None`, a shader reads it as a `texture_2d<f32>`
     /// whose red channel holds the depth.
     ///
     /// Fails for anything other than a readable depth canvas.
-    #[doc(alias = "Texture:setDepthSampleMode")]
     pub fn set_depth_sample_mode(&self, mode: Option<CompareMode>) -> Result<(), GraphicsError> {
         if !self.format().is_depth() {
             return Err(GraphicsError::new(
@@ -668,7 +648,7 @@ fn replace_texture(
     }
 }
 
-/// A rectangular part of an image, the equivalent of LÖVE's `Quad`.
+/// A rectangular part of an image.
 ///
 /// Use it with [`Image::region`] to draw one sprite out of a sprite sheet,
 /// or with the `_quad` methods of a
@@ -686,7 +666,6 @@ pub struct Quad {
 impl Quad {
     /// Describes the `width` by `height` region whose top-left corner is at
     /// `(x, y)` in an image of `sheet_width` by `sheet_height` pixels.
-    #[doc(alias = "love.graphics.newQuad")]
     pub fn new(
         position: impl Into<Vec2>,
         size: impl Into<Vec2>,
@@ -721,17 +700,14 @@ impl Quad {
         self.height
     }
 
-    /// The region as `(x, y, width, height)`, the equivalent of
-    /// `Quad:getViewport`.
-    #[doc(alias = "Quad:getViewport")]
+    /// The region as `(x, y, width, height)`.
     pub fn viewport(&self) -> (f32, f32, f32, f32) {
         (self.x, self.y, self.width, self.height)
     }
 
     /// Moves the region to `width` by `height` pixels at `(x, y)` in the
-    /// same image, the equivalent of `Quad:setViewport`. Moving one quad
-    /// along a sprite sheet animates whatever draws it.
-    #[doc(alias = "Quad:setViewport")]
+    /// same image. Moving one quad along a sprite sheet animates whatever
+    /// draws it.
     pub fn set_viewport(&mut self, position: impl Into<Vec2>, size: impl Into<Vec2>) {
         let Vec2 { x, y } = position.into();
         let Vec2 {
@@ -741,16 +717,12 @@ impl Quad {
         (self.x, self.y, self.width, self.height) = (x, y, width, height);
     }
 
-    /// The size of the image the region is in, as `(width, height)`, the
-    /// equivalent of `Quad:getTextureDimensions`.
-    #[doc(alias = "Quad:getTextureDimensions")]
+    /// The size of the image the region is in, as `(width, height)`.
     pub fn texture_dimensions(&self) -> (f32, f32) {
         (self.sheet_width, self.sheet_height)
     }
 
-    /// Changes the size of the image the region is in, the last two
-    /// arguments of LÖVE's `Quad:setViewport`.
-    #[doc(alias = "Quad:setViewport")]
+    /// Changes the size of the image the region is in.
     pub fn set_texture_dimensions(&mut self, size: impl Into<Vec2>) {
         let Vec2 {
             x: width,

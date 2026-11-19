@@ -8,8 +8,7 @@ use super::stats::Kind;
 use super::{GraphicsError, Image, ImageData};
 use crate::context;
 
-/// An off-screen image that can be drawn to, the equivalent of LÖVE's
-/// `Canvas`.
+/// An off-screen image that can be drawn to.
 ///
 /// Draw to it between [`set_canvas`](super::set_canvas) calls or inside
 /// [`Canvas::render_to`], then draw it like an [`Image`]: every `Image`
@@ -21,7 +20,7 @@ use crate::context;
 /// Colors drawn to a canvas are stored multiplied by their alpha. A canvas
 /// with see-through parts should be drawn with
 /// [`BlendMode::Premultiplied`](crate::BlendMode::Premultiplied), or its
-/// soft edges come out too dark. This is the same rule as in LÖVE.
+/// soft edges come out too dark.
 ///
 /// Cloning is cheap and gives another handle to the same canvas.
 #[derive(Clone)]
@@ -39,8 +38,7 @@ pub struct Canvas {
     layers: u32,
 }
 
-/// Whether a canvas has mipmaps and when they are made, the equivalent of
-/// the `mipmaps` setting of LÖVE's `newCanvas`.
+/// Whether a canvas has mipmaps and when they are made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MipmapMode {
     /// No mipmaps, as a canvas starts out.
@@ -52,8 +50,7 @@ pub enum MipmapMode {
     Manual,
 }
 
-/// Options for making a canvas, the equivalent of the settings table
-/// LÖVE's `newCanvas` takes. Start from the default and change what is
+/// Options for making a canvas. Start from the default and change what is
 /// needed:
 ///
 /// ```no_run
@@ -69,7 +66,7 @@ pub struct CanvasSettings {
     /// How many pixels the canvas holds for each unit in each direction.
     /// `None` makes it as sharp as the screen.
     pub dpi_scale: Option<f32>,
-    /// How the canvas stores its pixels. `None` is LÖVE's `normal`:
+    /// How the canvas stores its pixels. `None` is the usual format:
     /// [`PixelFormat::Rgba8`], or [`PixelFormat::Srgba8`] with
     /// gamma-correct rendering. A floating-point format such as
     /// [`PixelFormat::Rgba16f`] holds colors brighter than white, for HDR
@@ -89,16 +86,14 @@ pub struct CanvasSettings {
     /// How many samples each pixel holds; 0 or 1 for no multisampling.
     pub msaa: u32,
     /// Whether the canvas will be drawn or sampled, as well as drawn to.
-    /// `None` means yes for a color canvas and no for a depth one, as in
-    /// LÖVE. LÖVE draws a color canvas made with `Some(false)` faster on
-    /// some GPUs; smitten records the setting for [`Image::is_readable`]
+    /// `None` means yes for a color canvas and no for a depth one. For a
+    /// color canvas, smitten records the setting for [`Image::is_readable`]
     /// but draws it the same way. A depth canvas that is not readable
-    /// cannot be drawn or sent to a shader, but some GPUs only offer
-    /// some depth formats that way, and only it can be multisampled.
+    /// cannot be drawn or sent to a shader, but some GPUs only offer some
+    /// depth formats that way, and only it can be multisampled.
     pub readable: Option<bool>,
-    /// The canvas's shape, LÖVE's `type` setting: flat, an array of
-    /// layers, the six faces of a cube, or a volume. Draw to one layer,
-    /// face or depth slice with
+    /// The canvas's shape: flat, an array of layers, the six faces of a
+    /// cube, or a volume. Draw to one layer, face or depth slice with
     /// [`graphics::set_canvas_targets`](super::set_canvas_targets), and
     /// sample a non-flat canvas in a shader with
     /// [`Shader::send_texture`](super::Shader::send_texture).
@@ -125,22 +120,19 @@ impl Default for CanvasSettings {
 impl Canvas {
     /// Creates a transparent canvas of `width` by `height` units.
     ///
-    /// It is made as sharp as the screen, so on a high-DPI display it
-    /// holds more pixels than units, as in LÖVE. Use
-    /// [`Canvas::with_settings`] to choose the sharpness instead.
-    #[doc(alias = "love.graphics.newCanvas")]
+    /// It is made as sharp as the screen, so on a high-DPI display it holds
+    /// more pixels than units. Use [`Canvas::with_settings`] to choose the
+    /// sharpness instead.
     pub fn new(width: u32, height: u32) -> Result<Canvas, GraphicsError> {
         Canvas::with_settings(width, height, CanvasSettings::default())
     }
 
     /// Creates a transparent canvas of `width` by `height` units as
-    /// `settings` describe, the equivalent of
-    /// `love.graphics.newCanvas(width, height, settings)`.
+    /// `settings` describe.
     ///
     /// Fails for a format the GPU cannot draw to, for multisampling with
     /// mipmaps, and for a depth canvas that has mipmaps, is not flat, or
     /// is both readable and multisampled.
-    #[doc(alias = "love.graphics.newCanvas")]
     pub fn with_settings(
         width: u32,
         height: u32,
@@ -171,8 +163,7 @@ impl Canvas {
     }
 
     /// How many samples each pixel of the canvas holds, 1 if it is not
-    /// multisampled, the equivalent of `Canvas:getMSAA`.
-    #[doc(alias = "Canvas:getMSAA")]
+    /// multisampled.
     pub fn msaa(&self) -> u32 {
         self.msaa
     }
@@ -250,15 +241,13 @@ impl Canvas {
         })
     }
 
-    /// The canvas's shape, the equivalent of `Texture:getTextureType`.
-    #[doc(alias = "Texture:getTextureType")]
+    /// The canvas's shape.
     pub fn texture_type(&self) -> TextureKind {
         self.kind
     }
 
-    /// How many layers, cube faces or depth slices the canvas has: 1 for
-    /// a flat canvas, 6 for a cube, the equivalent of `getLayerCount` and
-    /// `getDepth`.
+    /// How many layers, cube faces or depth slices the canvas has: 1 for a
+    /// flat canvas, 6 for a cube.
     pub fn layer_count(&self) -> u32 {
         self.layers
     }
@@ -269,12 +258,10 @@ impl Canvas {
     }
 
     /// Makes the canvas's mipmaps again from what has been drawn to it so
-    /// far, the equivalent of `Canvas:generateMipmaps`. Only needed with
-    /// [`MipmapMode::Manual`].
+    /// far. Only needed with [`MipmapMode::Manual`].
     ///
     /// Like [`Canvas::to_image_data`], this draws what is queued for every
     /// canvas straight away.
-    #[doc(alias = "Canvas:generateMipmaps")]
     pub fn generate_mipmaps(&self) -> Result<(), GraphicsError> {
         if self.mipmaps == MipmapMode::None {
             return Err(GraphicsError::new("the canvas was made without mipmaps"));
@@ -297,8 +284,7 @@ impl Canvas {
         self.pixels
     }
 
-    /// Copies the canvas's pixels back from the GPU, as LÖVE's
-    /// `Canvas:newImageData` does. The result is
+    /// Copies the canvas's pixels back from the GPU. The result is
     /// [`pixel_dimensions`](Canvas::pixel_dimensions) in size, in the
     /// canvas's [`format`](Image::format).
     ///
@@ -310,16 +296,12 @@ impl Canvas {
     /// also draws what is queued for every canvas straight away: avoid it
     /// between drawing a canvas to the screen and changing that canvas
     /// later in the same frame, or the screen shows the later contents.
-    #[doc(alias = "Canvas:newImageData")]
     pub fn to_image_data(&self) -> Result<ImageData, GraphicsError> {
         self.to_image_data_slice(0, 0)
     }
 
-    /// As [`Canvas::to_image_data`], copying one layer, cube face or
-    /// depth slice at one mipmap level, the equivalent of
-    /// `Canvas:newImageData(slice, mipmap)`. The result is that level's
-    /// size.
-    #[doc(alias = "Canvas:newImageData")]
+    /// As [`Canvas::to_image_data`], copying one layer, cube face or depth
+    /// slice at one mipmap level. The result is that level's size.
     pub fn to_image_data_slice(&self, layer: u32, mipmap: u32) -> Result<ImageData, GraphicsError> {
         if layer >= self.layers {
             return Err(format!(

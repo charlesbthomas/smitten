@@ -1,4 +1,4 @@
-//! Recording from microphones, the equivalent of LÖVE's `RecordingDevice`.
+//! Recording from microphones and other input devices.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -102,10 +102,10 @@ impl RecordingDevice {
     }
 
     /// Starts recording `sample_count` samples per channel at `rate`
-    /// samples per second, with 1 or 2 channels. The device keeps that
-    /// many and, if they are not read in time, drops the oldest to make
-    /// room for new ones. LÖVE's bit depth is left out, since samples are
-    /// always floating point.
+    /// samples per second, with 1 or 2 channels. The device keeps that many
+    /// and, if they are not read in time, drops the oldest to make room for
+    /// new ones. There is no bit depth to choose, since samples are always
+    /// floating point.
     ///
     /// Starting a device that is recording starts it over, losing what it
     /// had not handed back.
@@ -165,11 +165,8 @@ impl RecordingDevice {
         lock(&self.capture).channels
     }
 
-    /// How many bits each recorded sample has, the equivalent of
-    /// `RecordingDevice:getBitDepth`. Always 32: samples are recorded as
-    /// `f32`, whatever LÖVE game code would have asked for, so nothing is
-    /// lost to 8 or 16 bits.
-    #[doc(alias = "RecordingDevice:getBitDepth")]
+    /// How many bits each recorded sample has. Always 32: samples are
+    /// recorded as `f32`, so nothing is lost to 8 or 16 bits.
     pub fn bit_depth(&self) -> u32 {
         32
     }
@@ -184,13 +181,11 @@ impl fmt::Debug for RecordingDevice {
     }
 }
 
-/// Returns the microphones and other devices that can record, the
-/// equivalent of `love.audio.getRecordingDevices`. The list is empty if
-/// there are none or the system does not allow recording.
+/// Returns the microphones and other devices that can record. The list is
+/// empty if there are none or the system does not allow recording.
 ///
 /// Some systems ask the player for permission the first time a game
 /// records.
-#[doc(alias = "love.audio.getRecordingDevices")]
 pub fn recording_devices() -> Vec<RecordingDevice> {
     context::with(|ctx| {
         let devices = ctx.backend.recording_devices();

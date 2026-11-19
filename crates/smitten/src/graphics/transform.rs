@@ -3,7 +3,7 @@ use glam::Vec2;
 use super::DrawParams;
 
 /// A 2D affine transformation: any mix of moving, rotating, scaling and
-/// shearing, the equivalent of LÖVE's `Transform`.
+/// shearing.
 ///
 /// Maps a point `(x, y)` to `(a*x + c*y + tx, b*x + d*y + ty)`.
 ///
@@ -52,14 +52,12 @@ impl Transform {
     };
 
     /// The identity: a transformation that changes nothing.
-    #[doc(alias = "love.math.newTransform")]
     pub fn new() -> Self {
         Self::IDENTITY
     }
 
-    /// Replaces this transformation with the one `params` describe, the
-    /// equivalent of `transform:setTransformation`. `Transform::from`
-    /// builds a new one from [`DrawParams`] the same way.
+    /// Replaces this transformation with the one `params` describe.
+    /// `Transform::from` builds a new one from [`DrawParams`] the same way.
     pub fn set_transformation(&mut self, params: impl Into<DrawParams>) {
         *self = params.into().to_transform();
     }
@@ -69,8 +67,9 @@ impl Transform {
         *self = Self::IDENTITY;
     }
 
-    /// Builds the transformation LÖVE's `draw` arguments describe: scale and
-    /// rotate around the origin offset `(ox, oy)`, then place it at `(x, y)`.
+    /// Builds the transformation a draw's position, angle, scale and origin
+    /// describe: scale and rotate around the origin offset `(ox, oy)`, then
+    /// place it at `(x, y)`.
     pub(crate) fn from_draw_args(
         x: f32,
         y: f32,
@@ -127,9 +126,8 @@ impl Transform {
         self.d = b * kx + d;
     }
 
-    /// Applies `other` after everything this transformation already does
-    /// to what is drawn, as if its calls had been made on this one. The
-    /// equivalent of LÖVE's `transform:apply(other)`.
+    /// Applies `other` after everything this transformation already does to
+    /// what is drawn, as if its calls had been made on this one.
     pub fn apply_transform(&mut self, other: &Transform) {
         *self = self.then_inner(other);
     }
@@ -157,8 +155,7 @@ impl Transform {
         })
     }
 
-    /// Transforms the point `(x, y)`. The same as [`apply`](Self::apply),
-    /// under LÖVE's name.
+    /// Transforms the point `(x, y)`. The same as [`apply`](Self::apply).
     pub fn transform_point(&self, position: impl Into<Vec2>) -> Vec2 {
         let Vec2 { x, y } = position.into();
         self.apply((x, y))
@@ -175,8 +172,7 @@ impl Transform {
         }
     }
 
-    /// The transformation as a 3 by 3 matrix in rows, as LÖVE's
-    /// `getMatrix` gives it without the third dimension. The last row is
+    /// The transformation as a 3 by 3 matrix in rows. The last row is
     /// always `[0, 0, 1]`.
     pub fn matrix(&self) -> [[f32; 3]; 3] {
         [
@@ -217,10 +213,8 @@ impl Transform {
         }
     }
 
-    /// Whether this is a 2D affine transformation, like LÖVE's
-    /// `isAffine2DTransform`. Always `true`: a smitten `Transform` has no
-    /// third dimension, so it cannot be anything else. It is here so code
-    /// ported from LÖVE can keep its checks.
+    /// Whether this is a 2D affine transformation. Always `true`: a smitten
+    /// `Transform` has no third dimension, so it cannot be anything else.
     pub fn is_affine_2d(&self) -> bool {
         true
     }
@@ -272,7 +266,7 @@ mod tests {
 
     #[test]
     fn later_calls_happen_in_the_earlier_coordinate_system() {
-        // As in LÖVE: after scaling by 2, a translation of 10 moves 20 pixels.
+        // After scaling by 2, a translation of 10 moves 20 pixels.
         let mut transform = Transform::IDENTITY;
         transform.scale(2.0, 2.0);
         transform.translate((10.0, 0.0));
@@ -324,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn full_transformation_matches_the_steps_in_loves_order() {
+    fn full_transformation_matches_the_steps_in_order() {
         let built = Transform::from(
             DrawParams::at((30.0, 40.0))
                 .rotation(0.7)

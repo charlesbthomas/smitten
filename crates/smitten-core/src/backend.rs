@@ -254,8 +254,7 @@ pub enum BufferUsage {
     Index,
 }
 
-/// How the indices in an index buffer are stored, as LÖVE's
-/// `IndexDataType`.
+/// How the indices in an index buffer are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum IndexDataType {
     /// Two bytes each, for up to 65,536 vertices.
@@ -275,13 +274,12 @@ impl IndexDataType {
     }
 }
 
-/// How the values of a vertex attribute are stored, as LÖVE's
-/// `VertexAttributeDataType`.
+/// How the values of a vertex attribute are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VertexDataType {
     /// 32-bit floats.
     Float,
-    /// Bytes standing for 0.0 to 1.0, LÖVE's `byte`. Good for colors.
+    /// Bytes standing for 0.0 to 1.0. Good for colors.
     UNorm8,
     /// 16-bit numbers standing for 0.0 to 1.0.
     UNorm16,
@@ -302,8 +300,7 @@ impl VertexDataType {
     }
 }
 
-/// Whether a vertex buffer advances once a vertex or once an instance, as
-/// LÖVE's `VertexAttributeStep`.
+/// Whether a vertex buffer advances once a vertex or once an instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VertexStep {
     #[default]
@@ -317,8 +314,7 @@ pub const MAX_VERTEX_BUFFERS: usize = 8;
 /// The most attributes a [`VertexLayout`] can have.
 pub const MAX_VERTEX_ATTRIBUTES: usize = 16;
 
-/// The attribute names the built-in mesh vertex shader reads, as LÖVE
-/// names them.
+/// The attribute names the built-in mesh vertex shader reads.
 pub const VERTEX_POSITION: &str = "VertexPosition";
 pub const VERTEX_TEX_COORD: &str = "VertexTexCoord";
 pub const VERTEX_COLOR: &str = "VertexColor";
@@ -486,8 +482,7 @@ impl UniformField {
     }
 }
 
-/// What is doing the drawing, the equivalent of the values of LÖVE's
-/// `getRendererInfo`.
+/// What is doing the drawing.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RendererInfo {
     /// The graphics API, such as `"Vulkan"`.
@@ -519,8 +514,7 @@ pub enum TextureKind {
 }
 
 /// A way of storing pixels compressed in blocks, which the GPU reads
-/// without unpacking first, the equivalent of LÖVE's `PixelFormat` names
-/// for compressed images.
+/// without unpacking first.
 ///
 /// The BC formats, also called DXT or S3TC, are what desktop GPUs read,
 /// in blocks of 4 by 4. The ASTC formats come in many block sizes, all
@@ -541,9 +535,8 @@ pub enum CompressedFormat {
     /// Two channels, red and green, 16 bytes a block.
     Bc5,
     /// Unsigned floating-point color, for HDR images, 16 bytes a block.
-    /// LÖVE's `BC6h`.
     Bc6h,
-    /// Signed floating-point color, 16 bytes a block. LÖVE's `BC6hs`.
+    /// Signed floating-point color, 16 bytes a block.
     Bc6hSigned,
     /// High quality color and alpha, 16 bytes a block.
     Bc7,
@@ -655,7 +648,7 @@ impl CompressedFormat {
         )
     }
 
-    /// LÖVE's name for the format, such as `"DXT5"` or `"ASTC8x8"`.
+    /// The format's name, such as `"DXT5"` or `"ASTC8x8"`.
     pub fn name(self) -> &'static str {
         match self {
             CompressedFormat::Bc1 => "DXT1",
@@ -701,7 +694,7 @@ impl std::fmt::Display for CompressedFormat {
 impl std::str::FromStr for CompressedFormat {
     type Err = crate::ParseNameError;
 
-    /// Reads LÖVE's name for a format, such as `"DXT5"`.
+    /// Reads a format's name, such as `"DXT5"`.
     fn from_str(name: &str) -> Result<CompressedFormat, Self::Err> {
         CompressedFormat::ALL
             .into_iter()

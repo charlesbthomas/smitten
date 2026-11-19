@@ -22,7 +22,7 @@ pub struct TouchId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct JoystickId(pub u32);
 
-/// A button on a standard gamepad, named after the Xbox layout as in LÖVE.
+/// A button on a standard gamepad, named after the Xbox layout.
 ///
 /// `A` is always the bottom face button, whatever is printed on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

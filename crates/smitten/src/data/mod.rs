@@ -1,5 +1,4 @@
-//! Compressing, encoding, hashing and packing bytes, the equivalent of
-//! `love.data`.
+//! Compressing, encoding, hashing and packing bytes.
 //!
 //! Like [`math`](crate::math), everything here works when no game is
 //! running.
@@ -50,12 +49,12 @@ impl std::error::Error for DataError {}
 // ---------------------------------------------------------------------------
 // Compression
 
-/// A way of compressing bytes, LÖVE's `CompressedDataFormat`.
+/// A way of compressing bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompressedDataFormat {
-    /// Very fast, but compresses less than the others. As in LÖVE, the
-    /// compressed bytes start with the original size as four
-    /// little-endian bytes, followed by one LZ4 block.
+    /// Very fast, but compresses less than the others. The compressed bytes
+    /// start with the original size as four little-endian bytes, followed
+    /// by one LZ4 block.
     Lz4,
     /// Deflate with a small header and a checksum (RFC 1950).
     Zlib,
@@ -65,8 +64,8 @@ pub enum CompressedDataFormat {
     Deflate,
 }
 
-/// Compressed bytes together with the format they are in, the equivalent
-/// of LÖVE's `CompressedData`. Make one with [`compress`].
+/// Compressed bytes together with the format they are in. Make one with
+/// [`compress`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompressedData {
     format: CompressedDataFormat,
@@ -80,8 +79,7 @@ impl CompressedData {
         CompressedData { format, bytes }
     }
 
-    /// The format the bytes are in, like `CompressedData:getFormat`.
-    #[doc(alias = "CompressedData:getFormat")]
+    /// The format the bytes are in.
     pub fn format(&self) -> CompressedDataFormat {
         self.format
     }
@@ -103,12 +101,10 @@ impl AsRef<[u8]> for CompressedData {
     }
 }
 
-/// Compresses `bytes`, like `love.data.compress`.
+/// Compresses `bytes`.
 ///
-/// `level` trades speed for size, from 0 (fastest) to 9 (smallest), as in
-/// LÖVE. `None` picks the format's usual level. LZ4 has only one level and
-/// ignores it.
-#[doc(alias = "love.data.compress")]
+/// `level` trades speed for size, from 0 (fastest) to 9 (smallest). `None`
+/// picks the format's usual level. LZ4 has only one level and ignores it.
 pub fn compress(format: CompressedDataFormat, bytes: &[u8], level: Option<u32>) -> CompressedData {
     let level = flate2::Compression::new(level.unwrap_or(6).min(9));
     // Writing into a Vec cannot fail, so neither can these encoders.
@@ -133,9 +129,7 @@ pub fn compress(format: CompressedDataFormat, bytes: &[u8], level: Option<u32>) 
     CompressedData::new(format, compressed)
 }
 
-/// Gives back the bytes that [`compress`] was given, like
-/// `love.data.decompress`.
-#[doc(alias = "love.data.decompress")]
+/// Gives back the bytes that [`compress`] was given.
 pub fn decompress(data: &CompressedData) -> Result<Vec<u8>, DataError> {
     decompress_bytes(data.format, &data.bytes)
 }
@@ -165,7 +159,7 @@ pub fn decompress_bytes(format: CompressedDataFormat, bytes: &[u8]) -> Result<Ve
 // ---------------------------------------------------------------------------
 // Encoding
 
-/// A way of writing bytes as text, LÖVE's `EncodeFormat`.
+/// A way of writing bytes as text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EncodeFormat {
     /// Four characters for every three bytes, padded with `=`.
@@ -176,8 +170,7 @@ pub enum EncodeFormat {
 
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Writes `bytes` as text, like `love.data.encode`.
-#[doc(alias = "love.data.encode")]
+/// Writes `bytes` as text.
 pub fn encode(format: EncodeFormat, bytes: &[u8]) -> String {
     match format {
         EncodeFormat::Hex => bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
@@ -204,9 +197,8 @@ pub fn encode(format: EncodeFormat, bytes: &[u8]) -> String {
     }
 }
 
-/// Like [`encode`], but breaks the text into lines of at most
-/// `line_length` characters, as `love.data.encode`'s `linelength` does.
-/// Lines end with `\n`. A `line_length` of 0 makes one line.
+/// Like [`encode`], but breaks the text into lines of at most `line_length`
+/// characters. Lines end with `\n`. A `line_length` of 0 makes one line.
 pub fn encode_lines(format: EncodeFormat, bytes: &[u8], line_length: usize) -> String {
     let text = encode(format, bytes);
     if line_length == 0 {
@@ -223,10 +215,9 @@ pub fn encode_lines(format: EncodeFormat, bytes: &[u8], line_length: usize) -> S
     lines
 }
 
-/// Reads bytes back from text written by [`encode`], like
-/// `love.data.decode`. Whitespace, such as the line breaks
-/// [`encode_lines`] adds, is skipped. Base64 padding may be left off.
-#[doc(alias = "love.data.decode")]
+/// Reads bytes back from text written by [`encode`]. Whitespace, such as
+/// the line breaks [`encode_lines`] adds, is skipped. Base64 padding may be
+/// left off.
 pub fn decode(format: EncodeFormat, text: &str) -> Result<Vec<u8>, DataError> {
     let digits = text.bytes().filter(|byte| !byte.is_ascii_whitespace());
     match format {
@@ -290,7 +281,7 @@ pub fn decode(format: EncodeFormat, text: &str) -> Result<Vec<u8>, DataError> {
 // ---------------------------------------------------------------------------
 // Hashing
 
-/// A hash function, LÖVE's `HashFunction`.
+/// A hash function.
 ///
 /// MD5 and SHA-1 are broken for security purposes. They are here for
 /// checking files against known sums and for talking to old services.
@@ -310,9 +301,8 @@ pub enum HashFunction {
     Sha512,
 }
 
-/// The raw digest of `bytes`, like `love.data.hash`. Use
-/// [`encode`] with [`EncodeFormat::Hex`] to get the usual text form.
-#[doc(alias = "love.data.hash")]
+/// The raw digest of `bytes`. Use [`encode`] with [`EncodeFormat::Hex`] to
+/// get the usual text form.
 pub fn hash(function: HashFunction, bytes: &[u8]) -> Vec<u8> {
     use sha2::Digest;
     match function {
@@ -328,11 +318,10 @@ pub fn hash(function: HashFunction, bytes: &[u8]) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 // ByteData
 
-/// A block of bytes that can be read and changed in place, the
-/// equivalent of LÖVE's `ByteData` from `love.data.newByteData`.
+/// A block of bytes that can be read and changed in place.
 ///
-/// It derefs to `[u8]`, so slicing it does what LÖVE's `newDataView`
-/// does, and every slice method works on it.
+/// It derefs to `[u8]`, so it can be sliced and every slice method works on
+/// it.
 ///
 /// ```
 /// use smitten::data::ByteData;
@@ -362,8 +351,7 @@ impl ByteData {
         }
     }
 
-    /// How many bytes there are, like `Data:getSize`.
-    #[doc(alias = "Data:getSize")]
+    /// How many bytes there are.
     pub fn size(&self) -> usize {
         self.bytes.len()
     }

@@ -1,5 +1,4 @@
-//! Counts of what the game draws and holds, the equivalent of
-//! `love.graphics.getStats`.
+//! Counts of what the game draws and holds.
 
 use std::cell::Cell;
 
@@ -9,7 +8,7 @@ use smitten_core::backend::ShaderId;
 /// [`graphics::stats`](crate::graphics::stats).
 ///
 /// The draw counts start from zero each frame, so read them at the end of
-/// `draw` to see the whole frame, as in LÖVE.
+/// `draw` to see the whole frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Stats {
     /// Draw calls sent to the GPU. Each change of image, blend mode,

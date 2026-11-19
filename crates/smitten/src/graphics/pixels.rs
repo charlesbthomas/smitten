@@ -1,7 +1,7 @@
 //! Reading and writing one pixel in each [`PixelFormat`].
 //!
-//! Channels a format lacks read back as LÖVE's do: green and blue as 0 and
-//! alpha as 1. Normalized channels are clamped to 0 to 1 when written;
+//! Channels a format lacks read back as 0 for green and blue and 1 for
+//! alpha. Normalized channels are clamped to 0 to 1 when written;
 //! floating-point ones are not.
 
 use smitten_core::PixelFormat;
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_channels_read_as_love_does() {
+    fn missing_channels_read_as_zero_color_and_opaque_alpha() {
         let back = round_trip(PixelFormat::R8, Color::rgba(1.0, 1.0, 1.0, 0.0));
         assert_eq!(back, Color::rgba(1.0, 0.0, 0.0, 1.0));
         let back = round_trip(PixelFormat::Rg11b10f, Color::rgba(0.0, 0.0, 0.0, 0.0));

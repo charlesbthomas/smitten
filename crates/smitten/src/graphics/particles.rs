@@ -6,8 +6,7 @@ use smitten_core::backend::Vertex;
 use super::{Image, Quad, Transform};
 use crate::Color;
 
-/// How new particles are spread over the emission area, the equivalent of
-/// LÖVE's `AreaSpreadDistribution`.
+/// How new particles are spread over the emission area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AreaSpreadDistribution {
     /// Every particle starts at the emitter's position.
@@ -70,8 +69,7 @@ impl EmissionArea {
     }
 }
 
-/// Where a new particle goes in the drawing order, the equivalent of
-/// LÖVE's `ParticleInsertMode`.
+/// Where a new particle goes in the drawing order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ParticleInsertMode {
     /// Drawn on top of the particles already there.
@@ -91,8 +89,7 @@ enum State {
 }
 
 /// Many small copies of one image that are born, move and fade on their
-/// own, the equivalent of LÖVE's `ParticleSystem`. Use it for smoke, fire,
-/// sparks, dust and the like.
+/// own. Use it for smoke, fire, sparks, dust and the like.
 ///
 /// Set up how particles behave with the `set_` methods, call
 /// [`update`](ParticleSystem::update) every frame, and draw it with
@@ -184,7 +181,6 @@ impl Particle {
 impl ParticleSystem {
     /// Creates a system that draws each particle as `image` and holds at
     /// most `max_particles` at once.
-    #[doc(alias = "love.graphics.newParticleSystem")]
     pub fn new(image: &Image, max_particles: usize) -> ParticleSystem {
         ParticleSystem {
             texture: image.clone(),
@@ -221,9 +217,7 @@ impl ParticleSystem {
     }
 
     /// Makes a system with the same settings and no particles, in the
-    /// stopped state, the equivalent of LÖVE's `ParticleSystem:clone`.
-    /// [`Clone`] copies the particles and state as well.
-    #[doc(alias = "ParticleSystem:clone")]
+    /// stopped state. [`Clone`] copies the particles and state as well.
     pub fn clone_stopped(&self) -> ParticleSystem {
         let mut copy = self.clone();
         copy.particles = Vec::with_capacity(self.max.min(4096));
@@ -381,9 +375,8 @@ impl ParticleSystem {
         self.position.into()
     }
 
-    /// Sets the area new particles appear in, the equivalent of LÖVE's
-    /// `setEmissionArea`. [`EmissionArea::uniform`] spreads them evenly
-    /// over a box.
+    /// Sets the area new particles appear in. [`EmissionArea::uniform`]
+    /// spreads them evenly over a box.
     pub fn set_emission_area(&mut self, area: EmissionArea) {
         self.area = EmissionArea {
             dx: area.dx.abs(),
@@ -512,10 +505,10 @@ impl ParticleSystem {
         self.relative_rotation
     }
 
-    /// Sets how fast particles turn, in radians per second: `start` when
-    /// a particle is born, changing evenly to `end` when it dies, as in
-    /// LÖVE. Use [`set_spin_variation`](ParticleSystem::set_spin_variation)
-    /// to make particles turn at different rates.
+    /// Sets how fast particles turn, in radians per second: `start` when a
+    /// particle is born, changing evenly to `end` when it dies. Use
+    /// [`set_spin_variation`](ParticleSystem::set_spin_variation) to make
+    /// particles turn at different rates.
     pub fn set_spin(&mut self, start: f32, end: f32) {
         self.spin = (start, end);
     }
@@ -555,10 +548,9 @@ impl ParticleSystem {
         }
     }
 
-    /// Starts emitting again from the beginning of the emitter lifetime.
-    /// A new system is already started. After a
-    /// [`pause`](ParticleSystem::pause), this carries on where it left
-    /// off, as in LÖVE.
+    /// Starts emitting again from the beginning of the emitter lifetime. A
+    /// new system is already started. After a
+    /// [`pause`](ParticleSystem::pause), this carries on where it left off.
     pub fn start(&mut self) {
         if self.state != State::Paused {
             self.emitter_age = 0.0;
@@ -631,8 +623,7 @@ impl ParticleSystem {
         self.max
     }
 
-    /// Changes the most particles the system holds at once, the
-    /// equivalent of LÖVE's `setBufferSize`. As in LÖVE, this removes
+    /// Changes the most particles the system holds at once. This removes
     /// every particle and starts the emitter lifetime over.
     pub fn set_buffer_size(&mut self, max_particles: usize) {
         self.max = max_particles;
@@ -641,8 +632,7 @@ impl ParticleSystem {
         self.emitter_age = 0.0;
     }
 
-    /// Returns the most particles the system holds at once, the
-    /// equivalent of LÖVE's `getBufferSize`.
+    /// Returns the most particles the system holds at once.
     pub fn buffer_size(&self) -> usize {
         self.max
     }
@@ -857,8 +847,7 @@ fn area_offset(rng: &mut Rng, area: &EmissionArea) -> (f32, f32) {
         AreaSpreadDistribution::Uniform => (rng.between(-dx, dx), rng.between(-dy, dy)),
         AreaSpreadDistribution::Normal => (rng.normal() * dx, rng.normal() * dy),
         AreaSpreadDistribution::Ellipse => {
-            // Maps a point in the unit square onto the unit disc, as LÖVE
-            // does.
+            // Maps a point in the unit square onto the unit disc.
             let (u, v) = (rng.between(-1.0, 1.0), rng.between(-1.0, 1.0));
             (
                 dx * u * (1.0 - 0.5 * v * v).sqrt(),
@@ -891,7 +880,7 @@ fn area_offset(rng: &mut Rng, area: &EmissionArea) -> (f32, f32) {
 }
 
 /// A random value around `inner`, within `variation` of half the distance
-/// to `outer` on either side, the way LÖVE varies spin.
+/// to `outer` on either side.
 fn vary(rng: &mut Rng, inner: f32, outer: f32, variation: f32) -> f32 {
     let reach = (outer - inner) / 2.0 * variation;
     rng.between(inner - reach, inner + reach)

@@ -1,7 +1,7 @@
 /// What drawing does to the stencil values of the pixels it covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum StencilAction {
-    /// Sets them to the given value. The default, as in LÖVE.
+    /// Sets them to the given value. The default.
     #[default]
     Replace,
     /// Adds one, stopping at 255.
@@ -52,7 +52,7 @@ pub enum StencilMode {
     Test(CompareMode),
 }
 
-/// How draws use the depth buffer, the equivalent of LÖVE's depth mode.
+/// How draws use the depth buffer.
 ///
 /// Each pixel drawn has a depth from 0, nearest, to 1, farthest. A pixel
 /// is drawn only where its depth compares with the depth already there as

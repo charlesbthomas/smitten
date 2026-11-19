@@ -1,12 +1,9 @@
-/// How the pixels of an [`ImageData`], an image or a canvas are stored,
-/// the equivalent of LÖVE's `PixelFormat`.
+/// How the pixels of an `ImageData`, an image or a canvas are stored.
 ///
-/// The names follow LÖVE's: the letters say which channels there are, the
-/// number how many bits each has, and `f` that they are floating point.
-/// Without `f`, each channel holds a number from 0 to 1. The depth and
-/// stencil formats are only for canvases.
-///
-/// [`ImageData`]: https://love2d.org/wiki/ImageData
+/// In the names, the letters say which channels there are, the number how
+/// many bits each has, and `f` that they are floating point. Without `f`,
+/// each channel holds a number from 0 to 1. The depth and stencil formats
+/// are only for canvases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PixelFormat {
     /// One 8-bit channel, red.
@@ -95,9 +92,8 @@ impl PixelFormat {
         }
     }
 
-    /// How many channels a pixel has, the equivalent of the component
-    /// count `love.graphics.getPixelFormatComponents` returns. Depth and
-    /// stencil count as one channel each.
+    /// How many channels a pixel has. Depth and stencil count as one
+    /// channel each.
     pub fn components(self) -> u32 {
         use PixelFormat::*;
         match self {
@@ -136,8 +132,7 @@ impl PixelFormat {
     }
 
     /// The format with the same storage but sRGB-encoded, if there is one.
-    /// LÖVE uses it for images and canvases when gamma-correct rendering
-    /// is on.
+    /// Images and canvases use it when gamma-correct rendering is on.
     pub fn to_srgb(self) -> Option<PixelFormat> {
         match self {
             PixelFormat::Rgba8 | PixelFormat::Srgba8 => Some(PixelFormat::Srgba8),
@@ -153,7 +148,7 @@ impl PixelFormat {
         }
     }
 
-    /// LÖVE's name for the format, such as `"rgba16f"`.
+    /// The format's name, such as `"rgba16f"`.
     pub fn name(self) -> &'static str {
         use PixelFormat::*;
         match self {
@@ -184,7 +179,7 @@ impl PixelFormat {
 impl std::str::FromStr for PixelFormat {
     type Err = crate::ParseNameError;
 
-    /// Reads LÖVE's name for a format, such as `"rgba16f"`.
+    /// Reads a format's name, such as `"rgba16f"`.
     fn from_str(name: &str) -> Result<PixelFormat, Self::Err> {
         PixelFormat::ALL
             .into_iter()

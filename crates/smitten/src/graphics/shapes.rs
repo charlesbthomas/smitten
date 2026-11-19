@@ -67,7 +67,7 @@ pub(crate) fn shadow(light: Point, corners: &[Point], length: f32) -> Vec<Point>
     triangles
 }
 
-/// How the corners of lines and outlines are drawn, as LÖVE's `LineJoin`.
+/// How the corners of lines and outlines are drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LineJoin {
     /// The edges carry on until they meet in a point. Very sharp corners
@@ -81,7 +81,7 @@ pub enum LineJoin {
     None,
 }
 
-/// Whether the edges of lines are softened, as LÖVE's `LineStyle`.
+/// Whether the edges of lines are softened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LineStyle {
     /// The edges fade out over one pixel, which hides the staircase on

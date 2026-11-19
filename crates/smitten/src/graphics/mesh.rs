@@ -13,12 +13,11 @@ use smitten_core::backend::{
 use super::{Image, Transform};
 use crate::{Color, context};
 
-/// One named value of every vertex in a mesh's vertex format, as an entry
-/// of LÖVE's vertex format table.
+/// One named value of every vertex in a mesh's vertex format.
 ///
-/// The built-in shader reads three by name, as LÖVE's does:
-/// `VertexPosition` (x and y, and z for depth), `VertexTexCoord` (u and v)
-/// and `VertexColor`. Other names are for custom vertex shaders.
+/// The built-in shader reads three by name: `VertexPosition` (x and y, and
+/// z for depth), `VertexTexCoord` (u and v) and `VertexColor`. Other names
+/// are for custom vertex shaders.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VertexAttribute {
     /// The name shaders know it by.
@@ -210,7 +209,7 @@ impl VertexStore {
     }
 
     /// The standard view of vertex `index`: the attributes the built-in
-    /// shader reads, with LÖVE's defaults for missing ones.
+    /// shader reads, with defaults for missing ones.
     fn mesh_vertex(&self, index: usize) -> MeshVertex {
         let vertex = self.vertex(index);
         let read = |attribute: Option<usize>, defaults: [f32; 4]| {
@@ -424,8 +423,7 @@ impl MeshVertex {
     }
 }
 
-/// How a mesh's vertices are joined into triangles, as LÖVE's
-/// `MeshDrawMode`.
+/// How a mesh's vertices are joined into triangles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MeshDrawMode {
     /// Every triangle shares the first vertex, like a fan. Good for
@@ -437,14 +435,15 @@ pub enum MeshDrawMode {
     Strip,
     /// Every three vertices are a separate triangle.
     Triangles,
-    /// Every vertex is a square dot, [`point_size`](crate::graphics::point_size)
-    /// units across and colored by its vertex, as LÖVE's `points` mode.
-    /// The dots are not turned or stretched by the transform, only moved.
+    /// Every vertex is a square dot,
+    /// [`point_size`](crate::graphics::point_size) units across and colored
+    /// by its vertex. The dots are not turned or stretched by the
+    /// transform, only moved.
     Points,
 }
 
 /// A shape made of triangles with a position, texture coordinate and color
-/// at every corner. The equivalent of LÖVE's `Mesh`.
+/// at every corner.
 ///
 /// Use it for what images and shapes cannot do: gradients, a texture
 /// stretched over an arbitrary shape, trails, or terrain. Draw it with
@@ -527,7 +526,6 @@ impl fmt::Debug for Mesh {
 impl Mesh {
     /// Creates a mesh from its vertices, in the standard format: a
     /// position and texture coordinate of two floats each, and a color.
-    #[doc(alias = "love.graphics.newMesh")]
     pub fn new(vertices: &[MeshVertex], mode: MeshDrawMode) -> Mesh {
         let format = Format::standard();
         let data = vec![0; vertices.len() * format.stride as usize];
@@ -538,10 +536,9 @@ impl Mesh {
         Mesh::from_store(store, mode)
     }
 
-    /// Creates a mesh whose vertices have `format`, as LÖVE's
-    /// `newMesh(vertexformat, vertices)`. Each vertex is given as all its
-    /// values in the format's order, bytes and 16-bit values as 0.0 to
-    /// 1.0, and must have as many as the format has components.
+    /// Creates a mesh whose vertices have `format`. Each vertex is given as
+    /// all its values in the format's order, bytes and 16-bit values as 0.0
+    /// to 1.0, and must have as many as the format has components.
     ///
     /// ```no_run
     /// # use smitten::graphics::{Mesh, MeshDrawMode, VertexAttribute, VertexDataType};
@@ -573,8 +570,7 @@ impl Mesh {
         Ok(mesh)
     }
 
-    /// Creates a mesh with `count` vertices in `format`, every value 0, as
-    /// LÖVE's `newMesh(vertexformat, vertexcount)`.
+    /// Creates a mesh with `count` vertices in `format`, every value 0.
     pub fn with_format_and_count(
         format: &[VertexAttribute],
         count: usize,
@@ -613,7 +609,7 @@ impl Mesh {
         self.gpu.get_mut().stale = true;
     }
 
-    /// The format of the mesh's vertices, as LÖVE's `getVertexFormat`.
+    /// The format of the mesh's vertices.
     pub fn vertex_format(&self) -> Vec<VertexAttribute> {
         self.store.borrow().format.attributes.clone()
     }
@@ -672,8 +668,7 @@ impl Mesh {
         }
     }
 
-    /// All the values of the vertex at `index`, in the format's order, as
-    /// LÖVE's `getVertex` gives them.
+    /// All the values of the vertex at `index`, in the format's order.
     pub fn vertex_values(&self, index: usize) -> Option<Vec<f32>> {
         let store = self.store.borrow();
         (index < store.count()).then(|| {
@@ -684,8 +679,7 @@ impl Mesh {
     }
 
     /// Replaces all the values of the vertex at `index`, given in the
-    /// format's order, as LÖVE's `setVertex`. There must be as many as
-    /// the format has components.
+    /// format's order. There must be as many as the format has components.
     pub fn set_vertex_values(&mut self, index: usize, values: &[f32]) -> Result<(), GraphicsError> {
         let mut store = self.store.borrow_mut();
         if index >= store.count() {
@@ -712,16 +706,15 @@ impl Mesh {
         Ok(())
     }
 
-    /// The values of one attribute of one vertex, both counted from zero,
-    /// as LÖVE's `getVertexAttribute`.
+    /// The values of one attribute of one vertex, both counted from zero.
     pub fn vertex_attribute(&self, vertex: usize, attribute: usize) -> Option<Vec<f32>> {
         let store = self.store.borrow();
         (vertex < store.count() && attribute < store.format.attributes.len())
             .then(|| store.format.read(store.vertex(vertex), attribute))
     }
 
-    /// Replaces the values of one attribute of one vertex, as LÖVE's
-    /// `setVertexAttribute`. There must be as many as it has components.
+    /// Replaces the values of one attribute of one vertex. There must be as
+    /// many as it has components.
     pub fn set_vertex_attribute(
         &mut self,
         vertex: usize,
@@ -754,19 +747,18 @@ impl Mesh {
     }
 
     /// Draws attribute `name` of `mesh`'s vertices as part of this mesh,
-    /// one value per vertex, as LÖVE's `attachAttribute(name, mesh)`. It
-    /// replaces an attribute of the same name this mesh has, and follows
-    /// later changes to `mesh`. `mesh` must have at least as many vertices
-    /// as this one when it is drawn.
+    /// one value per vertex. It replaces an attribute of the same name this
+    /// mesh has, and follows later changes to `mesh`. `mesh` must have at
+    /// least as many vertices as this one when it is drawn.
     pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), GraphicsError> {
         self.attach_attribute_with(name, mesh, VertexStep::PerVertex, name)
     }
 
-    /// As [`attach_attribute`](Self::attach_attribute), with LÖVE's other
-    /// arguments: `step` says whether the values advance with each vertex
-    /// or with each instance drawn, and `attach_name` is the name shaders
-    /// know the attribute by here. Attaching again under the same
-    /// `attach_name` replaces it.
+    /// As [`attach_attribute`](Self::attach_attribute), with more settings:
+    /// `step` says whether the values advance with each vertex or with each
+    /// instance drawn, and `attach_name` is the name shaders know the
+    /// attribute by here. Attaching again under the same `attach_name`
+    /// replaces it.
     pub fn attach_attribute_with(
         &mut self,
         name: &str,
@@ -807,8 +799,8 @@ impl Mesh {
         Ok(())
     }
 
-    /// Stops drawing an attribute attached under `attach_name`, as LÖVE's
-    /// `detachAttribute`. Returns whether there was one.
+    /// Stops drawing an attribute attached under `attach_name`. Returns
+    /// whether there was one.
     pub fn detach_attribute(&mut self, attach_name: &str) -> bool {
         let before = self.attachments.len();
         self.attachments
@@ -816,10 +808,10 @@ impl Mesh {
         self.attachments.len() != before
     }
 
-    /// Turns an attribute of the mesh, its own or attached, off or back
-    /// on, as LÖVE's `setAttributeEnabled`. A shader reads an attribute
-    /// that is off as its default: (0, 0, 0, 1) for the position, (0, 0)
-    /// for the texture coordinate and white for the color.
+    /// Turns an attribute of the mesh, its own or attached, off or back on.
+    /// A shader reads an attribute that is off as its default: (0, 0, 0, 1)
+    /// for the position, (0, 0) for the texture coordinate and white for
+    /// the color.
     pub fn set_attribute_enabled(&mut self, name: &str, enabled: bool) {
         self.disabled.retain(|disabled| disabled != name);
         if !enabled {
@@ -827,16 +819,15 @@ impl Mesh {
         }
     }
 
-    /// Whether an attribute is on, as LÖVE's `isAttributeEnabled`. Names
-    /// the mesh does not have count as on.
+    /// Whether an attribute is on. Names the mesh does not have count as
+    /// on.
     pub fn is_attribute_enabled(&self, name: &str) -> bool {
         !self.disabled.iter().any(|disabled| disabled == name)
     }
 
     /// Sends changed vertices to the GPU now rather than when the mesh is
-    /// next drawn, as LÖVE's `Mesh:flush` does. Drawing does it anyway, so
-    /// this is only ever needed to choose when the work happens.
-    #[doc(alias = "Mesh:flush")]
+    /// next drawn. Drawing does it anyway, so this is only ever needed to
+    /// choose when the work happens.
     pub fn flush(&self) {
         context::with(|ctx| {
             let frame = ctx.gfx.frame_number();
@@ -891,16 +882,16 @@ impl Mesh {
     }
 
     /// As [`set_vertex_map`](Self::set_vertex_map), storing the indices on
-    /// the GPU as `data_type`, as LÖVE's `setVertexMap(map, datatype)`.
-    /// With [`IndexDataType::U16`], indices above 65,535 are skipped.
+    /// the GPU as `data_type`. With [`IndexDataType::U16`], indices above
+    /// 65,535 are skipped.
     pub fn set_vertex_map_with(&mut self, map: Option<&[u32]>, data_type: IndexDataType) {
         self.set_vertex_map(map);
         self.index_type = Some(data_type);
     }
 
     /// How the mesh's indices are stored on the GPU: as asked for with
-    /// [`set_vertex_map_with`](Self::set_vertex_map_with), or otherwise 16-bit
-    /// when the mesh has at most 65,536 vertices, as in LÖVE.
+    /// [`set_vertex_map_with`](Self::set_vertex_map_with), or otherwise
+    /// 16-bit when the mesh has at most 65,536 vertices.
     pub fn index_data_type(&self) -> IndexDataType {
         self.index_type.unwrap_or(if self.vertex_count() <= 65_536 {
             IndexDataType::U16
@@ -1034,7 +1025,7 @@ impl Mesh {
     /// it all is, or `None` if there are no triangles to draw. Buffers it
     /// replaces go in `retired`.
     ///
-    /// Panics if an attached mesh has too few vertices, as LÖVE errors.
+    /// Panics if an attached mesh has too few vertices.
     pub(crate) fn upload(
         &self,
         backend: &mut dyn Backend,

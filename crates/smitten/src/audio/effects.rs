@@ -1,9 +1,8 @@
-//! Filters and effects applied to sounds as they are mixed, the equivalent
-//! of LÖVE's `Source:setFilter` and `love.audio.setEffect`.
+//! Filters and effects applied to sounds as they are mixed.
 //!
-//! The settings follow the OpenAL effects extension that LÖVE uses: the
-//! same names, the same defaults and the same ranges. Values outside a
-//! range are clamped to it rather than being an error.
+//! The settings follow the OpenAL effects extension: the same names, the
+//! same defaults and the same ranges. Values outside a range are clamped to
+//! it rather than being an error.
 
 use std::f32::consts::{FRAC_1_SQRT_2, LN_2, PI, TAU};
 use std::iter::zip;
@@ -28,13 +27,11 @@ pub enum FilterType {
     BandPass,
 }
 
-/// A filter on a sound, the equivalent of the table LÖVE's
-/// `Source:setFilter` takes.
+/// A filter on a sound.
 ///
 /// Every gain is from 0.0 to 1.0, where 1.0 leaves that part of the sound
 /// alone. High frequencies are those above about 5 kHz and low frequencies
 /// those below about 250 Hz.
-#[doc(alias = "Source:setFilter")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Filter {
     /// Which frequencies the filter lets through.
@@ -194,7 +191,7 @@ impl Waveform {
 ///
 /// An effect adds to a sound rather than replacing it: the source still
 /// plays as it would, and the effect's output, such as a reverb's echoes,
-/// plays as well. Each kind of effect is its own struct with LÖVE's
+/// plays as well. Each kind of effect is its own struct with OpenAL's
 /// defaults, so `Reverb { decay_time: 3.0, ..Default::default() }` changes
 /// one setting.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,10 +1,10 @@
 # Smitten
 
-A LÖVE-style 2D game framework for Rust.
+A 2D game framework for Rust.
 
 You write `load`, `update` and `draw`, and call modules such as `graphics`,
-`audio` and `keyboard` from anywhere, the way you would in
-[LÖVE](https://love2d.org). Smitten is built on SDL3 and its GPU API.
+`audio` and `keyboard` from anywhere. Smitten is built on SDL3 and its GPU
+API.
 
 **[Read the guide](https://charlesbthomas.github.io/smitten/)** ·
 [Examples](https://charlesbthomas.github.io/smitten/examples/) ·
@@ -36,16 +36,14 @@ fn main() {
 
 ## Features
 
-- **The whole LÖVE API.** Every LÖVE 11.5 function that means something in
-  Rust on the desktop has a Smitten equivalent: graphics, audio, input,
-  physics, files, video and the rest. LÖVE names that changed are search
-  aliases in the API docs.
+- **Everything a 2D game needs**: graphics, audio, input, physics, files,
+  video and the rest, in one crate with one consistent API.
 - **Graphics:** shapes, images, text, canvases, WGSL shaders, the stencil,
   sprite batches, particles, meshes and automatic batching.
 - **Audio:** WAV, Ogg Vorbis, MP3 and FLAC, static or streamed, positional,
   with filters and effects.
-- **Physics** on [Rapier](https://rapier.rs), with LÖVE's world, body,
-  fixture and joint API.
+- **Physics** on [Rapier](https://rapier.rs), with worlds, bodies,
+  fixtures and joints.
 - **High-DPI and fixed design sizes**, including pixel-perfect scaling for
   pixel art.
 - **A blue error screen** instead of a vanishing window when a game panics,
@@ -97,7 +95,7 @@ Games depend only on `smitten`.
 
 | Crate | Purpose |
 | --- | --- |
-| `crates/smitten` | The public API: the `Game` trait, `run`, and the LÖVE-style modules. |
+| `crates/smitten` | The public API: the `Game` trait, `run`, and the framework modules. |
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
 | `crates/examples` | The example games and the assets they load. |
@@ -117,12 +115,9 @@ CI runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
 `cargo test --workspace` and `cargo doc` with warnings as errors. The Docs
 workflow builds the site on pull requests and publishes it from `main`.
 
-[docs/love-parity.md](docs/love-parity.md) tracks what LÖVE has that Smitten
-leaves out on purpose.
-
 ## License
 
-Smitten is under the [zlib license](LICENSE), the same as LÖVE and SDL.
+Smitten is under the [zlib license](LICENSE), the same as SDL.
 It is not affiliated with or endorsed by the LÖVE project. The built-in
 font is Bitstream Vera Sans, under its own
 [license](crates/smitten/src/graphics/fonts/LICENSE-Vera.txt).

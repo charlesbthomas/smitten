@@ -28,8 +28,7 @@ pub fn stencil(draw: impl FnOnce()) {
 }
 
 /// Changes the stencil values of the pixels covered by what `draw` draws,
-/// as `write` says, the equivalent of LÖVE's
-/// `stencil(fn, action, value, keepvalues)`.
+/// as `write` says.
 ///
 /// ```no_run
 /// use smitten::graphics::{self, DrawMode, StencilWrite};

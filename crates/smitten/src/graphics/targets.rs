@@ -28,9 +28,8 @@ pub fn canvas() -> Option<Canvas> {
     context::with(|ctx| ctx.gfx.canvas.clone())
 }
 
-/// Sends everything drawn from now on to all of `canvases` at once, the
-/// equivalent of `love.graphics.setCanvas(canvas1, canvas2, ...)`, or
-/// back to the screen for none. Up to [`MAX_CANVASES`] can be used.
+/// Sends everything drawn from now on to all of `canvases` at once, or back
+/// to the screen for none. Up to [`MAX_CANVASES`] can be used.
 ///
 /// The built-in shader, and a shader with an `effect` function, draw the
 /// same color to every canvas. A shader with an `effects` function draws
@@ -39,7 +38,6 @@ pub fn canvas() -> Option<Canvas> {
 /// Panics if the canvases are not all the same size in pixels, are
 /// multisampled differently, or are too many, which is always a bug in
 /// the game. Use [`try_set_canvases`] to handle that instead.
-#[doc(alias = "love.graphics.setCanvas")]
 pub fn set_canvases(canvases: &[&Canvas]) {
     try_set_canvases(canvases).unwrap_or_else(|message| panic!("{message}"));
 }
@@ -56,10 +54,9 @@ pub fn try_set_canvases(canvases: &[&Canvas]) -> Result<(), GraphicsError> {
     try_set_canvas_targets(&targets)
 }
 
-/// A canvas to draw to, and which part of it: one layer of an array
-/// canvas, one face of a cube canvas, or one slice of a volume canvas, at
-/// one mipmap level. The equivalent of the table LÖVE's `setCanvas`
-/// takes, `{canvas, layer = …, mipmap = …}`.
+/// A canvas to draw to, and which part of it: one layer of an array canvas,
+/// one face of a cube canvas, or one slice of a volume canvas, at one
+/// mipmap level.
 ///
 /// ```no_run
 /// # use smitten::graphics::{self, Canvas, CanvasTarget};
@@ -125,8 +122,7 @@ pub fn try_set_canvas_targets(targets: &[CanvasTarget]) -> Result<(), GraphicsEr
 
 /// Sends everything drawn from now on to these canvases, as
 /// [`set_canvas_targets`] does, testing and writing depth and stencil
-/// values in `depth_stencil` rather than in the canvases' own, the
-/// equivalent of LÖVE's `setCanvas{canvas, depthstencil = depth}`.
+/// values in `depth_stencil` rather than in the canvases' own.
 ///
 /// `depth_stencil` is a canvas made with a depth format, such as
 /// [`PixelFormat::Depth24Stencil8`],
@@ -297,8 +293,8 @@ pub fn canvases() -> Vec<Canvas> {
     })
 }
 
-/// Takes a picture of the window once the current frame has been drawn,
-/// and calls `callback` with it, as LÖVE's `captureScreenshot` does.
+/// Takes a picture of the window once the current frame has been drawn, and
+/// calls `callback` with it.
 ///
 /// The picture is the whole window in pixels, including any bars around a
 /// design size, and is fully opaque. `callback` runs at the end of the

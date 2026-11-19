@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use crate::FullscreenType;
 
-/// Startup settings, the equivalent of LÖVE's `conf.lua`.
+/// Startup settings: the window, the save directory and the screen.
 ///
-/// LÖVE's `t.modules.*` switches are Cargo features of the `smitten`
-/// crate here: turn off `physics` or `video` to leave those modules out
-/// of the build. The other modules are small enough to always include.
+/// Modules are switched on and off with Cargo features of the `smitten`
+/// crate: turn off `physics` or `video` to leave those modules out of the
+/// build. The other modules are small enough to always include.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Window title.
@@ -15,10 +15,10 @@ pub struct Config {
     pub width: u32,
     /// Window height in units.
     pub height: u32,
-    /// Whether sizes and positions are measured in units that look the
-    /// same size on every display, as in LÖVE. On an ordinary display a
-    /// unit is one pixel. On a high-DPI display it is more, so an 800 by
-    /// 600 game still looks 800 by 600 and is simply drawn sharper.
+    /// Whether sizes and positions are measured in units that look the same
+    /// size on every display. On an ordinary display a unit is one pixel.
+    /// On a high-DPI display it is more, so an 800 by 600 game still looks
+    /// 800 by 600 and is simply drawn sharper.
     ///
     /// Turn it off to work in raw pixels instead.
     pub dpi_scaling: bool,
@@ -37,64 +37,62 @@ pub struct Config {
     pub fullscreen: bool,
     /// How the game fills the screen when [`Config::fullscreen`] is on.
     pub fullscreen_type: FullscreenType,
-    /// Whether the window has no title bar or frame, like `t.window.borderless`.
+    /// Whether the window has no title bar or frame.
     pub borderless: bool,
     /// The smallest width in units the user can shrink a resizable window
-    /// to, like `t.window.minwidth`. LÖVE's default is 1.
+    /// to. The default is 1.
     pub min_width: u32,
-    /// The smallest height in units, like `t.window.minheight`.
+    /// The smallest height in units.
     pub min_height: u32,
     /// Which display the window opens on, counted from 0 in the order the
-    /// system lists them (LÖVE counts from 1). A display that is not
-    /// connected falls back to the first.
+    /// system lists them. A display that is not connected falls back to the
+    /// first.
     pub display: u32,
-    /// Where the window's top-left corner goes, in desktop coordinates
-    /// from the top-left of [`Config::display`], like `t.window.x` and
-    /// `t.window.y`. When `None`, [`Config::centered`] decides.
+    /// Where the window's top-left corner goes, in desktop coordinates from
+    /// the top-left of [`Config::display`]. When `None`,
+    /// [`Config::centered`] decides.
     pub position: Option<(i32, i32)>,
     /// Whether the window opens in the middle of its display when no
-    /// [`Config::position`] is given, like `t.window.centered`.
+    /// [`Config::position`] is given.
     pub centered: bool,
     /// An image file to use as the window's icon, looked up like any other
     /// asset. When `None`, the platform's default icon is used.
     pub icon: Option<PathBuf>,
-    /// Names the game's save directory, like `t.identity` in LÖVE's
-    /// `conf.lua`. When `None`, the executable's name is used.
+    /// Names the game's save directory. When `None`, the executable's name
+    /// is used.
     pub identity: Option<String>,
     /// Whether the asset directory is searched before the save directory,
-    /// like `t.appendidentity`. Off by default, so a file the game saved
-    /// overrides a shipped file with the same name.
+    /// Off by default, so a file the game saved overrides a shipped file
+    /// with the same name.
     pub append_identity: bool,
     /// Whether to open a console window for the game's printed output on
-    /// Windows, like `t.console`. It matters for a game built with
-    /// `#![windows_subsystem = "windows"]`, which otherwise has nowhere to
-    /// print. When the game was started from a console, that console is
-    /// used instead of a new one. Other platforms ignore it.
+    /// Windows. It matters for a game built with `#![windows_subsystem =
+    /// "windows"]`, which otherwise has nowhere to print. When the game was
+    /// started from a console, that console is used instead of a new one.
+    /// Other platforms ignore it.
     pub console: bool,
     /// Whether presentation waits for the display's vertical sync.
     pub vsync: bool,
-    /// How many samples each pixel of the screen holds, to smooth the
-    /// edges of shapes and images, as `t.window.msaa`. 0 or 1 is none; 2,
-    /// 4 and 8 are common. The GPU may give fewer than asked for.
+    /// How many samples each pixel of the screen holds, to smooth the edges
+    /// of shapes and images. 0 or 1 is none; 2, 4 and 8 are common. The GPU
+    /// may give fewer than asked for.
     pub msaa: u32,
-    /// How many bits the screen's depth buffer has, as `t.window.depth`:
-    /// 16, 24 or 32, the last floating-point. LÖVE's default of none is
-    /// `None`, which here gives the smallest the GPU allows. The default
-    /// is `Some(24)`, so 3D meshes drawn with depth testing work out of
-    /// the box. Canvases have depth buffers of their own, or a depth
+    /// How many bits the screen's depth buffer has: 16, 24 or 32, the last
+    /// floating-point. `None` gives the smallest the GPU allows. The
+    /// default is `Some(24)`, so 3D meshes drawn with depth testing work
+    /// out of the box. Canvases have depth buffers of their own, or a depth
     /// canvas's.
     pub depth: Option<u8>,
-    /// Whether the screen has a stencil buffer, as `t.window.stencil`. On
-    /// by default, as in LÖVE. Without one, stencil drawing and tests on
-    /// the screen do nothing.
+    /// Whether the screen has a stencil buffer. On by default. Without one,
+    /// stencil drawing and tests on the screen do nothing.
     pub stencil: bool,
-    /// Whether colors are blended in linear light, as `t.gammacorrect`.
-    /// Gradients, blending and lighting then come out physically right.
-    /// Images and canvases are stored sRGB-encoded, and colors from
-    /// `set_color` and vertex colors are converted to linear light when
-    /// they are drawn, so a game looks the same apart from the blending.
-    /// Off by default. If the display cannot do it, the game runs
-    /// without; `graphics::is_gamma_correct` says which.
+    /// Whether colors are blended in linear light. Gradients, blending and
+    /// lighting then come out physically right. Images and canvases are
+    /// stored sRGB-encoded, and colors from `set_color` and vertex colors
+    /// are converted to linear light when they are drawn, so a game looks
+    /// the same apart from the blending. Off by default. If the display
+    /// cannot do it, the game runs without; `graphics::is_gamma_correct`
+    /// says which.
     pub gamma_correct: bool,
     /// Whether images, shaders, fonts and sounds are loaded again when
     /// their files change on disk while the game runs. On by default in debug builds, so

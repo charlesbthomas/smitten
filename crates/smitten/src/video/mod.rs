@@ -1,13 +1,13 @@
-//! Decoding video, the equivalent of `love.video`.
+//! Decoding video.
 //!
 //! Most games want [`Video::load`](crate::graphics::Video::load),
 //! which plays a video and draws it. A [`VideoStream`] is the decoder
 //! underneath, for reading a video's frames as pixels without drawing
 //! them.
 //!
-//! As in LÖVE, videos are Ogg Theora files, usually named `.ogv`, and
-//! their sound, if they have any, is an Ogg Vorbis track in the same file.
-//! FFmpeg makes one from almost any video:
+//! Videos are Ogg Theora files, usually named `.ogv`, and their sound, if
+//! they have any, is an Ogg Vorbis track in the same file. FFmpeg makes one
+//! from almost any video:
 //!
 //! ```text
 //! ffmpeg -i input.mp4 -c:v libtheora -q:v 7 -c:a libvorbis -q:a 4 output.ogv
@@ -82,12 +82,11 @@ struct Unnumbered {
     granule: Option<u64>,
 }
 
-/// Decodes the frames of a video, the equivalent of LÖVE's `VideoStream`.
+/// Decodes the frames of a video.
 ///
-/// Unlike LÖVE's, a stream does not keep time; ask it for the frame at a
-/// moment with [`VideoStream::seek`] and read the picture with
-/// [`VideoStream::pixels`]. A [`Video`](crate::graphics::Video) does the
-/// timekeeping.
+/// A stream does not keep time; ask it for the frame at a moment with
+/// [`VideoStream::seek`] and read the picture with [`VideoStream::pixels`].
+/// A [`Video`](crate::graphics::Video) does the timekeeping.
 pub struct VideoStream {
     info: Info,
     setup: SetupInfo,
@@ -194,9 +193,8 @@ impl VideoStream {
     }
 
     /// The path the video was loaded from, as given to
-    /// [`VideoStream::load`], the equivalent of `VideoStream:getFilename`.
-    /// `None` for one made with [`VideoStream::from_bytes`].
-    #[doc(alias = "VideoStream:getFilename")]
+    /// [`VideoStream::load`]. `None` for one made with
+    /// [`VideoStream::from_bytes`].
     pub fn filename(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -360,11 +358,9 @@ impl fmt::Debug for VideoStream {
 }
 
 impl VideoStream {
-    /// Opens a video file for decoding, the equivalent of
-    /// `love.video.newVideoStream`.
+    /// Opens a video file for decoding.
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes.
-    #[doc(alias = "love.video.newVideoStream")]
     pub fn load(path: impl AsRef<Path>) -> Result<VideoStream, VideoError> {
         let path = path.as_ref();
         let mut stream = VideoStream::from_bytes(read(path)?)?;

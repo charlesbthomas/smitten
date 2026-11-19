@@ -1,4 +1,4 @@
-//! Pixels held in memory, the equivalent of LÖVE's `ImageData`.
+//! Pixels held in memory.
 //!
 //! An [`Image`] lives on the GPU and can only be drawn. An [`ImageData`]
 //! lives in ordinary memory, so its pixels can be read and changed: to
@@ -32,7 +32,6 @@ pub struct ImageData {
 
 impl ImageData {
     /// Creates `width` by `height` transparent black pixels.
-    #[doc(alias = "love.image.newImageData")]
     pub fn new(width: u32, height: u32) -> ImageData {
         ImageData {
             width,
@@ -42,12 +41,10 @@ impl ImageData {
         }
     }
 
-    /// Creates `width` by `height` pixels in `format`, all zero, the
-    /// equivalent of `love.image.newImageData(width, height, format)`.
-    /// For a format without alpha, they read back as opaque black.
+    /// Creates `width` by `height` pixels in `format`, all zero. For a
+    /// format without alpha, they read back as opaque black.
     ///
     /// Fails for depth and stencil formats, which only canvases can have.
-    #[doc(alias = "love.image.newImageData")]
     pub fn with_format(
         width: u32,
         height: u32,
@@ -63,12 +60,10 @@ impl ImageData {
     }
 
     /// Wraps raw pixels in `format`: `width * height` of them, each
-    /// [`PixelFormat::bytes_per_pixel`] long, in rows from the top. The
-    /// equivalent of `love.image.newImageData(width, height, format,
-    /// rawdata)`. Multi-byte channels are little-endian, and packed
-    /// formats such as `rgb10a2` are one little-endian 32-bit number with
-    /// red in the lowest bits, as the GPU stores them.
-    #[doc(alias = "love.image.newImageData")]
+    /// [`PixelFormat::bytes_per_pixel`] long, in rows from the top.
+    /// Multi-byte channels are little-endian, and packed formats such as
+    /// `rgb10a2` are one little-endian 32-bit number with red in the lowest
+    /// bits, as the GPU stores them.
     pub fn from_raw(
         width: u32,
         height: u32,
@@ -91,8 +86,7 @@ impl ImageData {
         })
     }
 
-    /// How the pixels are stored, the equivalent of `ImageData:getFormat`.
-    #[doc(alias = "ImageData:getFormat")]
+    /// How the pixels are stored.
     pub fn format(&self) -> PixelFormat {
         self.format
     }
@@ -116,9 +110,9 @@ impl ImageData {
         }
     }
 
-    /// Decodes the contents of a PNG, JPEG or TGA file. A 16-bit PNG
-    /// keeps its precision as [`PixelFormat::Rgba16`], as in LÖVE; every
-    /// other file gives [`PixelFormat::Rgba8`].
+    /// Decodes the contents of a PNG, JPEG or TGA file. A 16-bit PNG keeps
+    /// its precision as [`PixelFormat::Rgba16`]; every other file gives
+    /// [`PixelFormat::Rgba8`].
     pub fn from_bytes(bytes: &[u8]) -> Result<ImageData, ImageError> {
         let decoded = decode_any(bytes).map_err(ImageError::Invalid)?;
         let (width, height) = (decoded.width(), decoded.height());
@@ -171,8 +165,8 @@ impl ImageData {
     }
 
     /// The color of the pixel at `(x, y)`, counted from the top-left.
-    /// Channels the format lacks read as LÖVE's do: green and blue as 0,
-    /// alpha as 1.
+    /// Channels the format lacks read as 0 for green and blue and 1 for
+    /// alpha.
     ///
     /// Panics if the pixel is outside the image.
     pub fn pixel(&self, x: u32, y: u32) -> Color {
@@ -194,9 +188,8 @@ impl ImageData {
         pixels::encode(self.format, color, &mut self.pixels[at..at + size]);
     }
 
-    /// Replaces every pixel with what `change` returns for its position
-    /// and current color, the equivalent of `ImageData:mapPixel`.
-    #[doc(alias = "ImageData:mapPixel")]
+    /// Replaces every pixel with what `change` returns for its position and
+    /// current color.
     pub fn map_pixels(&mut self, mut change: impl FnMut(u32, u32, Color) -> Color) {
         for y in 0..self.height {
             for x in 0..self.width {
@@ -276,10 +269,9 @@ impl ImageData {
         Cow::Owned(converted)
     }
 
-    /// The image as the contents of a file in `format`, the equivalent of
-    /// `ImageData:encode`. Works for [`PixelFormat::Rgba8`] images, and
-    /// [`PixelFormat::Rgba16`] ones as PNG, as in LÖVE.
-    #[doc(alias = "ImageData:encode")]
+    /// The image as the contents of a file in `format`. Works for
+    /// [`PixelFormat::Rgba8`] images, and [`PixelFormat::Rgba16`] ones as
+    /// PNG.
     pub fn encode(&self, format: ImageFormat) -> Result<Vec<u8>, ImageError> {
         let color_type = match (self.format, format) {
             (PixelFormat::Rgba8 | PixelFormat::Srgba8, _) => ::image::ExtendedColorType::Rgba8,
@@ -343,8 +335,7 @@ impl ImageData {
     }
 }
 
-/// A file format [`ImageData::encode`] can write, the equivalent of LÖVE's
-/// `ImageFormat`.
+/// A file format [`ImageData::encode`] can write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageFormat {
     /// PNG, lossless.
@@ -355,9 +346,7 @@ pub enum ImageFormat {
 
 /// Whether `bytes` are a compressed texture file, which loads as a
 /// [`CompressedImageData`](super::CompressedImageData) rather than an
-/// [`ImageData`], the equivalent of `love.image.isCompressed`. Smitten
-/// reads DDS and KTX files.
-#[doc(alias = "love.image.isCompressed")]
+/// [`ImageData`]. Smitten reads DDS and KTX files.
 pub fn is_compressed(bytes: &[u8]) -> bool {
     super::compressed::is_compressed_file(bytes)
 }

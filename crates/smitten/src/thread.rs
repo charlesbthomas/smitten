@@ -1,12 +1,10 @@
-//! Channels for passing values between threads, the equivalent of
-//! `love.thread`'s `Channel`.
+//! Channels for passing values between threads.
 //!
-//! Start threads with [`std::thread::spawn`], which does the job of
-//! `love.thread.newThread`. Rust's own [`std::sync::mpsc`] channels are
-//! often all a game needs. [`Channel`] is here for code ported from LÖVE:
-//! it has LÖVE's methods, any thread can both send and receive on it,
+//! Start threads with [`std::thread::spawn`]. Rust's own
+//! [`std::sync::mpsc`] channels are often all a game needs. [`Channel`]
+//! adds a few things they lack: any thread can both send and receive on it,
 //! senders can wait for their message to be read, and [`channel`] finds a
-//! channel by name, like `love.thread.getChannel`.
+//! channel by name.
 //!
 //! Remember that the framework modules, such as [`graphics`](crate::graphics),
 //! only work on the main thread.
@@ -38,8 +36,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-/// A queue of values that any number of threads can push to and pop
-/// from, the equivalent of LÖVE's `Channel`.
+/// A queue of values that any number of threads can push to and pop from.
 ///
 /// Cloning a channel gives another handle to the same queue, to move into
 /// another thread.
@@ -118,8 +115,7 @@ fn wait_until<'a, T>(
 }
 
 impl<T> Channel<T> {
-    /// An empty channel, like `love.thread.newChannel`.
-    #[doc(alias = "love.thread.newChannel")]
+    /// An empty channel.
     pub fn new() -> Channel<T> {
         Channel {
             shared: Arc::new(Shared {
@@ -151,9 +147,8 @@ impl<T> Channel<T> {
     }
 
     /// Adds `value` to the end of the queue, then waits until it has been
-    /// popped, like `Channel:supply`. With a `timeout`, gives up after it
-    /// and returns `false`; the value then stays in the queue.
-    #[doc(alias = "Channel:supply")]
+    /// popped. With a `timeout`, gives up after it and returns `false`; the
+    /// value then stays in the queue.
     pub fn supply(&self, value: T, timeout: Option<Duration>) -> bool {
         let mut state = self.lock();
         let id = state.push(value);
@@ -175,9 +170,8 @@ impl<T> Channel<T> {
     }
 
     /// Takes the value at the front of the queue, waiting for one if the
-    /// queue is empty, like `Channel:demand`. With a `timeout`, gives up
-    /// after it and returns `None`.
-    #[doc(alias = "Channel:demand")]
+    /// queue is empty. With a `timeout`, gives up after it and returns
+    /// `None`.
     pub fn demand(&self, timeout: Option<Duration>) -> Option<T> {
         let state = self.lock();
         let (mut state, ready) = wait_until(&self.shared.changed, state, timeout, |state| {
@@ -209,10 +203,9 @@ impl<T> Channel<T> {
         self.shared.changed.notify_all();
     }
 
-    /// Runs `work` with the channel to itself, like
-    /// `Channel:performAtomic`: no other thread pushes or pops until it
-    /// returns. Use it to look at a value and take it only if it suits.
-    #[doc(alias = "Channel:performAtomic")]
+    /// Runs `work` with the channel to itself: no other thread pushes or
+    /// pops until it returns. Use it to look at a value and take it only if
+    /// it suits.
     pub fn perform_atomic<R>(&self, work: impl FnOnce(&mut Locked<'_, T>) -> R) -> R {
         let mut locked = Locked { state: self.lock() };
         let result = work(&mut locked);
@@ -295,15 +288,13 @@ impl<T> Locked<'_, T> {
 
 type Registry = Mutex<HashMap<(String, TypeId), Box<dyn Any + Send>>>;
 
-/// The channel named `name`, made the first time it is asked for, like
-/// `love.thread.getChannel`. Every thread that asks for the same name
-/// and value type gets the same channel, so threads can find each other
-/// without passing handles around.
+/// The channel named `name`, made the first time it is asked for. Every
+/// thread that asks for the same name and value type gets the same channel,
+/// so threads can find each other without passing handles around.
 ///
 /// Channels of different value types are kept apart even when their
 /// names match: `channel::<i32>("log")` and `channel::<String>("log")`
 /// are two channels.
-#[doc(alias = "love.thread.getChannel")]
 pub fn channel<T: Send + 'static>(name: &str) -> Channel<T> {
     static NAMED: OnceLock<Registry> = OnceLock::new();
     let mut named = NAMED

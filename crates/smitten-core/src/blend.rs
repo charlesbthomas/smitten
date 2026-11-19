@@ -1,5 +1,4 @@
-/// How something drawn is combined with what is already there, the
-/// equivalent of LÖVE's `BlendMode`.
+/// How something drawn is combined with what is already there.
 ///
 /// Each mode also has a [`BlendAlphaMode`], which says whether the colors
 /// drawn are already multiplied by their alpha. `set_blend_mode` picks the
@@ -7,7 +6,7 @@
 /// The two together are a [`Blend`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BlendMode {
-    /// Ordinary transparency. The default, as in LÖVE.
+    /// Ordinary transparency. The default.
     #[default]
     Alpha,
     /// Transparency for colors that are already multiplied by their alpha.
@@ -21,7 +20,7 @@ pub enum BlendMode {
     /// Subtracts from what is there, darkening it.
     Subtract,
     /// Multiplies with what is there. White changes nothing, black gives
-    /// black. Always premultiplied, as in LÖVE.
+    /// black. Always premultiplied.
     Multiply,
     /// Overwrites what is there, including with transparent pixels.
     Replace,
@@ -30,10 +29,10 @@ pub enum BlendMode {
     /// light.
     Screen,
     /// Keeps the brighter of what is drawn and what is there, channel by
-    /// channel. Always premultiplied, as in LÖVE.
+    /// channel. Always premultiplied.
     Lighten,
     /// Keeps the darker of what is drawn and what is there, channel by
-    /// channel. Always premultiplied, as in LÖVE.
+    /// channel. Always premultiplied.
     Darken,
 }
 
@@ -58,8 +57,7 @@ impl BlendMode {
 
     /// The alpha mode `set_blend_mode` uses with this mode:
     /// [`BlendAlphaMode::Premultiplied`] for the modes that only work that
-    /// way, and [`BlendAlphaMode::AlphaMultiply`] for the rest, as LÖVE's
-    /// default.
+    /// way, and [`BlendAlphaMode::AlphaMultiply`] for the rest.
     pub fn default_alpha_mode(self) -> BlendAlphaMode {
         if self.needs_premultiplied() {
             BlendAlphaMode::Premultiplied
@@ -68,9 +66,9 @@ impl BlendMode {
         }
     }
 
-    /// Whether this mode only works with colors that are already
-    /// multiplied by their alpha. LÖVE refuses `Multiply`, `Lighten` and
-    /// `Darken` with [`BlendAlphaMode::AlphaMultiply`].
+    /// Whether this mode only works with colors that are already multiplied
+    /// by their alpha: `Multiply`, `Lighten` and `Darken` cannot be used
+    /// with [`BlendAlphaMode::AlphaMultiply`].
     pub fn needs_premultiplied(self) -> bool {
         matches!(
             self,
@@ -79,13 +77,11 @@ impl BlendMode {
     }
 }
 
-/// Whether the colors drawn are already multiplied by their alpha, the
-/// equivalent of LÖVE's `BlendAlphaMode`.
+/// Whether the colors drawn are already multiplied by their alpha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BlendAlphaMode {
-    /// The colors are multiplied by their alpha as they are drawn, so
-    /// that a half transparent red adds half as much red. The default, as
-    /// in LÖVE.
+    /// The colors are multiplied by their alpha as they are drawn, so that
+    /// a half transparent red adds half as much red. The default.
     #[default]
     AlphaMultiply,
     /// The colors already are, as the contents of a canvas are. Draw a
@@ -93,8 +89,8 @@ pub enum BlendAlphaMode {
     Premultiplied,
 }
 
-/// A blend mode together with its alpha mode, the pair LÖVE's
-/// `setBlendMode(mode, alphamode)` takes and `getBlendMode` returns.
+/// A blend mode together with its alpha mode, the pair `set_blend_mode`
+/// takes and `blend_mode` returns.
 ///
 /// A [`BlendMode`] converts into one with its
 /// [default alpha mode](BlendMode::default_alpha_mode), and

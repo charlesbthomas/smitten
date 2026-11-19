@@ -2,8 +2,7 @@
 
 use super::*;
 
-/// Clears the screen, or the active canvas, the equivalent of
-/// `love.graphics.clear`. The scissor does not limit it.
+/// Clears the screen, or the active canvas. The scissor does not limit it.
 ///
 /// A [`Color`] fills the picture with it, replacing whatever was there,
 /// resets the stencil values to 0 and the depth values to 1.
@@ -17,7 +16,6 @@ use super::*;
 /// // Reset only the stencil, keeping the picture.
 /// graphics::clear(ClearValues::NONE.stencil(0));
 /// ```
-#[doc(alias = "love.graphics.clear")]
 pub fn clear(values: impl Into<ClearValues>) {
     let ClearValues {
         color,
@@ -28,8 +26,7 @@ pub fn clear(values: impl Into<ClearValues>) {
 }
 
 /// What [`clear`] clears: the picture, the stencil values and the depth
-/// values, each to its own value, or left as they are when `None`. LÖVE's
-/// `clear(color, stencil, depth)` and `clear(false, ...)`.
+/// values, each to its own value, or left as they are when `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ClearValues {
     /// The color to fill the picture with.
@@ -82,12 +79,11 @@ impl From<Color> for ClearValues {
     }
 }
 
-/// Fills each canvas being drawn to with its own color, the equivalent of
-/// `love.graphics.clear(color1, color2, ...)` with several canvases set.
-/// `colors[0]` is for the first canvas; a canvas with `None`, or with no
-/// entry, keeps its picture. `stencil` sets every stencil value and
-/// `depth` every depth value, if given. The scissor does not limit it.
-#[doc(alias = "love.graphics.clear")]
+/// Fills each canvas being drawn to with its own color, when several
+/// canvases are set. `colors[0]` is for the first canvas; a canvas with
+/// `None`, or with no entry, keeps its picture. `stencil` sets every
+/// stencil value and `depth` every depth value, if given. The scissor does
+/// not limit it.
 pub fn clear_canvases(colors: &[Option<Color>], stencil: Option<u8>, depth: Option<f32>) {
     let mut each = [None; MAX_CANVASES];
     for (slot, color) in each.iter_mut().zip(colors) {
@@ -137,10 +133,8 @@ pub fn pixel_height() -> u32 {
     pixel_dimensions().1
 }
 
-/// Size in real pixels of the screen, or of the active canvas, the
-/// equivalent of `love.graphics.getPixelDimensions`. Shaders see
+/// Size in real pixels of the screen, or of the active canvas. Shaders see
 /// positions in these pixels.
-#[doc(alias = "love.graphics.getPixelDimensions")]
 pub fn pixel_dimensions() -> (u32, u32) {
     context::with(|ctx| ctx.gfx.target_pixel_size())
 }

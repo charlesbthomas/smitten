@@ -229,7 +229,7 @@ impl SdlBackend {
                 }
             };
 
-            // Typed text is reported by default, as LÖVE does on desktop.
+            // Typed text is reported by default on desktop.
             SDL_StartTextInput(window);
 
             Ok(Self {
@@ -2182,8 +2182,8 @@ fn key_from_scancode(scancode: SDL_Scancode) -> Option<Key> {
         .map(|&(_, key)| key)
 }
 
-/// Gives the game a console to print to, like `t.console`: the one it was
-/// started from if there is one, and a new window otherwise.
+/// Gives the game a console to print to: the one it was started from if
+/// there is one, and a new window otherwise.
 #[cfg(windows)]
 pub fn open_console() {
     #[link(name = "kernel32")]
@@ -2245,7 +2245,7 @@ mod tests {
     }
 
     #[test]
-    fn locales_are_named_as_in_love() {
+    fn locales_join_language_and_country_with_an_underscore() {
         assert_eq!(locale_name("en", Some("US")), "en_US");
         assert_eq!(locale_name("fr", None), "fr");
         assert_eq!(locale_name("de", Some("")), "de");

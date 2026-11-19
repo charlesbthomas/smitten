@@ -1,6 +1,6 @@
 [package]
 name = "smitten"
-description = "A LÖVE-style 2D game framework for Rust"
+description = "A 2D game framework for Rust"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

@@ -83,8 +83,7 @@ fn load_all(paths: &[impl AsRef<Path>]) -> Result<Vec<ImageData>, ImageError> {
         .collect()
 }
 
-/// Several pictures of the same size in one texture, the equivalent of
-/// LÖVE's `ArrayImage`.
+/// Several pictures of the same size in one texture.
 ///
 /// Draw one layer with [`graphics::draw`](super::draw) and
 /// [`ArrayImage::layer`], or
@@ -179,8 +178,8 @@ impl fmt::Debug for ArrayImage {
     }
 }
 
-/// Six square pictures that make the inside of a cube, the equivalent of
-/// LÖVE's `CubeImage`, for a sky or for reflections.
+/// Six square pictures that make the inside of a cube, for a sky or for
+/// reflections.
 ///
 /// A cube image cannot be drawn directly. Send it to a
 /// [`Shader`](super::Shader) that declares a `texture_cube<f32>`, which
@@ -193,7 +192,7 @@ pub struct CubeImage {
 }
 
 impl CubeImage {
-    /// Makes a cube image from its six faces, in LÖVE's order: +x, -x, +y,
+    /// Makes a cube image from its six faces, in this order: +x, -x, +y,
     /// -y, +z, -z. They must be square and all the same size.
     pub fn from_image_data(faces: &[ImageData; 6]) -> Result<CubeImage, ImageError> {
         let (width, height) = faces[0].dimensions();
@@ -208,7 +207,7 @@ impl CubeImage {
     }
 
     /// Makes a cube image from one picture holding all six faces, laid out
-    /// as LÖVE accepts them and told apart by the picture's shape:
+    /// in one of these ways, told apart by the picture's shape:
     ///
     /// - a row of six faces, 6 by 1, in the order +x, -x, +y, -y, +z, -z;
     /// - a column of six, 1 by 6, in the same order;
@@ -260,14 +259,13 @@ impl CubeImage {
     }
 }
 
-/// A block of pixels with depth as well as width and height, the
-/// equivalent of LÖVE's volume `Image` (`TextureType` `volume`). It is
-/// built from slices of the same size, stacked front to back, and
-/// sampled in three dimensions with a coordinate from 0 to 1 on each
-/// axis, so the GPU blends between neighbouring slices as well as
-/// neighbouring pixels. It suits color grading tables, fog and noise.
+/// A block of pixels with depth as well as width and height. It is built
+/// from slices of the same size, stacked front to back, and sampled in
+/// three dimensions with a coordinate from 0 to 1 on each axis, so the GPU
+/// blends between neighbouring slices as well as neighbouring pixels. It
+/// suits color grading tables, fog and noise.
 ///
-/// As in LÖVE, a volume image cannot be drawn directly. Send it to a
+/// A volume image cannot be drawn directly. Send it to a
 /// [`Shader`](super::Shader) that declares a `texture_3d<f32>`:
 ///
 /// ```wgsl
@@ -310,8 +308,7 @@ impl VolumeImage {
         self.inner.height
     }
 
-    /// How many slices deep it is, the equivalent of `Texture:getDepth`.
-    #[doc(alias = "Texture:getDepth")]
+    /// How many slices deep it is.
     pub fn depth(&self) -> u32 {
         self.inner.layers
     }

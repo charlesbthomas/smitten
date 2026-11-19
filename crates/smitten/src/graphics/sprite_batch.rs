@@ -11,7 +11,7 @@ use super::{
 use crate::Color;
 
 /// Many copies of one image, or of parts of it, kept ready to draw in one
-/// go. The equivalent of LÖVE's `SpriteBatch`.
+/// go.
 ///
 /// Add sprites once, then draw them all every frame with
 /// [`graphics::draw`](crate::graphics::draw). This is the fast way to draw
@@ -36,8 +36,8 @@ use crate::Color;
 /// with [`SpriteBatch::add_layer`] and friends, so a tile map can draw
 /// tiles from many layers in one batch.
 ///
-/// Unlike LÖVE's, a batch grows as needed: the size given when creating
-/// it only reserves memory up front.
+/// A batch grows as needed: the size given when creating it only reserves
+/// memory up front.
 ///
 /// A shader can read more per-vertex values than the batch has, taken
 /// from a [`Mesh`] with [`SpriteBatch::attach_attribute`].
@@ -60,14 +60,13 @@ pub struct SpriteBatch {
     mesh: RefCell<Option<Mesh>>,
 }
 
-/// How often a batch's sprites are expected to change, the equivalent of
-/// LÖVE's `SpriteBatchUsage`.
+/// How often a batch's sprites are expected to change.
 ///
 /// It is only a hint. Smitten sends a batch's sprites to the GPU each
 /// time it is drawn whatever the usage, so every usage is equally fast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SpriteBatchUsage {
-    /// Changed now and then. LÖVE's default.
+    /// Changed now and then. The default.
     #[default]
     Dynamic,
     /// Set up once and rarely changed, such as a tile map.
@@ -97,21 +96,19 @@ const VERTICES_PER_SPRITE: usize = 6;
 impl SpriteBatch {
     /// Creates an empty batch that draws `image`, with room reserved for
     /// `capacity` sprites.
-    #[doc(alias = "love.graphics.newSpriteBatch")]
     pub fn new(image: &Image, capacity: usize) -> SpriteBatch {
         SpriteBatch::with_usage(image, capacity, SpriteBatchUsage::default())
     }
 
     /// Creates an empty batch as [`SpriteBatch::new`] does, with a usage
-    /// hint, the third argument of LÖVE's `newSpriteBatch`.
+    /// hint.
     pub fn with_usage(image: &Image, capacity: usize, usage: SpriteBatchUsage) -> SpriteBatch {
         SpriteBatch::with_source(Source::Image(image.clone()), capacity, usage)
     }
 
     /// Creates an empty batch that draws layers of `image`, with room
-    /// reserved for `capacity` sprites, the equivalent of `newSpriteBatch`
-    /// with an `ArrayImage`. Add sprites with [`SpriteBatch::add_layer`];
-    /// the plain `add` methods show layer 0.
+    /// reserved for `capacity` sprites. Add sprites with
+    /// [`SpriteBatch::add_layer`]; the plain `add` methods show layer 0.
     pub fn from_array_image(
         image: &ArrayImage,
         capacity: usize,
@@ -138,10 +135,8 @@ impl SpriteBatch {
         self.usage
     }
 
-    /// How many sprites the batch has room for before it next grows, the
-    /// equivalent of `SpriteBatch:getBufferSize`. It is at least the size
-    /// it was created with.
-    #[doc(alias = "SpriteBatch:getBufferSize")]
+    /// How many sprites the batch has room for before it next grows. It is
+    /// at least the size it was created with.
     pub fn buffer_size(&self) -> usize {
         self.vertices.capacity() / VERTICES_PER_SPRITE
     }
@@ -152,10 +147,8 @@ impl SpriteBatch {
         self.draw_range
     }
 
-    /// Draws only `count` sprites from index `start`, the equivalent of
-    /// `SpriteBatch:setDrawRange`. `None` draws them all again. Sprites
-    /// outside the range are kept, just not drawn.
-    #[doc(alias = "SpriteBatch:setDrawRange")]
+    /// Draws only `count` sprites from index `start`. `None` draws them all
+    /// again. Sprites outside the range are kept, just not drawn.
     pub fn set_draw_range(&mut self, range: Option<(usize, usize)>) {
         self.changed();
         self.draw_range = range;
@@ -175,12 +168,10 @@ impl SpriteBatch {
     }
 
     /// Adds the whole of layer `layer` of the batch's [`ArrayImage`],
-    /// placed by `params`, and returns the sprite's index, the equivalent
-    /// of `SpriteBatch:addLayer`.
+    /// placed by `params`, and returns the sprite's index.
     ///
     /// Panics if the batch draws a plain [`Image`], or the layer does not
     /// exist.
-    #[doc(alias = "SpriteBatch:addLayer")]
     pub fn add_layer(&mut self, layer: u32, params: impl Into<DrawParams>) -> usize {
         let quad = self.whole();
         self.add_layer_quad(layer, &quad, params)
@@ -223,11 +214,10 @@ impl SpriteBatch {
     }
 
     /// Replaces the sprite at `index` with the whole of layer `layer`,
-    /// placed by `params`, the equivalent of `SpriteBatch:setLayer`.
+    /// placed by `params`.
     ///
     /// Panics if no sprite has that index, the batch draws a plain
     /// [`Image`], or the layer does not exist.
-    #[doc(alias = "SpriteBatch:setLayer")]
     pub fn set_layer(&mut self, index: usize, layer: u32, params: impl Into<DrawParams>) {
         let quad = self.whole();
         self.set_layer_quad(index, layer, &quad, params);
@@ -309,9 +299,7 @@ impl SpriteBatch {
         self.vertices.len() / VERTICES_PER_SPRITE
     }
 
-    /// The image or array image the batch draws, the equivalent of
-    /// `SpriteBatch:getTexture`.
-    #[doc(alias = "SpriteBatch:getTexture")]
+    /// The image or array image the batch draws.
     pub fn texture(&self) -> BatchTexture<'_> {
         match &self.source {
             Source::Image(image) => BatchTexture::Image(image),
@@ -344,13 +332,11 @@ impl SpriteBatch {
     }
 
     /// Draws the batch with the per-vertex attribute `name` of `mesh` as
-    /// well as its own, the equivalent of LÖVE's
-    /// `SpriteBatch:attachAttribute`. A shader reads it from its
-    /// `Attributes` struct, as it would for a mesh; see
-    /// [`Mesh::attach_attribute`].
+    /// well as its own. A shader reads it from its `Attributes` struct, as
+    /// it would for a mesh; see [`Mesh::attach_attribute`].
     ///
-    /// Each sprite has four vertices, in LÖVE's order: sprite `i` takes
-    /// the mesh's vertices `4 * i` to `4 * i + 3`, for its top-left,
+    /// Each sprite has four vertices, in this order: sprite `i` takes the
+    /// mesh's vertices `4 * i` to `4 * i + 3`, for its top-left,
     /// bottom-left, top-right and bottom-right corners as the quad is
     /// drawn. The mesh needs at least four vertices for each sprite in the
     /// batch when it is drawn, or drawing panics. Changing the mesh's
@@ -358,7 +344,6 @@ impl SpriteBatch {
     ///
     /// Attaching another attribute of the same name replaces the first.
     /// Fails if the mesh has no attribute `name`.
-    #[doc(alias = "SpriteBatch:attachAttribute")]
     pub fn attach_attribute(&mut self, name: &str, mesh: &Mesh) -> Result<(), GraphicsError> {
         if !mesh
             .vertex_format()
@@ -610,7 +595,7 @@ mod tests {
 
         let mesh = batch.attached_mesh().unwrap();
         assert_eq!(mesh.vertex_count(), 8);
-        // Top-left, bottom-left, top-right and bottom-right, as in LÖVE.
+        // Top-left, bottom-left, top-right and bottom-right.
         let corners: Vec<(f32, f32)> = (4..8)
             .map(|index| {
                 let vertex = mesh.vertex(index).unwrap();

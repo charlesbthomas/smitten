@@ -51,7 +51,7 @@ pub fn polygon(mode: DrawMode, points: &[impl Into<Vec2> + Copy]) {
 }
 
 /// Draws a rectangle with rounded corners. `rx` and `ry` are the corner
-/// radii along each axis, as in the long form of `love.graphics.rectangle`.
+/// radii along each axis.
 pub fn rounded_rectangle(
     mode: DrawMode,
     position: impl Into<Vec2>,
@@ -80,7 +80,7 @@ pub fn ellipse(mode: DrawMode, center: impl Into<Vec2>, radii: impl Into<Vec2>) 
 }
 
 /// Draws part of a circle centered on `(x, y)`, from `angle1` to `angle2`
-/// in radians. Angles grow clockwise from the right, as in LÖVE.
+/// in radians. Angles grow clockwise from the right.
 pub fn arc(
     mode: DrawMode,
     arc_type: ArcType,
@@ -141,8 +141,6 @@ pub fn points(points: &[impl Into<Vec2> + Copy]) {
 /// For lighting, draw the shadows of everything solid inside
 /// [`stencil`], then draw the light's glow only where the stencil is
 /// still zero. The `lighting` example does exactly this.
-///
-/// LÖVE has no such call; games there work the corners out by hand.
 pub fn shadow(light: impl Into<Vec2>, polygon: &[impl Into<Vec2> + Copy], length: f32) {
     let polygon = crate::math::tuples(polygon);
     let polygon = &polygon[..];
@@ -157,8 +155,6 @@ pub fn shadow(light: impl Into<Vec2>, polygon: &[impl Into<Vec2> + Copy], length
 }
 
 /// Draws connected lines through `points` in order, with joined corners.
-/// The equivalent of `love.graphics.line` with more than two points.
-#[doc(alias = "love.graphics.line")]
 pub fn polyline(points: &[impl Into<Vec2> + Copy]) {
     let points = crate::math::tuples(points);
     let points = &points[..];
@@ -171,8 +167,6 @@ pub fn polyline(points: &[impl Into<Vec2> + Copy]) {
 /// Draws a dashed line through `points` in order: dashes `dash` long
 /// with gaps of `gap` between them, both measured along the line. The
 /// dashes use the current line width, join and style.
-///
-/// LÖVE has no dashed lines; this saves working the pieces out by hand.
 pub fn dashed_polyline(points: &[impl Into<Vec2> + Copy], dash: f32, gap: f32) {
     let points = crate::math::tuples(points);
     let points = &points[..];

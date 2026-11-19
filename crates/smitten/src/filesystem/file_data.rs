@@ -1,11 +1,10 @@
-//! A file's contents kept together with its name, the equivalent of
-//! LÖVE's `FileData`.
+//! A file's contents kept together with its name.
 
 use std::io;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
-/// The bytes of a file together with its name, as LÖVE's `FileData`.
+/// The bytes of a file together with its name.
 ///
 /// Smitten's loaders take bytes or paths, so this is only needed where
 /// the name has to travel with the contents, such as a file read once and
@@ -26,10 +25,8 @@ pub struct FileData {
 }
 
 impl FileData {
-    /// Reads a whole file into a [`FileData`], the equivalent of
-    /// `love.filesystem.newFileData(filename)`. The file is looked up as in
+    /// Reads a whole file into a [`FileData`]. The file is looked up as in
     /// [`super::read`].
-    #[doc(alias = "love.filesystem.newFileData")]
     pub fn load(path: impl AsRef<Path>) -> io::Result<FileData> {
         let path = path.as_ref();
         Ok(FileData::new(super::read(path)?, path))
@@ -37,10 +34,8 @@ impl FileData {
 }
 
 impl FileData {
-    /// Makes a `FileData` from bytes already in memory and the name they
-    /// go by, the equivalent of `love.filesystem.newFileData(contents,
-    /// name)`. Nothing is read or written.
-    #[doc(alias = "love.filesystem.newFileData")]
+    /// Makes a `FileData` from bytes already in memory and the name they go
+    /// by. Nothing is read or written.
     pub fn new(bytes: impl Into<Vec<u8>>, filename: impl Into<PathBuf>) -> Self {
         Self {
             bytes: bytes.into(),
@@ -48,16 +43,13 @@ impl FileData {
         }
     }
 
-    /// The name the data goes by, the equivalent of
-    /// `FileData:getFilename`.
-    #[doc(alias = "FileData:getFilename")]
+    /// The name the data goes by.
     pub fn filename(&self) -> &Path {
         &self.filename
     }
 
-    /// The part of the name after its last dot, without the dot, the
-    /// equivalent of `FileData:getExtension`. `None` if there is none.
-    #[doc(alias = "FileData:getExtension")]
+    /// The part of the name after its last dot, without the dot. `None` if
+    /// there is none.
     pub fn extension(&self) -> Option<&str> {
         self.filename.extension()?.to_str()
     }

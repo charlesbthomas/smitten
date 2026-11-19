@@ -1,5 +1,4 @@
-//! Random numbers, noise and a little geometry, the equivalent of
-//! `love.math`.
+//! Random numbers, noise and a little geometry.
 //!
 //! Unlike the other modules, everything here also works when no game is
 //! running, which makes it usable in tests and tools.
@@ -18,8 +17,7 @@ pub use glam::{Vec2, Vec3};
 
 use std::cell::RefCell;
 
-/// A source of random numbers with its own seed, the equivalent of LÖVE's
-/// `RandomGenerator`.
+/// A source of random numbers with its own seed.
 ///
 /// The functions in this module, such as [`random`], share one generator.
 /// Make your own when something must be repeatable no matter what else
@@ -63,15 +61,14 @@ impl RandomGenerator {
         *self = RandomGenerator::new(seed);
     }
 
-    /// The generator's current place in its sequence, like LÖVE's
-    /// `RandomGenerator:getState`. Give it to [`set_state`](Self::set_state)
-    /// later, on this generator or another, to carry on from here: a saved
-    /// game can then replay the same numbers.
+    /// The generator's current place in its sequence. Give it to
+    /// [`set_state`](Self::set_state) later, on this generator or another,
+    /// to carry on from here: a saved game can then replay the same
+    /// numbers.
     ///
-    /// The state is a string of hexadecimal digits, so it can be written
-    /// to a save file as it is. Like LÖVE's, it is meant to be passed back
-    /// unchanged, not read.
-    #[doc(alias = "RandomGenerator:getState")]
+    /// The state is a string of hexadecimal digits, so it can be written to
+    /// a save file as it is. It is meant to be passed back unchanged, not
+    /// read.
     pub fn state(&self) -> String {
         let mut text = format!("0x{:016x}", self.seed);
         for word in self.state {
@@ -134,8 +131,8 @@ impl RandomGenerator {
         min + (max - min) * self.random()
     }
 
-    /// A whole number from `min` to `max`, including both, like LÖVE's
-    /// `random(min, max)`. The two may be given in either order.
+    /// A whole number from `min` to `max`, including both. The two may be
+    /// given in either order.
     pub fn random_int(&mut self, min: i64, max: i64) -> i64 {
         let (min, max) = if min <= max { (min, max) } else { (max, min) };
         let choices = (max as i128 - min as i128 + 1) as u128;
@@ -144,8 +141,7 @@ impl RandomGenerator {
     }
 
     /// A number from a bell curve centered on `mean`, where about two
-    /// thirds of the results fall within `std_dev` of it. LÖVE's
-    /// `randomNormal(stddev, mean)` takes the two the other way round.
+    /// thirds of the results fall within `std_dev` of it.
     pub fn random_normal(&mut self, mean: f32, std_dev: f32) -> f32 {
         // Box-Muller. Flip the first number so it is never zero.
         let a = 1.0 - self.random();
@@ -269,13 +265,12 @@ pub fn shuffle<T>(items: &mut [T]) {
 // ---------------------------------------------------------------------------
 // Noise
 
-/// Smooth noise along a line, from 0.0 to 1.0, like `love.math.noise(x)`.
+/// Smooth noise along a line, from 0.0 to 1.0.
 ///
 /// Nearby inputs give nearby outputs, and the same input always gives the
 /// same output. The pattern has features about one unit across, so scale
 /// the input to taste: `noise(time * 0.5)` drifts slowly. At whole
 /// numbers the result is always 0.5.
-#[doc(alias = "love.math.noise")]
 pub fn noise(x: f32) -> f32 {
     noise3(x, 0.0, 0.0)
 }
@@ -317,10 +312,8 @@ pub fn noise3(x: f32, y: f32, z: f32) -> f32 {
     (0.5 + 0.5 * mix(near, far, w)).clamp(0.0, 1.0)
 }
 
-/// Smooth noise through four dimensions, from 0.0 to 1.0, like
-/// `love.math.noise(x, y, z, w)`. See [`noise`]. Using time as the fourth
-/// input animates a 3D pattern.
-#[doc(alias = "love.math.noise")]
+/// Smooth noise through four dimensions, from 0.0 to 1.0. See [`noise`].
+/// Using time as the fourth input animates a 3D pattern.
 pub fn noise4(x: f32, y: f32, z: f32, w: f32) -> f32 {
     let floors = [x.floor(), y.floor(), z.floor(), w.floor()];
     let cells = floors.map(|floor| floor as i32);
@@ -440,12 +433,11 @@ pub fn is_convex(points: &[impl Into<Vec2> + Copy]) -> bool {
     direction != 0.0
 }
 
-/// Splits a polygon into triangles, like `love.math.triangulate`. The
-/// polygon may have dents but its edges must not cross each other.
+/// Splits a polygon into triangles. The polygon may have dents but its
+/// edges must not cross each other.
 ///
 /// Returns nothing for fewer than three corners, or if the polygon is so
 /// tangled that no triangle can be cut from it.
-#[doc(alias = "love.math.triangulate")]
 pub fn triangulate(points: &[impl Into<Vec2> + Copy]) -> Vec<[Vec2; 3]> {
     let points = tuples(points);
     let points = &points[..];
@@ -513,7 +505,7 @@ fn inside_triangle(point: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32
 // ---------------------------------------------------------------------------
 // Curves
 
-/// A Bezier curve of any degree, the equivalent of LÖVE's `BezierCurve`.
+/// A Bezier curve of any degree.
 ///
 /// The curve starts at its first control point, ends at its last, and is
 /// pulled towards the ones between. Two points make a straight line, three
@@ -622,8 +614,8 @@ impl BezierCurve {
         BezierCurve { points: right }
     }
 
-    /// Points along the whole curve, for drawing it as a line. Each step
-    /// of `depth` doubles how many there are; LÖVE's default is 5.
+    /// Points along the whole curve, for drawing it as a line. Each step of
+    /// `depth` doubles how many there are; 5 is a good start.
     pub fn render(&self, depth: u32) -> Vec<Vec2> {
         self.render_segment(0.0, 1.0, depth)
     }
