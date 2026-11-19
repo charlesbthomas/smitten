@@ -4,7 +4,7 @@ description = "Example games and demos that come with Smitten, with screenshots 
 template = "section.html"
 +++
 
-Smitten's repository comes with four small games and a demo of each part
+Smitten's repository comes with five small games and a demo of each part
 of the framework. They live in
 [`crates/examples/examples`](https://github.com/charlesbthomas/smitten/tree/main/crates/examples/examples),
 and their images, sounds and shaders in `crates/examples/assets`. Run any
@@ -79,6 +79,27 @@ and F9 loads, and the game saves on every new floor and when you quit.
 `--seed 1234` starts a run on the floors that seed builds.
 
 `cargo run --example undercroft` · [Source](https://github.com/charlesbthomas/smitten/blob/main/crates/examples/examples/undercroft.rs)
+
+### Shardfall
+
+{{ figure(src="shardfall.png", alt="A glowing arrowhead ship fires a stream of bullets at neon shapes in a dark grid arena, while an explosion of amber sparks sends a shockwave across the screen.") }}
+
+A twin-stick arena shooter. Waves of glowing shapes warp into an arena
+larger than the screen: seekers that chase you, splitters that burst into
+shards, and lancers that circle and fire volleys of orbs. Every kill raises
+a score multiplier, and taking a hit resets it.
+
+It shows gamepad sticks, triggers and rumble with a keyboard and mouse
+fallback, a fixed-size bullet pool, thousands of particles, screen shake
+driven by smooth noise, a full-screen shader with shockwaves, color split
+and bloom, and sounds made in code that play where they happen in the arena.
+
+On a gamepad, the left stick moves, the right stick aims and fires, and A or
+a shoulder button dashes. With a keyboard, W, A, S and D move, the mouse
+aims, the left button fires, and Space or the right button dashes. Tab, or
+Back on a gamepad, switches the screen effects off to compare.
+
+`cargo run --example shardfall` · [Source](https://github.com/charlesbthomas/smitten/blob/main/crates/examples/examples/shardfall.rs)
 
 ## Demos
 
