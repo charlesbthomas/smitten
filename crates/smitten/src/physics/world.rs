@@ -484,6 +484,7 @@ impl World {
     /// `(gravity_x, gravity_y)` units per second, every second. Positive y
     /// is down, so `World::new(0.0, 9.81 * 30.0)` is Earth's gravity at
     /// the default 30 units to a meter.
+    #[doc(alias = "love.physics.newWorld")]
     pub fn new(gravity: impl Into<Vec2>) -> World {
         let Vec2 {
             x: gravity_x,
@@ -662,6 +663,7 @@ impl World {
 
     /// Creates a body at `(x, y)`. It has no shape until fixtures are
     /// added to it, for example with [`Body::add_rectangle`].
+    #[doc(alias = "love.physics.newBody")]
     pub fn new_body(&self, position: impl Into<Vec2>, body_type: BodyType) -> Body {
         let Vec2 { x, y } = position.into();
         let builder = match body_type {

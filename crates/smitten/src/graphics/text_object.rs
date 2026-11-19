@@ -54,6 +54,7 @@ struct Cache {
 impl Text {
     /// Makes a `Text` in `font` holding `text` at its top-left corner. An
     /// empty string makes it start out empty.
+    #[doc(alias = "love.graphics.newText")]
     pub fn new<'a>(font: &Font, text: impl Into<TextSpans<'a>>) -> Text {
         let mut made = Text {
             font: font.clone(),

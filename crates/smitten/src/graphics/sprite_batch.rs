@@ -97,6 +97,7 @@ const VERTICES_PER_SPRITE: usize = 6;
 impl SpriteBatch {
     /// Creates an empty batch that draws `image`, with room reserved for
     /// `capacity` sprites.
+    #[doc(alias = "love.graphics.newSpriteBatch")]
     pub fn new(image: &Image, capacity: usize) -> SpriteBatch {
         SpriteBatch::with_usage(image, capacity, SpriteBatchUsage::default())
     }

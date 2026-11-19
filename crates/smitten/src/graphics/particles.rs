@@ -184,6 +184,7 @@ impl Particle {
 impl ParticleSystem {
     /// Creates a system that draws each particle as `image` and holds at
     /// most `max_particles` at once.
+    #[doc(alias = "love.graphics.newParticleSystem")]
     pub fn new(image: &Image, max_particles: usize) -> ParticleSystem {
         ParticleSystem {
             texture: image.clone(),

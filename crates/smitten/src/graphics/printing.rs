@@ -9,6 +9,7 @@ impl Font {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
+    #[doc(alias = "love.graphics.newFont")]
     pub fn load(path: impl AsRef<Path>, size: f32) -> Result<Font, FontError> {
         Font::load_with(path, size, FontSettings::default())
     }

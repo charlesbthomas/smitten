@@ -1,0 +1,4 @@
+<figure>
+  <img src="{{ get_url(path='images/' ~ src) }}" alt="{{ alt }}" loading="lazy"{% if width %} width="{{ width }}"{% endif %}>
+  {% if caption %}<figcaption>{{ caption }}</figcaption>{% endif %}
+</figure>

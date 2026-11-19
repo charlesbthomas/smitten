@@ -707,6 +707,7 @@ impl Body {
 
     /// Gives the body a copy of `shape` as a new fixture, LÖVE's
     /// `newFixture`. The fixture's density starts at 1.0.
+    #[doc(alias = "love.physics.newFixture")]
     pub fn add_shape(&self, shape: &Shape) -> Fixture {
         let fixture = self.add(ColliderBuilder::new(shape.shape.clone()).position(shape.offset));
         fixture.set_ghosts(shape);

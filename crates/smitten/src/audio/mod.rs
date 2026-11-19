@@ -596,6 +596,7 @@ impl Source {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
+    #[doc(alias = "love.audio.newSource")]
     pub fn load(path: impl AsRef<Path>, kind: SourceType) -> Result<Source, AudioError> {
         let path = path.as_ref();
         let bytes = crate::filesystem::read(path).map_err(|source| AudioError::Read {

@@ -32,6 +32,7 @@ pub struct ImageData {
 
 impl ImageData {
     /// Creates `width` by `height` transparent black pixels.
+    #[doc(alias = "love.image.newImageData")]
     pub fn new(width: u32, height: u32) -> ImageData {
         ImageData {
             width,

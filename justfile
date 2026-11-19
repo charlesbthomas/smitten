@@ -5,6 +5,8 @@
 
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
+python := if os_family() == "windows" { "python" } else { "python3" }
+
 # List the recipes
 default:
     @just --list
@@ -187,3 +189,11 @@ setup:
 
     echo
     echo 'Done. Try `just run lantern`.'
+
+# Build the documentation site, with the API reference, into site/public. Needs Zola.
+docs:
+    {{ python }} site/tools/build.py
+
+# Build the documentation site and serve it at http://127.0.0.1:1111
+docs-serve:
+    {{ python }} site/tools/build.py --serve

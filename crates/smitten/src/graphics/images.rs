@@ -8,6 +8,7 @@ impl Image {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes, which
     /// normally means inside the game's `assets` folder.
+    #[doc(alias = "love.graphics.newImage")]
     pub fn load(path: impl AsRef<Path>) -> Result<Image, ImageError> {
         image::load(path.as_ref(), ImageSettings::default())
     }
@@ -25,6 +26,7 @@ impl Image {
 impl ImageData {
     /// Loads an image file into memory, where its pixels can be read and
     /// changed. See [`ImageData`].
+    #[doc(alias = "love.image.newImageData")]
     pub fn load(path: impl AsRef<Path>) -> Result<ImageData, ImageError> {
         let (width, height, rgba) = image::load_rgba(path.as_ref())?;
         Ok(ImageData::from_rgba(width, height, rgba))

@@ -1,0 +1,21 @@
+# The Smitten user guide, built with Zola (https://www.getzola.org).
+# `just docs` builds it, and `just docs-serve` previews it with the API
+# reference. The GitHub Pages workflow sets base_url for the published site.
+base_url = "https://charlesbthomas.github.io/smitten"
+title = "Smitten"
+description = "A LÖVE-style 2D game framework for Rust"
+compile_sass = false
+build_search_index = false
+generate_feeds = false
+
+[markdown]
+highlight_code = true
+highlight_theme = "css"
+highlight_themes_css = [
+    { theme = "OneHalfLight", filename = "syntax-light.css" },
+    { theme = "OneHalfDark", filename = "syntax-dark.css" },
+]
+smart_punctuation = false
+
+[extra]
+repo = "https://github.com/charlesbthomas/smitten"

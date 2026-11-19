@@ -686,6 +686,7 @@ pub struct Quad {
 impl Quad {
     /// Describes the `width` by `height` region whose top-left corner is at
     /// `(x, y)` in an image of `sheet_width` by `sheet_height` pixels.
+    #[doc(alias = "love.graphics.newQuad")]
     pub fn new(
         position: impl Into<Vec2>,
         size: impl Into<Vec2>,

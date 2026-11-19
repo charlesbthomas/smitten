@@ -2,9 +2,16 @@
 
 A LÖVE-style 2D game framework for Rust.
 
-Smitten aims to feel like [LÖVE](https://love2d.org): you write `load`,
-`update` and `draw`, and call modules such as `graphics` and `keyboard` from
-anywhere. It is built on SDL3 and its GPU API.
+You write `load`, `update` and `draw`, and call modules such as `graphics`,
+`audio` and `keyboard` from anywhere, the way you would in
+[LÖVE](https://love2d.org). Smitten is built on SDL3 and its GPU API.
+
+**[Read the guide](https://charlesbthomas.github.io/smitten/)** ·
+[Examples](https://charlesbthomas.github.io/smitten/examples/) ·
+[API reference](https://charlesbthomas.github.io/smitten/api/smitten/) ·
+[Coming from LÖVE](https://charlesbthomas.github.io/smitten/guide/coming-from-love/)
+
+![Lantern, one of the example games](site/static/images/lantern.png)
 
 ```rust
 use smitten::{graphics, Color, Config, Game};
@@ -27,174 +34,88 @@ fn main() {
 }
 ```
 
-## Status
+## Features
 
-Early. A window (with fullscreen and an icon), the game loop, keyboard, mouse and gamepad input, timing,
-shapes, images, text, the transform stack, canvases, blend modes, the
-scissor, the stencil, particle systems, sprite batches, save files, random numbers and noise, physics, and audio (WAV, Ogg Vorbis, MP3 and FLAC, static or
-streamed, positional, with filters and effects, and readable as samples) work, as do custom shaders written in WGSL. Rendering currently
-uses Vulkan only, so macOS is not supported yet. Every LÖVE function
-that means something in Rust on the desktop has a smitten equivalent;
-[docs/coming-from-love.md](docs/coming-from-love.md) shows how calls
-translate, and [docs/love-parity.md](docs/love-parity.md) lists what is
-left out on purpose.
+- **The whole LÖVE API.** Every LÖVE 11.5 function that means something in
+  Rust on the desktop has a Smitten equivalent: graphics, audio, input,
+  physics, files, video and the rest. LÖVE names that changed are search
+  aliases in the API docs.
+- **Graphics:** shapes, images, text, canvases, WGSL shaders, the stencil,
+  sprite batches, particles, meshes and automatic batching.
+- **Audio:** WAV, Ogg Vorbis, MP3 and FLAC, static or streamed, positional,
+  with filters and effects.
+- **Physics** on [Rapier](https://rapier.rs), with LÖVE's world, body,
+  fixture and joint API.
+- **High-DPI and fixed design sizes**, including pixel-perfect scaling for
+  pixel art.
+- **A blue error screen** instead of a vanishing window when a game panics,
+  and **hot reload** of images, shaders, fonts and sounds while it runs.
+- **`cargo smitten package`**, which builds a release with SDL linked in and
+  zips it with the game's assets.
 
-## Layout
+Smitten runs on Windows and Linux. Rendering uses Vulkan only, so macOS is
+not supported yet.
 
-Smitten is a Cargo workspace. Games depend only on `smitten`.
+## Quick start
+
+SDL3 is built from source on the first build, which needs CMake and a C
+compiler. [just](https://github.com/casey/just) 1.44 or newer installs
+everything, including Rust:
+
+```sh
+git clone https://github.com/charlesbthomas/smitten
+cd smitten
+just setup
+just run lantern
+```
+
+To use Smitten in your own game, add it from Git. It isn't on crates.io yet:
+
+```toml
+[dependencies]
+smitten = { git = "https://github.com/charlesbthomas/smitten" }
+```
+
+Put images, sounds and fonts in an `assets` folder next to your
+`Cargo.toml`. [Getting started](https://charlesbthomas.github.io/smitten/guide/getting-started/)
+goes through it step by step, including installing the tools by hand.
+
+## Examples
+
+`cargo run --example <name>` (or `just run <name>`) runs one from the
+workspace root. There are three small games, `lantern`, `pong` and `topple`,
+and a demo of each part of the framework: `hello`, `sprites`, `shapes`,
+`text`, `input`, `audio`, `spatial_audio`, `canvas`, `shader`, `stencil`,
+`particles`, `mesh`, `physics`, `lighting`, `design`, `graphics_extras`,
+`video`, `rumble`, and `benchmark` (run it with `--release`). The
+[examples page](https://charlesbthomas.github.io/smitten/examples/) has
+screenshots.
+
+## Workspace
+
+Games depend only on `smitten`.
 
 | Crate | Purpose |
 | --- | --- |
 | `crates/smitten` | The public API: the `Game` trait, `run`, and the LÖVE-style modules. |
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
-| `crates/examples` | Example games, including Pong, and the assets they load. |
-| `crates/cargo-smitten` | The `cargo smitten package` command, which builds a game for release. |
+| `crates/examples` | The example games and the assets they load. |
+| `crates/cargo-smitten` | The `cargo smitten package` command. |
+| `site` | The documentation site, built with [Zola](https://www.getzola.org). |
 
-## Running the examples
+## Development
 
-```
-cargo run --example hello
-cargo run --example sprites
-cargo run --example shapes
-cargo run --example input
-cargo run --example text
-cargo run --example audio
-cargo run --example spatial_audio
-cargo run --example canvas
-cargo run --example shader
-cargo run --example stencil
-cargo run --example particles
-cargo run --example mesh
-cargo run --example physics
-cargo run --example rumble
-cargo run --example lighting
-cargo run --example pong
-cargo run --example topple
-cargo run --example lantern
-cargo run --example design
-cargo run --example graphics_extras
-cargo run --release --example benchmark
-```
+| Command | What it does |
+| --- | --- |
+| `just setup` | Installs Rust, CMake, a C compiler and SDL's build dependencies. |
+| `just run <example>` | Runs an example. |
+| `just docs` | Builds the documentation site and API reference into `site/public`. Needs Zola and Python. |
+| `just docs-serve` | Builds the site and serves it at http://127.0.0.1:1111. |
 
-The examples live in `crates/examples/examples`. Run these commands from
-the workspace root.
+CI runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test --workspace` and `cargo doc` with warnings as errors. The Docs
+workflow builds the site on pull requests and publishes it from `main`.
 
-The `benchmark` example measures how many sprites fit in a frame. Smitten's
-own work for 10,000 moving, turning, tinted sprites is under a millisecond
-a frame, so the graphics card sets the limit.
-
-SDL3 is built from source on the first build, which needs CMake and a C
-compiler.
-
-The quickest way to get these is [just](https://github.com/casey/just)
-1.44 or newer (`winget install Casey.Just`, `cargo install just`, or your
-package manager), then from the workspace root:
-
-```sh
-just setup
-```
-
-On Windows this installs the Visual Studio Build Tools with the C++
-workload, CMake and rustup through winget. On Linux it installs CMake, a C
-compiler and SDL's build dependencies with apt, dnf or pacman, plus rustup.
-On macOS it checks for the Xcode command line tools and installs CMake with
-Homebrew. To do it by hand instead:
-
-- **Windows:** Visual Studio Build Tools with the C++ workload, plus CMake.
-  The Build Tools include a copy of CMake that is only on the path inside
-  "Developer PowerShell for VS 2022", so run cargo from there or install
-  CMake separately.
-- **macOS:** Xcode command line tools, plus CMake.
-- **Linux:** CMake, a C compiler, and SDL's
-  [build dependencies](https://wiki.libsdl.org/SDL3/README-linux#build-dependencies).
-
-To link against an SDL3 that is already installed, build with
-`--no-default-features`.
-
-## Screen sizes and high-DPI displays
-
-Sizes and positions are measured in units, as in LÖVE. On an ordinary
-display a unit is one pixel. On a high-DPI display (a Retina screen, or
-Windows set to 150%) a unit covers more pixels, so an 800 by 600 game looks
-the same size everywhere and is simply drawn sharper. Text and canvases are
-made as sharp as the screen automatically. `graphics::pixel_dimensions()`
-and `window::dpi_scale()` give the real numbers when you need them, and
-`Config { dpi_scaling: false, .. }` switches to raw pixels.
-
-A game laid out for one fixed size can set a design size instead:
-
-```rust
-smitten::run::<MyGame>(Config {
-    resizable: true,
-    design_size: Some((320, 180)),
-    design_scaling: Scaling::PixelPerfect,
-    ..Config::default()
-});
-```
-
-The game then always draws in a 320 by 180 space and Smitten scales the
-picture to the window, with black bars where the shapes differ. The mouse
-position arrives in the same space. `Scaling::PixelPerfect` draws at
-exactly that many pixels and enlarges by whole numbers, for pixel art.
-`Scaling::Fit`, the default, scales smoothly and draws at the window's full
-resolution, for high-resolution art.
-
-## Physics
-
-`smitten::physics` follows `love.physics`: a `World` holds bodies, bodies
-get fixtures (circles, rectangles, polygons, edges, chains), and joints tie
-bodies together. `world.contacts()` reports what started or stopped
-touching, in place of LÖVE's contact callbacks. The simulation is done by
-[Rapier](https://rapier.rs) where LÖVE uses Box2D, so the API carries over
-but the exact motion does not.
-
-A game that does not use physics can leave the engine out of its build:
-
-```toml
-smitten = { version = "...", default-features = false, features = ["sdl-from-source"] }
-```
-
-## The error screen
-
-If a game panics, the window does not vanish. It turns blue and shows the
-message and the file and line it came from, as LÖVE's error screen does,
-until Escape is pressed or the window is closed. The message is still
-printed to the terminal, and the program still ends with the panic.
-A game can draw its own screen instead, or quit straight away, with
-`smitten::set_error_handler`.
-
-## Hot reload
-
-Under `cargo run`, an image, shader, font or sound loaded from a file is
-loaded again when that file is saved, so edits show up in the running
-game. A file with a mistake in it prints the error and the game keeps
-using the last version that worked. A sound that is playing starts over
-with the new version.
-
-This is on in debug builds and off in release builds. Set
-`Config::hot_reload` to choose.
-
-## Releasing a game
-
-`cargo smitten package` builds a game in release mode and gathers what a
-player needs: the executable, with SDL linked into it, and the game's
-`assets` folder. It writes a folder and a zip of that folder to
-`target/package`.
-
-```
-cargo install --path crates/cargo-smitten
-cd my-game
-cargo smitten package
-```
-
-To try it on an example from this workspace without installing:
-
-```
-cargo run -p cargo-smitten -- package -p smitten-examples --example pong
-```
-
-The package is for the platform it was built on, so build on Windows for
-Windows players and on Linux for Linux players. On Windows, add
-`#![windows_subsystem = "windows"]` to the top of the game's `main.rs` so
-it does not open a console window alongside the game.
+[docs/love-parity.md](docs/love-parity.md) tracks what LÖVE has that Smitten
+leaves out on purpose.
