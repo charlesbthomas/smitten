@@ -46,7 +46,13 @@ impl Decoder {
             .format(
                 &Hint::new(),
                 stream,
-                &FormatOptions::default(),
+                // Gapless: the encoder's start delay and end padding are
+                // trimmed, so a file decodes to the length it was made at
+                // and stems of one song stay the same length as they loop.
+                &FormatOptions {
+                    enable_gapless: true,
+                    ..Default::default()
+                },
                 &MetadataOptions::default(),
             )
             .map_err(|error| format!("unrecognized audio format ({error})"))?;
@@ -261,5 +267,18 @@ pub(crate) mod tests {
     #[test]
     fn data_that_is_not_audio_is_an_error() {
         assert!(Decoder::open(Arc::from(&b"definitely not audio"[..])).is_err());
+    }
+
+    /// A Vorbis file decodes to exactly the frames it was encoded from,
+    /// with no start delay or end padding left in.
+    #[test]
+    fn ogg_vorbis_decodes_to_its_own_length() {
+        let bytes: Arc<[u8]> = include_bytes!("../../../examples/assets/loop.ogg")
+            .as_slice()
+            .into();
+        let decoder = Decoder::open(bytes).unwrap();
+        assert_eq!(decoder.total_frames(), Some(176_400));
+        let decoded = decoder.decode_all();
+        assert_eq!((decoded.rate, decoded.frames.len()), (44_100, 176_400));
     }
 }
