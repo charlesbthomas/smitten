@@ -8,14 +8,12 @@ Smitten keeps LÖVE's shape: a game has `load`, `update` and `draw`, and
 modules such as `graphics`, `keyboard` and `audio` can be called from
 anywhere. The names and argument lists follow Rust conventions instead
 of Lua's, so a call rarely ports word for word. This page lists the
-patterns that change. LÖVE names that changed are search aliases in
-the [API docs](../../api/smitten/index.html): search for
-`love.graphics.newImage` or `Source:getDuration` and the docs show the
-Smitten item that does it.
+patterns that change, and the
+[API reference](../../api/smitten/index.html) has the details of each
+item.
 
 [What is left out](#what-is-left-out) lists what LÖVE has that Smitten
-leaves out on purpose, and [LÖVE name lookup](@/guide/love-names.md) finds
-the Smitten name for any LÖVE function whose name changed.
+leaves out on purpose.
 
 ## A small game
 

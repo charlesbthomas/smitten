@@ -155,5 +155,4 @@ smitten = { git = "https://github.com/charlesbthomas/smitten", default-features 
 - [The game loop](@/guide/game-loop.md) explains `load`, `update`, `draw`
   and the other callbacks.
 - [Drawing](@/guide/drawing.md) covers shapes, images and text.
-- [Coming from LÖVE](@/guide/coming-from-love.md) is the quickest route
-  if you already know LÖVE.
+- [The examples](@/examples/_index.md) show complete games.

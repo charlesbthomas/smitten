@@ -8,7 +8,7 @@ nav = "Windows and screens"
 
 ## Units and pixels
 
-Sizes and positions are measured in units, as in LÖVE. On an ordinary
+Sizes and positions are measured in units. On an ordinary
 display a unit is one pixel. On a high-DPI display, such as a Retina screen
 or Windows set to 150%, a unit covers more pixels, so an 800 by 600 game
 looks the same size everywhere and is simply drawn sharper. Text and
@@ -69,13 +69,12 @@ FullscreenType::Exclusive)` changes the display mode instead, and
 
 ## The window module
 
-{{ api(path="window/index.html", text="window") }} is the equivalent of
-`love.window`:
+{{ api(path="window/index.html", text="window") }} controls the window:
 
 - `set_title`, `set_size`, `set_position`, `minimize`, `maximize` and
   `restore` change the window.
 - `set_mode(width, height, mode)` and `update_mode` change several settings
-  at once, as `love.window.setMode` does.
+  at once.
 - `set_icon(path)` sets the icon, as `Config::icon` does at startup.
 - `set_vsync` and `set_msaa` change presentation.
 - `display_count`, `desktop_dimensions`, `display_name` and

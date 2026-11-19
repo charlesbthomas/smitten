@@ -49,7 +49,7 @@ sprites added after it, and `clear` empties the batch.
 
 A {{ api(path="graphics/struct.ParticleSystem.html", text="ParticleSystem") }}
 emits images that move, spin, grow and change color over their lives, for
-fire, smoke, sparks and the like. Its settings follow LÖVE's:
+fire, smoke, sparks and the like:
 
 ```rust
 use std::f32::consts::FRAC_PI_2;

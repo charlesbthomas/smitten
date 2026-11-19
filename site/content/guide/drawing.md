@@ -5,7 +5,7 @@ weight = 3
 +++
 
 Everything here is in the {{ api(path="graphics/index.html", text="graphics") }}
-module, the equivalent of `love.graphics`. Positions are in units from the
+module. Positions are in units from the
 top-left corner of the window, with y pointing down. Everything you draw is
 tinted by the current color and moved by the current transform.
 
@@ -30,8 +30,8 @@ graphics::polyline(&[(320.0, 240.0), (360.0, 160.0), (400.0, 240.0)]);
 graphics::points(&[(440.0, 200.0), (460.0, 200.0)]);
 ```
 
-`DrawMode::Fill` fills a shape and `DrawMode::Line` outlines it. As in
-LÖVE, a filled polygon must be convex; use
+`DrawMode::Fill` fills a shape and `DrawMode::Line` outlines it. A
+filled polygon must be convex; use
 {{ api(path="math/fn.triangulate.html", text="math::triangulate") }} to split
 a concave one into triangles.
 
@@ -46,8 +46,8 @@ draw dashes.
 
 ## Colors
 
-{{ api(path="struct.Color.html", text="Color") }} components go from 0 to 1,
-as in LÖVE 11. `set_color` changes the color everything after it is drawn
+{{ api(path="struct.Color.html", text="Color") }} components go from 0 to 1.
+`set_color` changes the color everything after it is drawn
 in, until it is changed again:
 
 ```rust
@@ -90,7 +90,7 @@ and call `Image::from_image_data`.
 canvases, sprite batches, meshes, particle systems, text and video) and
 where to put it. A position is enough for most things. For more, build a
 {{ api(path="graphics/struct.DrawParams.html", text="DrawParams") }}, which
-replaces LÖVE's `x, y, r, sx, sy, ox, oy, kx, ky` arguments:
+adds rotation, scale, an origin and shear:
 
 ```rust
 use smitten::graphics::{self, DrawParams};
@@ -217,8 +217,7 @@ graphics::set_blend_mode(BlendMode::Alpha);
 
 The others are `Subtract`, `Replace`, `Screen`, `Lighten`, `Darken` and
 `Premultiplied`, which is the one to use when drawing a canvas. Add an
-alpha mode with `mode.with_alpha(alpha)`, as LÖVE's second argument to
-`setBlendMode` does.
+alpha mode with `mode.with_alpha(alpha)`.
 
 ## Screenshots
 

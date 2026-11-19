@@ -114,3 +114,10 @@ Games depend only on `smitten`.
 CI runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
 `cargo test --workspace` and `cargo doc` with warnings as errors. The Docs
 workflow builds the site on pull requests and publishes it from `main`.
+
+## License
+
+Smitten is under the [zlib license](LICENSE), the same as SDL.
+It is not affiliated with or endorsed by the LÖVE project. The built-in
+font is Bitstream Vera Sans, under its own
+[license](crates/smitten/src/graphics/fonts/LICENSE-Vera.txt).

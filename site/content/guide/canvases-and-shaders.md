@@ -33,9 +33,8 @@ graphics::draw(&scene, DrawParams::at((0.0, 0.0)).scale(4.0));
 graphics::set_blend_mode(BlendMode::Alpha);
 ```
 
-`graphics::set_canvas(Some(&canvas))` and `set_canvas(None)` work too, as
-`setCanvas` does in LÖVE. Unlike LÖVE, a canvas keeps its contents until
-you clear it, so a canvas you never clear collects everything drawn to it,
+`graphics::set_canvas(Some(&canvas))` and `set_canvas(None)` work too. A
+canvas keeps its contents until you clear it, so a canvas you never clear collects everything drawn to it,
 like paint.
 
 A canvas is as sharp as the screen by default. For pixel art, give it
@@ -65,7 +64,7 @@ does the scale-up for a whole game without a canvas of your own.
 
 A {{ api(path="graphics/struct.Shader.html", text="Shader") }} decides the
 color of every pixel drawn while it is active. Smitten shaders are written
-in [WGSL](https://www.w3.org/TR/WGSL/), not LÖVE's GLSL dialect. A shader
+in [WGSL](https://www.w3.org/TR/WGSL/). A shader
 defines one function, `effect`, which gets the drawing color, the texture
 coordinate and the pixel's position, and returns the pixel's color:
 
@@ -147,8 +146,8 @@ draw_grid();
 graphics::clear_stencil_test();
 ```
 
-`stencil_with(StencilWrite { .. }, draw)` chooses the action and value,
-like the extra arguments to LÖVE's `love.graphics.stencil`.
+`stencil_with(StencilWrite { .. }, draw)` chooses the action and value
+written to the stencil.
 
 {{ figure(src="stencil-example.png", alt="A colorful striped pattern showing through a circle and a star, with a dark grid everywhere else.", caption="The stencil example.") }}
 
