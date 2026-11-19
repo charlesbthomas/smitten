@@ -3,7 +3,7 @@
 # reference. The GitHub Pages workflow sets base_url for the published site.
 base_url = "https://charlesbthomas.github.io/smitten"
 title = "Smitten"
-description = "A LÖVE-style 2D game framework for Rust"
+description = "A 2D game framework for Rust"
 compile_sass = false
 build_search_index = false
 generate_feeds = false

@@ -4,8 +4,7 @@ description = "Sound effects, music, positional sound, filters, effects and soun
 weight = 7
 +++
 
-The {{ api(path="audio/index.html", text="audio") }} module is the equivalent
-of `love.audio`. It plays WAV, Ogg Vorbis, MP3 and FLAC files.
+The {{ api(path="audio/index.html", text="audio") }} module plays sound. It plays WAV, Ogg Vorbis, MP3 and FLAC files.
 
 ## Sound effects and music
 
@@ -88,8 +87,8 @@ footsteps.set_effect("cave", None);
 footsteps.set_filter(Some(Filter::low_pass(0.1)));
 ```
 
-The settings follow the OpenAL effects LÖVE uses, with the same names,
-defaults and ranges. Chorus, distortion, flanger, compressor and
+The settings follow OpenAL's effects, with the same names, defaults and
+ranges. Chorus, distortion, flanger, compressor and
 equalizer effects are there too.
 
 {{ figure(src="spatial-audio-example.png", alt="A ring for the listener in the middle of the window and a dot for the sound that follows the mouse.", caption="The spatial audio example: a hum made in code follows the mouse, with reverb and echo to switch on.") }}
@@ -123,8 +122,8 @@ piece at a time, and microphones can be recorded with
 
 ## Video
 
-Videos are Ogg Theora files with an optional Vorbis sound track, as in
-LÖVE. Load one with `graphics::Video::load`, call `play`, and draw it like an
+Videos are Ogg Theora files with an optional Vorbis sound track. Load
+one with `graphics::Video::load`, call `play`, and draw it like an
 image. FFmpeg makes one from almost any video:
 
 ```sh

@@ -8,8 +8,7 @@ nav = "Timing, math and system"
 
 ## Timer
 
-{{ api(path="timer/index.html", text="timer") }} is the equivalent of
-`love.timer`. The `dt` passed to `update` is usually all a game needs, but:
+{{ api(path="timer/index.html", text="timer") }} measures time. The `dt` passed to `update` is usually all a game needs, but:
 
 - `timer::time()` is the seconds since the game started, as an `f64`. Use
   it for animations that depend on time alone.
@@ -28,8 +27,8 @@ window::set_title(&format!("My game ({} FPS)", timer::fps()));
 
 ## Random numbers and noise
 
-{{ api(path="math/index.html", text="math") }} is the equivalent of
-`love.math`. It works without a running game, so it can be used in tests
+{{ api(path="math/index.html", text="math") }} has random numbers,
+noise and a little geometry. It works without a running game, so it can be used in tests
 and tools:
 
 ```rust
@@ -56,8 +55,8 @@ vector arithmetic built in.
 
 ## Events
 
-{{ api(path="event/index.html", text="event") }} is the equivalent of
-`love.event`. `event::quit()` asks the game to close. `event::push(value)`
+{{ api(path="event/index.html", text="event") }} handles game-level
+events. `event::quit()` asks the game to close. `event::push(value)`
 sends the game an event of any type, which arrives in the `custom_event`
 callback at the start of the next frame:
 
@@ -82,7 +81,7 @@ fn custom_event(&mut self, event: CustomEvent) {
 
 ## The system
 
-{{ api(path="system/index.html", text="system") }} is the equivalent of
-`love.system`: `system::os()`, `processor_count()`, `clipboard_text()` and
+{{ api(path="system/index.html", text="system") }} describes the
+computer the game runs on: `system::os()`, `processor_count()`, `clipboard_text()` and
 `set_clipboard_text`, `open_url`, `power_info()` for the battery, and
 `preferred_locales()` for the player's languages.

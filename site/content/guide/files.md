@@ -6,8 +6,7 @@ weight = 9
 
 ## Where files come from
 
-The {{ api(path="filesystem/index.html", text="filesystem") }} module, the
-equivalent of `love.filesystem`, reads from two places and writes to one:
+The {{ api(path="filesystem/index.html", text="filesystem") }} module reads from two places and writes to one:
 
 - The **asset directory** holds the files shipped with the game. Under
   `cargo run` it is the `assets` folder next to the game's `Cargo.toml`. In
@@ -17,7 +16,7 @@ equivalent of `love.filesystem`, reads from two places and writes to one:
   defaults to the executable's name.
 
 Relative paths are looked up in the save directory first and then in the
-asset directory, as in LÖVE, so a saved file can override a shipped one.
+asset directory, so a saved file can override a shipped one.
 `Config::append_identity` reverses the order. Image, font, shader and sound
 loaders use the same lookup, and writing always goes to the save
 directory.
@@ -69,8 +68,8 @@ Mounted files cannot be written.
 
 ## The data module
 
-{{ api(path="data/index.html", text="smitten::data") }}, the equivalent of
-`love.data`, compresses, encodes, hashes and packs bytes. Like `math`, it
+{{ api(path="data/index.html", text="smitten::data") }}
+compresses, encodes, hashes and packs bytes. Like `math`, it
 works on any thread and without a running game.
 
 ```rust
@@ -89,16 +88,17 @@ println!("{}", data::encode(EncodeFormat::Hex, &digest));
 
 Zlib, gzip, deflate and LZ4 compression, Base64 and hex encoding, MD5 and
 the SHA family of hashes are supported. `data::pack` and `unpack` read and
-write binary data in the format strings of Lua's `string.pack`, which
-`love.data.pack` uses.
+write binary data described by format strings, in the style of Lua's
+`string.pack`.
 
 ## Threads
 
 The framework modules only work on the main thread, but `data`, `math` and
-`thread` work anywhere. Start threads with `std::thread::spawn`, which does
-the job of `love.thread.newThread`. Rust's own channels are often all you
-need; {{ api(path="thread/struct.Channel.html", text="thread::Channel") }} has
-LÖVE's methods, for code ported from LÖVE:
+`thread` work anywhere. Start threads with `std::thread::spawn`. Rust's own
+channels are often all you need;
+{{ api(path="thread/struct.Channel.html", text="thread::Channel") }} adds
+channels any thread can both send and receive on, and waiting until a
+message is read:
 
 ```rust
 use smitten::thread::Channel;
