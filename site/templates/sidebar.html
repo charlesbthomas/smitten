@@ -1,0 +1,23 @@
+{% set guide = get_section(path="guide/_index.md") %}
+<aside class="sidebar">
+  <details open>
+    <summary>Guide</summary>
+    <ul>
+      <li><a href="{{ guide.permalink }}"{% if current_path == guide.path %} class="active"{% endif %}>Overview</a></li>
+      {% for p in guide.pages %}
+      <li><a href="{{ p.permalink }}"{% if current_path == p.path %} class="active"{% endif %}>{{ p.extra.nav | default(value=p.title) }}</a></li>
+      {% endfor %}
+    </ul>
+    <p class="side-head">More</p>
+    <ul>
+      <li><a href="{{ get_url(path='@/examples/_index.md') }}"{% if current_path == "/examples/" %} class="active"{% endif %}>Examples</a></li>
+      <li><a href="{{ get_url(path='api/smitten/index.html') }}">API reference</a></li>
+    </ul>
+  </details>
+</aside>
+<script>
+  // Start with the guide's contents folded away on narrow screens.
+  if (window.matchMedia("(max-width: 860px)").matches) {
+    document.querySelector(".sidebar details").removeAttribute("open");
+  }
+</script>

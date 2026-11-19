@@ -205,6 +205,7 @@ impl Drop for Inner {
 
 impl Shader {
     /// Compiles a shader from WGSL source.
+    #[doc(alias = "love.graphics.newShader")]
     pub fn new(source: &str) -> Result<Shader, ShaderError> {
         let info =
             context::with(|ctx| ctx.backend.create_shader(source)).map_err(ShaderError::Compile)?;
@@ -224,6 +225,7 @@ impl Shader {
     ///
     /// A relative path is looked up as [`crate::filesystem`] describes,
     /// which normally means inside the game's `assets` folder.
+    #[doc(alias = "love.graphics.newShader")]
     pub fn from_file(path: impl AsRef<Path>) -> Result<Shader, ShaderError> {
         let path = path.as_ref();
         let source = crate::filesystem::read_string(path).map_err(|source| ShaderError::Read {

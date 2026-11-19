@@ -128,6 +128,7 @@ impl Canvas {
     /// It is made as sharp as the screen, so on a high-DPI display it
     /// holds more pixels than units, as in LÖVE. Use
     /// [`Canvas::with_settings`] to choose the sharpness instead.
+    #[doc(alias = "love.graphics.newCanvas")]
     pub fn new(width: u32, height: u32) -> Result<Canvas, GraphicsError> {
         Canvas::with_settings(width, height, CanvasSettings::default())
     }

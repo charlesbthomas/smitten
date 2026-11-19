@@ -265,6 +265,7 @@ impl Font {
     }
 
     /// Creates the built-in font, Bitstream Vera Sans, at `size` units.
+    #[doc(alias = "love.graphics.newFont")]
     pub fn default_at(size: f32) -> Font {
         Font::from_bytes(DEFAULT_FONT, size).expect("the built-in font is valid")
     }

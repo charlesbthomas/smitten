@@ -27,6 +27,14 @@ fn main() {
 }
 ```
 
+## Documentation
+
+The user guide, the examples and the API reference are at
+**https://charlesbthomas.github.io/smitten/**. The site's source is in
+[`site`](site): Markdown pages built with [Zola](https://www.getzola.org),
+plus the rustdoc API reference. Run `just docs-serve` to preview it at
+http://127.0.0.1:1111, which needs Zola and Python.
+
 ## Status
 
 Early. A window (with fullscreen and an icon), the game loop, keyboard, mouse and gamepad input, timing,

@@ -52,6 +52,7 @@ impl Transform {
     };
 
     /// The identity: a transformation that changes nothing.
+    #[doc(alias = "love.math.newTransform")]
     pub fn new() -> Self {
         Self::IDENTITY
     }

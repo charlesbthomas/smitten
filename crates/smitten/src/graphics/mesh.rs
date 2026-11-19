@@ -527,6 +527,7 @@ impl fmt::Debug for Mesh {
 impl Mesh {
     /// Creates a mesh from its vertices, in the standard format: a
     /// position and texture coordinate of two floats each, and a color.
+    #[doc(alias = "love.graphics.newMesh")]
     pub fn new(vertices: &[MeshVertex], mode: MeshDrawMode) -> Mesh {
         let format = Format::standard();
         let data = vec![0; vertices.len() * format.stride as usize];

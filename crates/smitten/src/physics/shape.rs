@@ -68,6 +68,7 @@ impl Shape {
 
     /// A circle centered on the body's origin. LÖVE's
     /// `newCircleShape(radius)`.
+    #[doc(alias = "love.physics.newCircleShape")]
     pub fn circle(radius: f32) -> CircleShape {
         Shape::circle_at((0.0, 0.0), radius)
     }
@@ -87,6 +88,7 @@ impl Shape {
 
     /// A rectangle of `width` by `height` centered on the body's origin.
     /// LÖVE's `newRectangleShape(width, height)`. It is a polygon.
+    #[doc(alias = "love.physics.newRectangleShape")]
     pub fn rectangle(size: impl Into<Vec2>) -> PolygonShape {
         let Vec2 {
             x: width,
@@ -122,6 +124,7 @@ impl Shape {
     /// LÖVE's `newPolygonShape`.
     ///
     /// Panics if the points do not span an area.
+    #[doc(alias = "love.physics.newPolygonShape")]
     pub fn polygon(points: &[impl Into<Vec2> + Copy]) -> PolygonShape {
         let points = crate::math::tuples(points);
         let points = &points[..];
@@ -132,6 +135,7 @@ impl Shape {
     }
 
     /// A thin line from `(x1, y1)` to `(x2, y2)`. LÖVE's `newEdgeShape`.
+    #[doc(alias = "love.physics.newEdgeShape")]
     pub fn edge(anchor1: impl Into<Vec2>, anchor2: impl Into<Vec2>) -> EdgeShape {
         let Vec2 { x: x1, y: y1 } = anchor1.into();
         let Vec2 { x: x2, y: y2 } = anchor2.into();
@@ -145,6 +149,7 @@ impl Shape {
     /// LÖVE's `newChainShape`.
     ///
     /// Panics with fewer than two points.
+    #[doc(alias = "love.physics.newChainShape")]
     pub fn chain(points: &[impl Into<Vec2> + Copy], closed: bool) -> ChainShape {
         let points = crate::math::tuples(points);
         let points = &points[..];

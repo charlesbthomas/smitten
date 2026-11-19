@@ -1,0 +1,7 @@
+{#- One example game: {% example(name="pong", title="Pong", src="pong-title.png", alt="...") %}text{% end %} -#}
+<figure class="example">
+  {% if src %}<img src="{{ get_url(path='images/' ~ src) }}" alt="{{ alt }}" loading="lazy">{% endif %}
+  <h3 id="{{ title | slugify }}">{{ title }}</h3>
+  {{ body | markdown | safe }}
+  <p class="run"><code>cargo run --example {{ name }}</code> · <a href="{{ config.extra.repo }}/blob/main/crates/examples/examples/{{ name }}.rs">Source</a></p>
+</figure>
