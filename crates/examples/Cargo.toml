@@ -4,6 +4,7 @@ description = "Example games for the Smitten game framework"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]
