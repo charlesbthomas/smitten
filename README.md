@@ -8,7 +8,8 @@ You write `load`, `update` and `draw`, and call modules such as `graphics`,
 
 **[Read the guide](https://charlesbthomas.github.io/smitten/)** ·
 [Examples](https://charlesbthomas.github.io/smitten/examples/) ·
-[API reference](https://charlesbthomas.github.io/smitten/api/smitten/)
+[API reference](https://charlesbthomas.github.io/smitten/api/smitten/) ·
+[Coming from LÖVE](https://charlesbthomas.github.io/smitten/guide/coming-from-love/)
 
 ![Lantern, one of the example games](site/static/images/lantern.png)
 
