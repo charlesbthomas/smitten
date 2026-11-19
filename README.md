@@ -119,3 +119,10 @@ workflow builds the site on pull requests and publishes it from `main`.
 
 [docs/love-parity.md](docs/love-parity.md) tracks what LÖVE has that Smitten
 leaves out on purpose.
+
+## License
+
+Smitten is under the [zlib license](LICENSE), the same as LÖVE and SDL.
+It is not affiliated with or endorsed by the LÖVE project. The built-in
+font is Bitstream Vera Sans, under its own
+[license](crates/smitten/src/graphics/fonts/LICENSE-Vera.txt).

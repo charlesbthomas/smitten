@@ -4,6 +4,7 @@ description = "A LÖVE-style 2D game framework for Rust"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]
