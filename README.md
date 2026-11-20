@@ -49,10 +49,11 @@ fn main() {
 - **A blue error screen** instead of a vanishing window when a game panics,
   and **hot reload** of images, shaders, fonts and sounds while it runs.
 - **`cargo smitten package`**, which builds a release with SDL linked in and
-  zips it with the game's assets.
+  zips it with the game's assets, or makes a `.app` with an icon on macOS.
 
-Smitten runs on Windows and Linux. Rendering uses Vulkan only, so macOS is
-not supported yet.
+Smitten runs on Windows, Linux and macOS. Rendering uses SDL's GPU API:
+Vulkan on Windows and Linux, and Metal on macOS, with your WGSL shaders
+translated for each.
 
 ## Quick start
 
@@ -113,7 +114,9 @@ Games depend only on `smitten`.
 | `just docs-serve` | Builds the site and serves it at http://127.0.0.1:1111. |
 
 CI runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-`cargo test --workspace` and `cargo doc` with warnings as errors. The Docs
+`cargo test --workspace` and `cargo doc` with warnings as errors. On macOS
+it also checks every Metal shader translation with Apple's compiler, runs
+a few examples on Metal and packages one as an app. The Docs
 workflow builds the site on pull requests and publishes it from `main`.
 
 ## License

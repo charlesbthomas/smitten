@@ -4,8 +4,8 @@ description = "Install the tools, run the examples and make your first game."
 weight = 1
 +++
 
-Smitten runs on Windows and Linux. Rendering uses Vulkan, so macOS is not
-supported yet.
+Smitten runs on Windows, Linux and macOS. Rendering uses Vulkan on Windows
+and Linux and Metal on macOS.
 
 ## Install the tools
 
@@ -30,7 +30,7 @@ What `just setup` installs depends on the system:
 |---|---|
 | Windows | The Visual Studio Build Tools with the C++ workload, CMake and rustup, all through winget, then the stable Rust toolchain. Open a new terminal afterwards so the updated path takes effect. |
 | Linux | CMake, a C compiler and SDL's build dependencies with apt, dnf or pacman, plus rustup and the stable toolchain. |
-| macOS | Checks for the Xcode command line tools and installs CMake with Homebrew, ready for when the renderer supports Metal. |
+| macOS | Checks for the Xcode command line tools and installs CMake with Homebrew, plus rustup and the stable toolchain. |
 
 To install things by hand instead:
 
@@ -40,6 +40,8 @@ To install things by hand instead:
   or install CMake separately.
 - **Linux:** CMake, a C compiler and SDL's
   [build dependencies](https://wiki.libsdl.org/SDL3/README-linux#build-dependencies).
+- **macOS:** the Xcode command line tools (`xcode-select --install`) and
+  CMake.
 
 Smitten uses the 2024 edition of Rust, so it needs Rust 1.85 or newer.
 

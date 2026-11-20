@@ -46,7 +46,54 @@ cargo run -p cargo-smitten -- package -p smitten-examples --example pong
 ```
 
 A package is for the platform it was built on, so build on Windows for
-Windows players and on Linux for Linux players.
+Windows players, on Linux for Linux players and on a Mac for Mac players.
+
+## macOS: the app bundle
+
+On a Mac, `cargo smitten package` makes an app instead of a folder:
+`target/package/Name.app`, with the executable, an icon and the game's
+assets inside, and a zip of it to share. The assets go in the app's
+`Contents/Resources`, and Smitten finds them there.
+
+The app is named after the executable and gets Smitten's heart icon unless
+the game says otherwise in its `Cargo.toml`:
+
+```toml
+[package.metadata.smitten]
+name = "Pong"                    # the name Finder and the Dock show
+identifier = "com.yourname.pong" # how macOS tells apps apart
+icon = "art/icon.png"            # a square PNG, ideally 1024x1024
+minimum-macos = "11.0"           # the oldest macOS it runs on, the default
+```
+
+Set `identifier` before sharing the game; without it the app gets a
+placeholder, `com.example.<executable>`. `--name`, `--identifier` and
+`--icon` do the same from the command line. A small pixel-art icon is
+scaled up with hard edges, so it stays crisp.
+
+### Signing and notarizing
+
+Without a paid Apple Developer account the app is signed ad hoc, which is
+enough for it to run, including on Apple Silicon. macOS still warns the
+first time a downloaded copy is opened, because Apple has not checked it:
+players open it with right-click, Open, or with Open Anyway in System
+Settings, Privacy & Security.
+
+With a Developer ID certificate in your keychain, sign it properly and
+have Apple notarize it, so it opens like any other app:
+
+```sh
+# Once: store the notary service's credentials in the keychain.
+xcrun notarytool store-credentials notary --apple-id you@example.com --team-id TEAMID1234
+
+cargo smitten package --sign "Developer ID Application: Your Name (TEAMID1234)" --notarize notary
+```
+
+`--sign` signs with the hardened runtime and the microphone entitlement,
+for games that record sound; `--entitlements <file>` replaces those.
+`--notarize` uploads the zip, waits for Apple's answer, staples the ticket
+to the app and zips it again. In CI, `SMITTEN_SIGN_IDENTITY` and
+`SMITTEN_NOTARY_PROFILE` stand in for the two options.
 
 ## Windows: no console window
 

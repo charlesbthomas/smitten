@@ -2,15 +2,17 @@
 //!
 //! The game writes one function. This module wraps it in an entry point
 //! with the texture, sampler and uniform bindings SDL's GPU API expects,
-//! checks it, and translates it to SPIR-V with naga.
+//! checks it, and translates it with naga to the language the GPU driver
+//! takes: SPIR-V for Vulkan, or the Metal Shading Language for Metal.
 //!
 //! A game may also declare textures of its own, such as
 //! `var sky: texture_cube<f32>;` or `var fog: texture_3d<f32>;`, with no binding. Each gets a sampler
 //! named after it, `sky_sampler`, and the next free texture slot. A
 //! `texture_depth_2d` gets a `sampler_comparison`.
 
-use naga::back::spv;
+use naga::back::{msl, spv};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
+use std::ffi::CString;
 use std::mem::offset_of;
 
 use smitten_core::backend::{
@@ -19,8 +21,35 @@ use smitten_core::backend::{
     VertexLayoutAttribute, VertexStep,
 };
 
-/// The name of the entry point in the generated shader.
-pub(crate) const ENTRY_POINT: &std::ffi::CStr = c"smitten_fragment";
+/// The name of the fragment entry point in the WGSL the framework writes.
+const ENTRY_POINT: &str = "smitten_fragment";
+
+/// The shading language a shader is translated to, which depends on the
+/// GPU driver SDL picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShaderLanguage {
+    /// SPIR-V, for Vulkan.
+    Spirv,
+    /// Metal Shading Language source, for Metal. SDL compiles it when the
+    /// shader is created.
+    Msl,
+}
+
+/// A shader translated for the GPU driver, ready to hand to SDL.
+#[derive(Debug)]
+pub(crate) struct ShaderCode {
+    pub language: ShaderLanguage,
+    /// SPIR-V words in little-endian order, or MSL source text.
+    pub bytes: Vec<u8>,
+    /// The name of the entry point, which the translation may have
+    /// changed to avoid a word the language reserves.
+    pub entry_point: CString,
+}
+
+/// The version of the Metal Shading Language generated shaders are
+/// written in. 2.1 is the oldest every Mac SDL's Metal driver runs on
+/// supports.
+const MSL_VERSION: (u8, u8) = (2, 1);
 
 /// Appended after the game's source, so its line numbers stay the same in
 /// error messages. WGSL does not care about declaration order. `IMAGE` is
@@ -153,8 +182,210 @@ fn smitten_fragment(input: SmittenFragmentInput) -> SmittenFragmentOutput {{
     )
 }
 
-/// The name of the entry point of the built-in mesh vertex shader.
-pub(crate) const MESH_VERTEX_ENTRY_POINT: &std::ffi::CStr = c"smitten_vertex";
+/// The name of the vertex entry point in the WGSL the framework writes.
+const VERTEX_ENTRY_POINT: &str = "smitten_vertex";
+
+/// The built-in vertex shader for ordinary draws, whose vertices are
+/// already placed in pixels, as `sprite.vert` beside this file does it.
+/// Vulkan uses the SPIR-V compiled from that; other languages translate
+/// this.
+const SPRITE_VERTEX: &str = "
+struct SmittenScreen {
+    // Two divided by the drawable size in pixels.
+    pixel_to_clip: vec2<f32>,
+}
+
+@group(1) @binding(0) var<uniform> smitten_screen: SmittenScreen;
+
+struct SmittenVertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+}
+
+@vertex
+fn smitten_vertex(
+    @location(0) in_position: vec2<f32>,
+    @location(1) in_uv: vec2<f32>,
+    @location(2) in_color: vec4<f32>,
+) -> SmittenVertexOutput {
+    // Pixels run from the top-left with y down; clip space has y up.
+    // Depth 0.5 is where z 0 lands in the projection, as for meshes.
+    let clip = in_position * smitten_screen.pixel_to_clip - 1.0;
+    var output: SmittenVertexOutput;
+    output.position = vec4<f32>(clip.x, -clip.y, 0.5, 1.0);
+    output.uv = in_uv;
+    output.color = in_color;
+    return output;
+}
+";
+
+// Compiled from the GLSL beside them by `shaders/build.sh`.
+static VERTEX_SPIRV: &[u8] = include_bytes!("../shaders/sprite.vert.spv");
+static FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite.frag.spv");
+static ARRAY_FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite_array.frag.spv");
+
+/// The shaders for ordinary draws: the vertex shader, the fragment shader,
+/// and the fragment shader for drawing a layer of an array texture.
+pub(crate) fn sprite_shaders(language: ShaderLanguage) -> Result<[ShaderCode; 3], String> {
+    match language {
+        ShaderLanguage::Spirv => {
+            let code = |bytes: &[u8]| ShaderCode {
+                language,
+                bytes: bytes.to_vec(),
+                entry_point: c"main".to_owned(),
+            };
+            Ok([
+                code(VERTEX_SPIRV),
+                code(FRAGMENT_SPIRV),
+                code(ARRAY_FRAGMENT_SPIRV),
+            ])
+        }
+        ShaderLanguage::Msl => {
+            let module = naga::front::wgsl::parse_str(SPRITE_VERTEX)
+                .map_err(|error| error.emit_to_string(SPRITE_VERTEX))?;
+            let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
+                .validate(&module)
+                .map_err(|error| error.emit_to_string(SPRITE_VERTEX))?;
+            let vertex = translate(&module, &info, naga::ShaderStage::Vertex, 0, language)?;
+            let fragment = compile_for(BUILTIN, 1, false, language)?.code;
+            let array = compile_for(BUILTIN_ARRAY, 1, true, language)?.code;
+            Ok([vertex, fragment, array])
+        }
+    }
+}
+
+/// Translates a checked module's entry point for `stage` to `language`.
+/// `textures` is how many of the game's own textures it declares, which
+/// sit after `image`.
+///
+/// SDL's GPU API wants resources in fixed places, which differ by
+/// language. The WGSL the framework writes uses SPIR-V's: textures in
+/// group 0 for vertex shaders and 2 for fragment shaders, each texture's
+/// sampler at the binding after it, and uniforms in groups 1 and 3.
+fn translate(
+    module: &naga::Module,
+    info: &naga::valid::ModuleInfo,
+    stage: naga::ShaderStage,
+    textures: usize,
+    language: ShaderLanguage,
+) -> Result<ShaderCode, String> {
+    let (entry, texture_group, uniform_group) = match stage {
+        naga::ShaderStage::Vertex => (VERTEX_ENTRY_POINT, 0, 1),
+        _ => (ENTRY_POINT, 2, 3),
+    };
+    let failed = |error: &dyn std::fmt::Display| format!("could not translate the shader: {error}");
+    match language {
+        ShaderLanguage::Spirv => {
+            let mut options = spv::Options::default();
+            combine_samplers(&mut options, texture_group, textures);
+            if stage == naga::ShaderStage::Vertex {
+                // SDL's clip space already has y up, as WGSL's does, so naga
+                // must not flip it the way it would for plain Vulkan.
+                options
+                    .flags
+                    .remove(spv::WriterFlags::ADJUST_COORDINATE_SPACE);
+            }
+            let pipeline = spv::PipelineOptions {
+                shader_stage: stage,
+                entry_point: entry.to_string(),
+            };
+            let words = spv::write_vec(module, info, &options, Some(&pipeline))
+                .map_err(|error| failed(&error))?;
+            Ok(ShaderCode {
+                language,
+                bytes: words.iter().flat_map(|word| word.to_le_bytes()).collect(),
+                entry_point: CString::new(entry).expect("entry point names have no NUL"),
+            })
+        }
+        ShaderLanguage::Msl => {
+            let mut resources = msl::EntryPointResources::default();
+            metal_slots(&mut resources, texture_group, uniform_group, textures);
+            let options = msl::Options {
+                lang_version: MSL_VERSION,
+                per_entry_point_map: [(entry.to_string(), resources)].into(),
+                // A resource without a slot is a bug in this module; fail
+                // rather than write a shader Metal would reject.
+                fake_missing_bindings: false,
+                ..msl::Options::default()
+            };
+            let pipeline = msl::PipelineOptions {
+                entry_point: Some((stage, entry.to_string())),
+                ..msl::PipelineOptions::default()
+            };
+            let (source, translated) = msl::write_string(module, info, &options, &pipeline)
+                .map_err(|error| failed(&error))?;
+            let index = module
+                .entry_points
+                .iter()
+                .position(|point| point.name == entry)
+                .ok_or_else(|| format!("the shader has no `{entry}`"))?;
+            let name = match translated.entry_point_names.get(index) {
+                Some(Ok(name)) => name.clone(),
+                Some(Err(error)) => return Err(failed(error)),
+                None => return Err(format!("the shader has no `{entry}`")),
+            };
+            Ok(ShaderCode {
+                language,
+                bytes: source.into_bytes(),
+                entry_point: CString::new(name).map_err(|error| failed(&error))?,
+            })
+        }
+    }
+}
+
+/// The Metal slots SDL binds a stage's resources to. Textures and their
+/// samplers are numbered together from 0, `image` first, and uniform
+/// buffers from 0 in binding order. SDL puts vertex buffers from
+/// `[[buffer(14)]]`, which naga's `[[stage_in]]` inputs leave to it.
+fn metal_slots(
+    resources: &mut msl::EntryPointResources,
+    texture_group: u32,
+    uniform_group: u32,
+    textures: usize,
+) {
+    for slot in 0..=textures as u8 {
+        let (texture, sampler) = if slot == 0 {
+            (0, 1)
+        } else {
+            (u32::from(slot) * 2, u32::from(slot) * 2 + 1)
+        };
+        resources.resources.insert(
+            naga::ResourceBinding {
+                group: texture_group,
+                binding: texture,
+            },
+            msl::BindTarget {
+                texture: Some(slot),
+                ..msl::BindTarget::default()
+            },
+        );
+        resources.resources.insert(
+            naga::ResourceBinding {
+                group: texture_group,
+                binding: sampler,
+            },
+            msl::BindTarget {
+                sampler: Some(msl::BindSamplerTarget::Resource(slot)),
+                ..msl::BindTarget::default()
+            },
+        );
+    }
+    // A vertex shader has the framework's uniforms and then the game's
+    // `params`; a fragment shader has only `params`.
+    for binding in 0..2 {
+        resources.resources.insert(
+            naga::ResourceBinding {
+                group: uniform_group,
+                binding,
+            },
+            msl::BindTarget {
+                buffer: Some(binding as u8),
+                ..msl::BindTarget::default()
+            },
+        );
+    }
+}
 
 /// The part of every mesh vertex shader that does not depend on the
 /// layout. It places each vertex with the draw's matrix and tints its
@@ -182,7 +413,7 @@ struct SmittenDraw {
 /// A vertex shader made for one vertex layout.
 #[derive(Debug)]
 pub(crate) struct MeshVertexShader {
-    pub spirv: Vec<u8>,
+    pub code: ShaderCode,
     /// The index into the layout's attributes of what each input location
     /// reads, in location order. Attributes the shader does not read are
     /// left out.
@@ -247,6 +478,7 @@ fn smitten_linear(color: vec4<f32>) -> vec4<f32> {
 pub(crate) fn mesh_vertex(
     layout: &VertexLayout,
     gamma_correct: bool,
+    language: ShaderLanguage,
 ) -> Result<MeshVertexShader, String> {
     let mut source = String::from(MESH_VERTEX_COMMON);
     source.push_str(DRAW_UNIFORMS);
@@ -273,9 +505,9 @@ fn smitten_vertex({}) -> SmittenVertexOutput {{
 ",
         inputs.parameters.join(", ")
     ));
-    let spirv = vertex_spirv(&source)?;
+    let code = mesh_vertex_code(&source, language)?;
     Ok(MeshVertexShader {
-        spirv,
+        code,
         locations: inputs.locations,
     })
 }
@@ -332,34 +564,15 @@ impl<'a> Inputs<'a> {
     }
 }
 
-/// Translates a vertex shader the framework wrote to SPIR-V.
-fn vertex_spirv(source: &str) -> Result<Vec<u8>, String> {
+/// Translates a vertex shader the framework wrote to `language`.
+fn mesh_vertex_code(source: &str, language: ShaderLanguage) -> Result<ShaderCode, String> {
     let module = naga::front::wgsl::parse_str(source)
         .map_err(|error| error.emit_to_string_with_path(source, "mesh vertex shader"))?;
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .map_err(|error| error.emit_to_string_with_path(source, "mesh vertex shader"))?;
-    vertex_spirv_for(&module, &info, spv::Options::default())
-        .map_err(|error| format!("could not translate the mesh vertex shader: {error}"))
-}
-
-/// Translates a checked vertex shader to SPIR-V with `options`.
-fn vertex_spirv_for(
-    module: &naga::Module,
-    info: &naga::valid::ModuleInfo,
-    mut options: spv::Options,
-) -> Result<Vec<u8>, spv::Error> {
-    let pipeline = spv::PipelineOptions {
-        shader_stage: naga::ShaderStage::Vertex,
-        entry_point: "smitten_vertex".to_string(),
-    };
-    // SDL's clip space already has y up, as WGSL's does, so naga must not
-    // flip it the way it would for plain Vulkan.
-    options
-        .flags
-        .remove(spv::WriterFlags::ADJUST_COORDINATE_SPACE);
-    let words = spv::write_vec(module, info, &options, Some(&pipeline))?;
-    Ok(words.iter().flat_map(|word| word.to_le_bytes()).collect())
+    translate(&module, &info, naga::ShaderStage::Vertex, 0, language)
+        .map_err(|error| error.replace("the shader", "the mesh vertex shader"))
 }
 
 /// Added only when the game declares `struct Params`. SDL wants fragment
@@ -374,14 +587,15 @@ const VERTEX_PARAMS_BINDING: &str = "
 @group(1) @binding(1) var<uniform> params: Params;
 ";
 
-/// The most `Varyings` members a shader may have. Vulkan promises 16
-/// locations between the stages, and the built-in values take two.
+/// The most `Varyings` members a shader may have. Vulkan and Metal both
+/// promise 16 locations between the stages, and the built-in values take
+/// two.
 const MAX_VARYINGS: usize = 14;
 
 /// A fragment shader ready to hand to SDL.
 #[derive(Debug)]
 pub(crate) struct Compiled {
-    pub spirv: Vec<u8>,
+    pub code: ShaderCode,
     /// The size of the `Params` struct in bytes, or 0 without one.
     pub uniform_size: u32,
     pub fields: Vec<UniformField>,
@@ -480,15 +694,15 @@ fn parse(full: &str, user_lines: u32, wrong: fn(&str) -> String) -> Result<naga:
 }
 
 /// Compiles a game's shader to draw to one canvas.
-pub(crate) fn compile(source: &str) -> Result<Compiled, String> {
-    compile_for(source, 1, false)
+pub(crate) fn compile(source: &str, language: ShaderLanguage) -> Result<Compiled, String> {
+    compile_for(source, 1, false, language)
 }
 
 /// Checks a game's shader the way drawing with it would, both stages.
-pub(crate) fn check(source: &str) -> Result<(), String> {
-    let compiled = compile(source)?;
+pub(crate) fn check(source: &str, language: ShaderLanguage) -> Result<(), String> {
+    let compiled = compile(source, language)?;
     if compiled.has_vertex {
-        compile_vertex(source, &standard_layout(), false)?;
+        compile_vertex(source, &standard_layout(), false, language)?;
     }
     Ok(())
 }
@@ -519,7 +733,12 @@ pub(crate) fn standard_layout() -> VertexLayout {
 /// Compiles a game's shader, or one of the built-in ones, to draw to
 /// `targets` canvases at once. With `layered`, the texture drawn is an
 /// array texture.
-pub(crate) fn compile_for(source: &str, targets: u32, layered: bool) -> Result<Compiled, String> {
+pub(crate) fn compile_for(
+    source: &str,
+    targets: u32,
+    layered: bool,
+    language: ShaderLanguage,
+) -> Result<Compiled, String> {
     let declared = Declared::of(source);
     if declared.varyings && !declared.position {
         return Err(wrong_position(
@@ -584,18 +803,16 @@ pub(crate) fn compile_for(source: &str, targets: u32, layered: bool) -> Result<C
         (0, Vec::new())
     };
 
-    let mut options = spv::Options::default();
-    combine_samplers(&mut options, 2, textures.len());
-    let pipeline = spv::PipelineOptions {
-        shader_stage: naga::ShaderStage::Fragment,
-        entry_point: "smitten_fragment".to_string(),
-    };
-    let words = spv::write_vec(&module, &info, &options, Some(&pipeline))
-        .map_err(|error| format!("could not translate the shader: {error}"))?;
-    let spirv = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let code = translate(
+        &module,
+        &info,
+        naga::ShaderStage::Fragment,
+        textures.len(),
+        language,
+    )?;
 
     Ok(Compiled {
-        spirv,
+        code,
         uniform_size,
         fields,
         textures,
@@ -639,6 +856,7 @@ pub(crate) fn compile_vertex(
     source: &str,
     layout: &VertexLayout,
     linearize: bool,
+    language: ShaderLanguage,
 ) -> Result<MeshVertexShader, String> {
     let declared = Declared::of(source);
     let mut full = String::from(source);
@@ -722,12 +940,15 @@ fn smitten_vertex({parameters}) -> SmittenVertexOutput {{
                 report
             }
         })?;
-    let mut options = spv::Options::default();
-    combine_samplers(&mut options, 0, declared.textures.len());
-    let spirv = vertex_spirv_for(&module, &info, options)
-        .map_err(|error| format!("could not translate the shader: {error}"))?;
+    let code = translate(
+        &module,
+        &info,
+        naga::ShaderStage::Vertex,
+        declared.textures.len(),
+        language,
+    )?;
     Ok(MeshVertexShader {
-        spirv,
+        code,
         locations: inputs.locations,
     })
 }
@@ -1119,6 +1340,187 @@ fn uniform_kind(ty: &naga::TypeInner) -> Option<UniformKind> {
 mod tests {
     use super::*;
 
+    // The tests below call these, which translate to both languages and
+    // check that they agree on whether the shader works. They return the
+    // SPIR-V result, so the error messages are checked once. On a Mac the
+    // Metal compiler checks every MSL translation too.
+
+    fn both<T: std::fmt::Debug>(
+        spirv: Result<T, String>,
+        msl: Result<T, String>,
+        msl_code: impl Fn(&T) -> &ShaderCode,
+    ) -> Result<T, String> {
+        match (&spirv, &msl) {
+            (Ok(_), Err(error)) => panic!("only the MSL translation failed: {error}"),
+            (Err(error), Ok(_)) => panic!("only the SPIR-V translation failed: {error}"),
+            (_, Ok(msl)) => metal_accepts(msl_code(msl)),
+            _ => {}
+        }
+        spirv
+    }
+
+    fn compile(source: &str) -> Result<Compiled, String> {
+        both(
+            super::compile(source, ShaderLanguage::Spirv),
+            super::compile(source, ShaderLanguage::Msl),
+            |compiled| &compiled.code,
+        )
+    }
+
+    fn compile_for(source: &str, targets: u32, layered: bool) -> Result<Compiled, String> {
+        both(
+            super::compile_for(source, targets, layered, ShaderLanguage::Spirv),
+            super::compile_for(source, targets, layered, ShaderLanguage::Msl),
+            |compiled| &compiled.code,
+        )
+    }
+
+    fn compile_vertex(
+        source: &str,
+        layout: &VertexLayout,
+        linearize: bool,
+    ) -> Result<MeshVertexShader, String> {
+        both(
+            super::compile_vertex(source, layout, linearize, ShaderLanguage::Spirv),
+            super::compile_vertex(source, layout, linearize, ShaderLanguage::Msl),
+            |compiled| &compiled.code,
+        )
+    }
+
+    fn check(source: &str) -> Result<(), String> {
+        let spirv = super::check(source, ShaderLanguage::Spirv);
+        let msl = super::check(source, ShaderLanguage::Msl);
+        assert_eq!(spirv.is_ok(), msl.is_ok(), "{spirv:?} {msl:?}");
+        spirv
+    }
+
+    fn mesh_vertex(layout: &VertexLayout, gamma_correct: bool) -> Result<MeshVertexShader, String> {
+        both(
+            super::mesh_vertex(layout, gamma_correct, ShaderLanguage::Spirv),
+            super::mesh_vertex(layout, gamma_correct, ShaderLanguage::Msl),
+            |compiled| &compiled.code,
+        )
+    }
+
+    /// Checks that Metal's own compiler accepts `code`, on a Mac that has
+    /// it. Elsewhere this does nothing. Xcode may leave the Metal
+    /// toolchain to a separate download, so a Mac without it skips the
+    /// check, unless `SMITTEN_REQUIRE_METAL` is set, as it is in CI.
+    fn metal_accepts(code: &ShaderCode) {
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let name = format!(
+            "smitten-msl-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        let source = std::env::temp_dir().join(format!("{name}.metal"));
+        let output = std::env::temp_dir().join(format!("{name}.air"));
+        std::fs::write(&source, &code.bytes).unwrap();
+        let result = std::process::Command::new("xcrun")
+            .args(["-sdk", "macosx", "metal", "-std=macos-metal2.1", "-c"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&output)
+            .output();
+        let _ = std::fs::remove_file(&source);
+        let _ = std::fs::remove_file(&output);
+        let required = std::env::var_os("SMITTEN_REQUIRE_METAL").is_some();
+        let result = match result {
+            Ok(result) => result,
+            Err(error) if !required => {
+                eprintln!("skipping the Metal compiler check: {error}");
+                return;
+            }
+            Err(error) => panic!("could not run the Metal compiler: {error}"),
+        };
+        let errors = String::from_utf8_lossy(&result.stderr);
+        if result.status.success() {
+            return;
+        }
+        let missing =
+            errors.contains("Metal Toolchain") || errors.contains("unable to find utility");
+        if missing && !required {
+            eprintln!("skipping the Metal compiler check: {errors}");
+            return;
+        }
+        panic!(
+            "Metal rejected the translation:\n{errors}\n{}",
+            String::from_utf8_lossy(&code.bytes)
+        );
+    }
+
+    #[test]
+    fn the_sprite_shaders_translate_for_metal() {
+        let [vertex, fragment, array] = sprite_shaders(ShaderLanguage::Msl).unwrap();
+        for code in [&vertex, &fragment, &array] {
+            metal_accepts(code);
+        }
+        let vertex = String::from_utf8(vertex.bytes).unwrap();
+        let fragment = String::from_utf8(fragment.bytes).unwrap();
+        // Metal pairs what the stages pass by these names.
+        for name in ["[[user(loc0)", "[[user(loc1)"] {
+            assert!(vertex.contains(name), "{vertex}");
+            assert!(fragment.contains(name), "{fragment}");
+        }
+        // SDL binds the vertex buffer itself, from slot 14, for
+        // `[[stage_in]]`.
+        assert!(vertex.contains("[[stage_in]]"), "{vertex}");
+        assert!(vertex.contains("[[attribute(2)]]"), "{vertex}");
+        assert!(vertex.contains("[[buffer(0)]]"), "{vertex}");
+        assert!(
+            String::from_utf8(array.bytes)
+                .unwrap()
+                .contains("[[buffer(0)]]")
+        );
+    }
+
+    #[test]
+    fn metal_slots_follow_the_order_sdl_binds_in() {
+        let source = "
+var noise: texture_2d<f32>;
+var shadow: texture_depth_2d;
+struct Params { amount: f32 }
+
+fn position(transform_projection: mat4x4<f32>, vertex_position: vec4<f32>) -> vec4<f32> {
+    let height = textureSampleLevel(noise, noise_sampler, vertex_position.xy, 0.0).r;
+    return transform_projection * vertex_position + vec4<f32>(0.0, height * params.amount, 0.0, 0.0);
+}
+
+fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
+    let lit = textureSampleCompare(shadow, shadow_sampler, uv, 0.5);
+    return textureSample(image, image_sampler, uv) * textureSample(noise, noise_sampler, uv)
+        * color * lit * params.amount;
+}
+";
+        let fragment = super::compile(source, ShaderLanguage::Msl).unwrap().code;
+        let text = String::from_utf8(fragment.bytes).unwrap();
+        for slot in [
+            "image [[texture(0)]]",
+            "image_sampler [[sampler(0)]]",
+            "noise [[texture(1)]]",
+            "noise_sampler [[sampler(1)]]",
+            "shadow [[texture(2)]]",
+            "shadow_sampler [[sampler(2)]]",
+            "params [[buffer(0)]]",
+        ] {
+            assert!(text.contains(slot), "{slot} in {text}");
+        }
+        let vertex =
+            super::compile_vertex(source, &standard_layout(), false, ShaderLanguage::Msl).unwrap();
+        let text = String::from_utf8(vertex.code.bytes).unwrap();
+        for slot in [
+            "noise [[texture(1)]]",
+            "smitten_draw [[buffer(0)]]",
+            "params [[buffer(1)]]",
+        ] {
+            assert!(text.contains(slot), "{slot} in {text}");
+        }
+    }
+
     const PLAIN: &str = "
 fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
     return textureSample(image, image_sampler, uv) * color;
@@ -1161,7 +1563,7 @@ fn effect(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> vec4<f32> {
             false,
         )
         .unwrap();
-        assert_eq!(shader.spirv[..4], 0x0723_0203u32.to_le_bytes());
+        assert_eq!(shader.code.bytes[..4], 0x0723_0203u32.to_le_bytes());
         // Position first, then color; the weight is not read.
         assert_eq!(shader.locations, [2, 1]);
     }
@@ -1242,7 +1644,7 @@ fn effects(color: vec4<f32>, uv: vec2<f32>, pixel: vec2<f32>) -> Outputs {
     fn a_plain_effect_compiles_to_spirv() {
         let compiled = compile(PLAIN).unwrap();
         // Every SPIR-V module starts with this number.
-        assert_eq!(compiled.spirv[..4], 0x0723_0203u32.to_le_bytes());
+        assert_eq!(compiled.code.bytes[..4], 0x0723_0203u32.to_le_bytes());
         assert_eq!(compiled.uniform_size, 0);
         assert!(compiled.fields.is_empty());
     }

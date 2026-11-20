@@ -227,7 +227,7 @@ purpose:
 |---|---|
 | ETC and PVRTC textures | SDL's GPU API has no ETC or PVRTC formats, so such DDS and KTX files are refused with that reason. KTX 2 files are refused too; KTX 1 files load. |
 | `drawLayer` with a custom shader | A custom shader's `image` is a `texture_2d<f32>`. Send the `ArrayImage` to the shader with `Shader::send_texture` and pick the layer there instead. |
-| macOS and web | The renderer is Vulkan only. |
+| Web | The renderer needs Vulkan or Metal. |
 | Lua-only filesystem functions | `load`, `getRequirePath`, `setRequirePath`, `getCRequirePath`, `setCRequirePath`, `init`, `setSource` and the like have no Rust meaning. |
 | `love.threaderror`, the `Thread` type | Rust threads report panics through `JoinHandle`. |
 | `Object`, `Data` base types | Rust ownership and slices do their job. |

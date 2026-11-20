@@ -13,6 +13,7 @@
 //! cargo run -p cargo-smitten -- package -p smitten-examples --example pong
 //! ```
 
+mod macos;
 mod package;
 
 use std::process::ExitCode;
@@ -29,9 +30,19 @@ Options:
       --out <folder>     Where to put the result (default: target/package)
   -h, --help             Show this help
 
+On macOS:
+      --name <name>          The app's name (default: from the executable)
+      --identifier <id>      The bundle identifier, such as com.you.game
+      --icon <png>           A square PNG for the app's icon
+      --sign <identity>      Sign with a Developer ID instead of ad hoc
+      --entitlements <file>  Sign with these entitlements
+      --notarize <profile>   Notarize with this notarytool keychain profile
+
 The game is built in release mode with SDL linked into the executable.
 The result is a folder holding the executable and the game's assets
-folder, and a zip of that folder ready to share.";
+folder, and a zip of that folder ready to share. On macOS it is an app,
+Name.app, and a zip of it. `name`, `identifier`, `icon` and
+`minimum-macos` can be set in [package.metadata.smitten] in Cargo.toml.";
 
 fn main() -> ExitCode {
     // Run as `cargo smitten ...`, cargo passes `smitten` as the first
