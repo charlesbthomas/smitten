@@ -14,7 +14,8 @@ The {{ api(path="filesystem/index.html", text="filesystem") }} module reads from
   released game it is the `assets` folder next to the executable, or in a
   Mac app's `Contents/Resources`. A game packaged with
   `cargo smitten package --embed-assets` carries its assets inside the
-  executable, and reads those first.
+  executable, and reads those first. Files and folders a game ships with
+  `extra` are read the same way, after the asset directory.
 - The **save directory** is a per-user folder the game may write to, named
   after the game's identity. Set the identity with `Config::identity`; it
   defaults to the executable's name.

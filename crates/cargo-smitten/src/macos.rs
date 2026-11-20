@@ -200,12 +200,13 @@ pub fn icns(png: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Writes the bundle at `app`, a folder ending in `.app`, from the built
-/// executable, the asset files chosen to ship beside it if any, and the
-/// icon PNG.
+/// executable, the icon PNG, and the files to ship beside it, each given
+/// as its path on disk and its path inside `Contents/Resources` (the
+/// assets under `assets/`, and the extras).
 pub fn write_bundle(
     app: &Path,
     executable: &Path,
-    assets: Option<&crate::assets::Selection>,
+    resources_files: &[(PathBuf, PathBuf)],
     info: &BundleInfo,
     icon_png: &[u8],
 ) -> Result<(), String> {
@@ -230,11 +231,8 @@ pub fn write_bundle(
     // Assets go in Resources rather than next to the executable: macOS
     // expects only code in Contents/MacOS, and signing checks that.
     // Smitten looks for them there when it runs from a bundle.
-    match assets {
-        Some(assets) => crate::assets::copy(assets, &resources.join("assets"))
-            .map_err(|error| describe("copy", &assets.folder, error)),
-        None => Ok(()),
-    }
+    crate::assets::copy_entries(resources_files, &resources)
+        .map_err(|error| describe("copy files into", &resources, error))
 }
 
 /// How to sign a bundle.
@@ -424,19 +422,15 @@ mod tests {
         fs::write(scratch.join("pong"), "binary").unwrap();
 
         let app = scratch.join("Pong.app");
-        let selection = crate::assets::Selection {
-            folder: scratch.join("assets"),
-            files: vec![PathBuf::from("sounds/blip.wav")],
-            ..Default::default()
-        };
-        write_bundle(
-            &app,
-            &scratch.join("pong"),
-            Some(&selection),
-            &info(),
-            DEFAULT_ICON,
-        )
-        .unwrap();
+        fs::write(scratch.join("build.txt"), "v1").unwrap();
+        let files = [
+            (
+                scratch.join("assets/sounds/blip.wav"),
+                PathBuf::from("assets/sounds/blip.wav"),
+            ),
+            (scratch.join("build.txt"), PathBuf::from("build.txt")),
+        ];
+        write_bundle(&app, &scratch.join("pong"), &files, &info(), DEFAULT_ICON).unwrap();
         let contents = app.join("Contents");
         assert_eq!(
             fs::read_to_string(contents.join("MacOS/pong")).unwrap(),
@@ -445,6 +439,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(contents.join("Resources/assets/sounds/blip.wav")).unwrap(),
             "blip"
+        );
+        assert_eq!(
+            fs::read_to_string(contents.join("Resources/build.txt")).unwrap(),
+            "v1"
         );
         assert!(
             fs::read_to_string(contents.join("Info.plist"))

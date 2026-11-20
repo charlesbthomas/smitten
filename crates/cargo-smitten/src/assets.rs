@@ -1,7 +1,8 @@
-//! Which of a game's asset files go into a package, and putting them
-//! there: copied beside the executable, or zipped for the executable to
-//! carry inside it.
+//! Which of a game's asset files and extras go into a package, and
+//! putting them there: copied beside the executable, or zipped for the
+//! executable to carry inside it.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -54,6 +55,14 @@ impl Selection {
             ));
         }
         notes
+    }
+
+    /// Each chosen file on disk, and its path inside the asset folder.
+    pub fn entries(&self) -> Vec<(PathBuf, PathBuf)> {
+        self.files
+            .iter()
+            .map(|file| (self.folder.join(file), file.clone()))
+            .collect()
     }
 
     /// "12 asset files", with how many were left out.
@@ -253,29 +262,117 @@ pub fn files_in(folder: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Copies the chosen files into `to`, keeping their folders.
-pub fn copy(selection: &Selection, to: &Path) -> io::Result<()> {
-    for file in &selection.files {
-        let destination = to.join(file);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(selection.folder.join(file), destination)?;
-    }
-    Ok(())
-}
-
 /// Kinds of file that are compressed already, which a zip stores as they
 /// are rather than spend time failing to shrink.
 const COMPRESSED: &[&str] = &[
     "png", "jpg", "jpeg", "ogg", "ogv", "mp3", "flac", "zip", "gz", "webp",
 ];
 
-/// Writes the chosen files into a zip at `zip_path`, at the top level of
-/// it, for the executable to build in.
-pub fn zip(selection: &Selection, zip_path: &Path) -> io::Result<()> {
+/// A file or folder from `extra` to ship beside the assets, and the path
+/// it ships under.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Extra {
+    pub source: PathBuf,
+    pub name: PathBuf,
+}
+
+/// The extra files to ship: each file on disk, and its path beside the
+/// assets folder.
+#[derive(Debug, Default, PartialEq)]
+pub struct Extras {
+    pub files: Vec<(PathBuf, PathBuf)>,
+}
+
+impl Extras {
+    /// "3 extra files".
+    pub fn describe(&self) -> String {
+        let count = self.files.len();
+        format!("{count} extra file{}", if count == 1 { "" } else { "s" })
+    }
+}
+
+/// Gathers the files of `extras`. A folder brings everything in it but
+/// the files [`DEFAULT_EXCLUDES`] leaves out. `reserved` holds names the
+/// package already uses beside the assets, which an extra cannot take.
+pub fn select_extras(extras: &[Extra], reserved: &[String]) -> Result<Extras, String> {
+    let mut chosen: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+    for extra in extras {
+        let first = extra
+            .name
+            .components()
+            .next()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if reserved.contains(&first) {
+            return Err(format!(
+                "the extra `{}` cannot be shipped: the package already has `{first}` there",
+                extra.name.display()
+            ));
+        }
+        let metadata = fs::metadata(&extra.source).map_err(|error| {
+            format!(
+                "the extra path {} cannot be shipped: {error}",
+                extra.source.display()
+            )
+        })?;
+        let mut add = |source: PathBuf, name: PathBuf| match chosen.get(&name) {
+            Some(earlier) if *earlier != source => Err(format!(
+                "two extras both ship as {}: {} and {}",
+                name.display(),
+                earlier.display(),
+                source.display()
+            )),
+            _ => {
+                chosen.insert(name, source);
+                Ok(())
+            }
+        };
+        if metadata.is_dir() {
+            let files = files_in(&extra.source)
+                .map_err(|error| format!("could not read {}: {error}", extra.source.display()))?;
+            for file in files {
+                let parts: Vec<String> = file
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                if DEFAULT_EXCLUDES
+                    .iter()
+                    .any(|pattern| pattern_matches(pattern, &parts))
+                {
+                    continue;
+                }
+                add(extra.source.join(&file), extra.name.join(&file))?;
+            }
+        } else {
+            add(extra.source.clone(), extra.name.clone())?;
+        }
+    }
+    Ok(Extras {
+        files: chosen
+            .into_iter()
+            .map(|(name, source)| (source, name))
+            .collect(),
+    })
+}
+
+/// Copies files, given as each one's path on disk and its path inside
+/// `to`, into `to`.
+pub fn copy_entries(entries: &[(PathBuf, PathBuf)], to: &Path) -> io::Result<()> {
+    for (source, name) in entries {
+        let destination = to.join(name);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+    }
+    Ok(())
+}
+
+/// Writes files, given as each one's path on disk and its path inside the
+/// zip, into a zip at `zip_path`, for the executable to build in.
+pub fn zip(entries: &[(PathBuf, PathBuf)], zip_path: &Path) -> io::Result<()> {
     let mut zip = zip::ZipWriter::new(File::create(zip_path)?);
-    for file in &selection.files {
+    for (source, file) in entries {
         let compressed = file
             .extension()
             .and_then(|extension| extension.to_str())
@@ -290,7 +387,7 @@ pub fn zip(selection: &Selection, zip_path: &Path) -> io::Result<()> {
             .map(|part| part.as_os_str().to_string_lossy().into_owned())
             .collect();
         zip.start_file(name.join("/"), options)?;
-        zip.write_all(&fs::read(selection.folder.join(file))?)?;
+        zip.write_all(&fs::read(source)?)?;
     }
     zip.finish()?;
     Ok(())
@@ -435,11 +532,62 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_extra_is_an_error_that_names_it() {
+        let dir = scratch("extra-missing", &["build.txt"]);
+        let missing = dir.0.join("data");
+        let error = select_extras(
+            &[Extra {
+                source: missing.clone(),
+                name: PathBuf::from("data"),
+            }],
+            &[],
+        )
+        .unwrap_err();
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+    }
+
+    #[test]
+    fn extras_cannot_take_reserved_names_or_each_others_paths() {
+        let dir = scratch(
+            "extra-clash",
+            &["a/build.txt", "b/build.txt", "assets/x.png"],
+        );
+        let extra = |source: &str, name: &str| Extra {
+            source: dir.0.join(source),
+            name: PathBuf::from(name),
+        };
+        let reserved = ["assets".to_string()];
+        assert!(
+            select_extras(&[extra("assets", "assets")], &reserved)
+                .unwrap_err()
+                .contains("already has `assets`")
+        );
+        assert!(
+            select_extras(
+                &[
+                    extra("a/build.txt", "build.txt"),
+                    extra("b/build.txt", "build.txt")
+                ],
+                &reserved
+            )
+            .unwrap_err()
+            .contains("both ship as build.txt")
+        );
+        // The same file listed twice ships once.
+        let twice = select_extras(
+            &[extra("a", "a"), extra("a/build.txt", "a/build.txt")],
+            &reserved,
+        )
+        .unwrap();
+        assert_eq!(twice.files.len(), 1);
+    }
+
+    #[test]
     fn chosen_files_are_copied_and_zipped_at_the_top_level() {
         let dir = scratch("zip", &["a.txt", "sounds/b.ogg", "skip.psd"]);
         let selection = select(&settings(&dir.0.join("."), None, &["*.psd"])).unwrap();
         let copy_to = dir.0.join("copy");
-        copy(&selection, &copy_to).unwrap();
+        copy_entries(&selection.entries(), &copy_to).unwrap();
         assert_eq!(
             fs::read_to_string(copy_to.join("sounds/b.ogg")).unwrap(),
             "sounds/b.ogg"
@@ -447,7 +595,7 @@ mod tests {
         assert!(!copy_to.join("skip.psd").exists());
 
         let zip_path = dir.0.join("assets.zip");
-        zip(&selection, &zip_path).unwrap();
+        zip(&selection.entries(), &zip_path).unwrap();
         let mut archive = zip::ZipArchive::new(File::open(&zip_path).unwrap()).unwrap();
         let mut names: Vec<String> = archive.file_names().map(str::to_string).collect();
         names.sort();

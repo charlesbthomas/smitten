@@ -33,6 +33,7 @@ Options:
       --include <glob>   Ship only the asset files that match; repeatable
       --exclude <glob>   Leave out the asset files that match; repeatable
       --embed-assets     Build the assets into the executable
+      --extra <path>     A file or folder to ship beside the assets; repeatable
   -h, --help             Show this help
 
 On macOS:
@@ -49,7 +50,7 @@ folder, and a zip of that folder ready to share. On macOS it is an app,
 Name.app, and a zip of it. With --embed-assets the assets are inside the
 executable instead, and there is no assets folder.
 
-`assets`, `include`, `exclude`, `embed-assets`, and on macOS `name`,
+`assets`, `include`, `exclude`, `embed-assets`, `extra`, and on macOS `name`,
 `identifier`, `icon` and `minimum-macos` can be set in
 [package.metadata.smitten] in Cargo.toml, and for one executable in
 [package.metadata.smitten.bin.<name>] or [...smitten.example.<name>].";

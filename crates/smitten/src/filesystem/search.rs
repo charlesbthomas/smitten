@@ -253,6 +253,71 @@ enum Slot {
 enum Place<'a> {
     Disk(&'a Path),
     Mount(Slot, &'a Mount),
+    Game(&'a GameFolder),
+}
+
+/// The folder that holds the asset directory and the extra files and
+/// folders `cargo smitten package` ships beside it: the folder of the
+/// game's `Cargo.toml` under `cargo run`, the executable's folder in a
+/// released game, and `Contents/Resources` in a macOS app. Looked at after
+/// the asset directory, for the extras only.
+pub(crate) struct GameFolder {
+    pub folder: PathBuf,
+    /// Top-level names that are not extras, such as the asset directory
+    /// and the executable.
+    pub hidden: Vec<String>,
+    /// The extras the game's `Cargo.toml` lists, under `cargo run`, so
+    /// that the rest of the project stays out of reach. `None` in a
+    /// released game, whose folder holds only what was shipped.
+    pub only: Option<Vec<Vec<String>>>,
+}
+
+impl GameFolder {
+    fn allows(&self, parts: &[String]) -> bool {
+        let Some(first) = parts.first() else {
+            return false;
+        };
+        if self.hidden.contains(first) {
+            return false;
+        }
+        match &self.only {
+            None => true,
+            Some(extras) => extras
+                .iter()
+                .any(|extra| parts.starts_with(extra) || extra.starts_with(parts)),
+        }
+    }
+
+    fn find(&self, parts: &[String], follow: bool) -> Option<(Location, FileInfo)> {
+        if !self.allows(parts) {
+            return None;
+        }
+        find_on_disk(&self.folder, parts, follow)
+    }
+
+    fn list(&self, parts: &[String], names: &mut BTreeSet<String>) {
+        let mut found = BTreeSet::new();
+        match &self.only {
+            None => list_directory(&disk_path(&self.folder, parts), &mut found),
+            Some(extras) => {
+                for extra in extras {
+                    if extra.len() > parts.len() && extra.starts_with(parts) {
+                        found.insert(extra[parts.len()].clone());
+                    } else if parts.starts_with(extra) {
+                        list_directory(&disk_path(&self.folder, parts), &mut found);
+                    }
+                }
+            }
+        }
+        for name in found {
+            let mut path = parts.to_vec();
+            path.push(name.clone());
+            // Only names that exist and may be read.
+            if self.allows(&path) && disk_path(&self.folder, &path).exists() {
+                names.insert(name);
+            }
+        }
+    }
 }
 
 /// What a lookup found: where, in which mount if any, and what it is.
@@ -276,6 +341,9 @@ pub(crate) struct SearchPath {
     /// The assets built into the game, looked at just before the asset
     /// directory.
     embedded: Option<Mount>,
+    /// Where the extras shipped beside the asset directory are, looked at
+    /// just after it.
+    pub game: Option<GameFolder>,
 }
 
 impl Default for SearchPath {
@@ -286,6 +354,7 @@ impl Default for SearchPath {
             follow_symlinks: true,
             assets_first: false,
             embedded: None,
+            game: None,
         }
     }
 }
@@ -323,7 +392,8 @@ impl SearchPath {
             .embedded
             .iter()
             .map(|mount| Place::Mount(Slot::Embedded, mount))
-            .chain(std::iter::once(Place::Disk(assets)));
+            .chain(std::iter::once(Place::Disk(assets)))
+            .chain(self.game.iter().map(Place::Game));
         let mut places: Vec<Place<'a>> = first.collect();
         if self.assets_first {
             places.extend(shipped);
@@ -390,6 +460,12 @@ impl SearchPath {
                         info,
                     })
                 }
+                Place::Game(game) => game.find(parts, follow).map(|(location, info)| Found {
+                    location,
+                    slot: None,
+                    root: Some(game.folder.clone()),
+                    info,
+                }),
             })
     }
 
@@ -446,6 +522,7 @@ impl SearchPath {
             match place {
                 Place::Disk(root) => list_directory(&disk_path(root, parts), &mut names),
                 Place::Mount(_, mount) => mount.list(parts, &mut names),
+                Place::Game(game) => game.list(parts, &mut names),
             }
         }
         names.into_iter().collect()
@@ -506,6 +583,85 @@ mod tests {
             zip.write_all(contents.as_bytes()).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn extras_beside_the_assets_are_found_after_them() {
+        let dir = TempDir::new("game-folder");
+        let assets = dir.0.join("assets");
+        std::fs::create_dir_all(assets.join("data")).unwrap();
+        std::fs::create_dir_all(dir.0.join("data")).unwrap();
+        std::fs::create_dir_all(dir.0.join("src")).unwrap();
+        std::fs::write(assets.join("data/ships.json"), "shipped asset").unwrap();
+        std::fs::write(dir.0.join("data/ships.json"), "extra").unwrap();
+        std::fs::write(dir.0.join("data/stars.json"), "stars").unwrap();
+        std::fs::write(dir.0.join("build.txt"), "v1").unwrap();
+        std::fs::write(dir.0.join("src/main.rs"), "code").unwrap();
+        std::fs::write(dir.0.join("game"), "binary").unwrap();
+
+        // Released: anything shipped beside the assets but the assets
+        // folder and executable themselves.
+        let mut search = SearchPath {
+            game: Some(GameFolder {
+                folder: dir.0.clone(),
+                hidden: vec!["assets".to_string(), "game".to_string()],
+                only: None,
+            }),
+            ..SearchPath::default()
+        };
+        assert_eq!(
+            read(&mut search, &assets, "data/ships.json").as_deref(),
+            Some("shipped asset")
+        );
+        assert_eq!(
+            read(&mut search, &assets, "data/stars.json").as_deref(),
+            Some("stars")
+        );
+        assert_eq!(
+            read(&mut search, &assets, "build.txt").as_deref(),
+            Some("v1")
+        );
+        assert!(search.find(None, &assets, &parts("game")).is_none());
+        assert!(
+            search
+                .find(None, &assets, &parts("assets/data/ships.json"))
+                .is_none()
+        );
+        assert_eq!(
+            search.list(None, &assets, &parts("")),
+            ["build.txt", "data", "src"]
+        );
+        assert_eq!(
+            search.list(None, &assets, &parts("data")),
+            ["ships.json", "stars.json"]
+        );
+        let found = search.find(None, &assets, &parts("build.txt")).unwrap();
+        assert_eq!(search.real_directory(&found), dir.0);
+
+        // Under cargo run: only the listed extras, not the rest of the
+        // project.
+        search.game = Some(GameFolder {
+            folder: dir.0.clone(),
+            hidden: Vec::new(),
+            only: Some(vec![
+                parts("data"),
+                parts("build.txt"),
+                parts("missing.txt"),
+            ]),
+        });
+        assert_eq!(
+            read(&mut search, &assets, "data/stars.json").as_deref(),
+            Some("stars")
+        );
+        assert_eq!(
+            read(&mut search, &assets, "build.txt").as_deref(),
+            Some("v1")
+        );
+        assert!(search.find(None, &assets, &parts("src/main.rs")).is_none());
+        assert_eq!(
+            search.list(None, &assets, &parts("")),
+            ["build.txt", "data"]
+        );
     }
 
     #[test]

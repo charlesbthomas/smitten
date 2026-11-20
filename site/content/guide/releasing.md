@@ -41,6 +41,7 @@ cargo smitten package
 | `--include <pattern>` | Ship only the asset files that match. Repeatable. |
 | `--exclude <pattern>` | Leave out the asset files that match. Repeatable. |
 | `--embed-assets` | Build the assets into the executable. |
+| `--extra <path>` | A file or folder to ship beside the assets. Repeatable. |
 
 To try it on one of Smitten's examples without installing it, run this from
 the Smitten repository:
@@ -96,11 +97,41 @@ assets = "editor-assets"
 `--include` replaces the patterns in `Cargo.toml`, and `--exclude` adds to
 them.
 
+### Shipping other files and folders
+
+Some games load files that are not assets, such as a folder of game
+data or a file written just before packaging. `extra` lists paths,
+relative to `Cargo.toml`, to ship beside the `assets` folder:
+
+```toml
+[package.metadata.smitten]
+extra = ["data", "build.txt"]
+```
+
+A folder is shipped whole, apart from the hidden files and other clutter
+left out of assets; a file is shipped as it is. They keep their paths, so
+`data` sits next to `assets` beside the executable, or in
+`Contents/Resources` in a Mac app. A path that does not exist stops the
+package with its name. `--extra <path>` adds one more from the command
+line under its own name, for a file only some builds ship:
+
+```sh
+cargo smitten package --extra demo.txt
+```
+
+The game reads extras with the same calls as assets:
+`filesystem::read_string("build.txt")` or `filesystem::directory_items("data")`.
+They are looked up after the asset directory, so an asset of the same
+path wins. Under `cargo run` they are read from next to `Cargo.toml`, and
+only the paths `extra` lists are reachable that way, so a read cannot
+wander into the rest of the project. A per-executable table can set its
+own `extra`, as it can `assets`.
+
 ### Building the assets in
 
-With `embed-assets = true`, or `--embed-assets`, the chosen files are
-zipped and built into the executable, and the package has no `assets`
-folder: on Windows and Linux it is the executable alone, and on a Mac an
+With `embed-assets = true`, or `--embed-assets`, the chosen files and
+the extras are zipped and built into the executable, and the package has
+no `assets` folder: on Windows and Linux it is the executable alone, and on a Mac an
 app with nothing in `Contents/Resources` but its icon. The game reads the
 built-in files first, then the save directory and the asset directory as
 usual, so `filesystem::read`, image and sound loading and the rest work

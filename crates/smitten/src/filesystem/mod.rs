@@ -13,7 +13,10 @@
 //!   named after the game's identity.
 //!
 //! Relative paths are looked up in the save directory first and then in the
-//! asset directory, so a saved file can override a shipped one.
+//! asset directory, so a saved file can override a shipped one. After the
+//! asset directory come the extra files and folders that
+//! `cargo smitten package` ships beside it, which `extra` lists in the
+//! game's `[package.metadata.smitten]`.
 //! [`Config::append_identity`] or [`set_append_identity`] reverse that, so
 //! shipped files win. Writing always goes to the save directory. Image,
 //! font, shader and sound loading use the same lookup.
@@ -58,8 +61,10 @@ impl FilesystemState {
                 Err(error) => eprintln!("smitten: {error}"),
             }
         }
+        let asset_directory = default_asset_directory();
+        mounts.game = default_game_folder();
         Self {
-            asset_directory: default_asset_directory(),
+            asset_directory,
             identity: config.identity.clone().unwrap_or_else(default_identity),
             save_directory: None,
             mounts,
@@ -88,20 +93,8 @@ pub fn has_embedded_assets() -> bool {
 /// bundle's `Contents/Resources`, where `cargo smitten package` puts it.
 fn default_asset_directory() -> PathBuf {
     if let Some(folder) = std::env::var_os("CARGO_MANIFEST_DIR") {
-        let folder = PathBuf::from(folder);
-        let configured = std::fs::read_to_string(folder.join("Cargo.toml"))
-            .ok()
-            .and_then(|manifest| {
-                let executable = std::env::current_exe().ok()?;
-                let name = executable.file_stem()?.to_str()?.to_string();
-                let is_example = executable
-                    .parent()
-                    .and_then(Path::file_name)
-                    .is_some_and(|parent| parent == "examples");
-                let kind = if is_example { "example" } else { "bin" };
-                manifest_asset_folder(&manifest, kind, &name)
-            });
-        return folder.join(configured.as_deref().unwrap_or("assets"));
+        let configured = development_setting("assets").and_then(|value| toml_string(&value));
+        return PathBuf::from(folder).join(configured.as_deref().unwrap_or("assets"));
     }
     let Ok(executable) = std::env::current_exe() else {
         return PathBuf::from("assets");
@@ -118,6 +111,54 @@ fn default_asset_directory() -> PathBuf {
         .join("assets")
 }
 
+/// A setting from `[package.metadata.smitten]` for the executable that
+/// `cargo run` started, as raw TOML, or `None` when not under `cargo run`
+/// or not set.
+fn development_setting(key: &str) -> Option<String> {
+    let folder = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR")?);
+    let manifest = std::fs::read_to_string(folder.join("Cargo.toml")).ok()?;
+    let executable = std::env::current_exe().ok()?;
+    let name = executable.file_stem()?.to_str()?.to_string();
+    let is_example = executable
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|parent| parent == "examples");
+    let kind = if is_example { "example" } else { "bin" };
+    manifest_setting(&manifest, kind, &name, key)
+}
+
+/// Where the extras `cargo smitten package` ships beside the asset
+/// directory are found. Under `cargo run`, that is the folder of the
+/// game's `Cargo.toml`, limited to the paths its `extra` setting lists;
+/// in a released game, the folder holding the `assets` folder.
+fn default_game_folder() -> Option<search::GameFolder> {
+    if let Some(folder) = std::env::var_os("CARGO_MANIFEST_DIR") {
+        let extras = development_setting("extra")
+            .and_then(|value| toml_strings(&value))
+            .unwrap_or_default();
+        let only: Vec<Vec<String>> = extras.iter().filter_map(|path| extra_parts(path)).collect();
+        return (!only.is_empty()).then(|| search::GameFolder {
+            folder: PathBuf::from(folder),
+            hidden: Vec::new(),
+            only: Some(only),
+        });
+    }
+    let executable = std::env::current_exe().ok()?;
+    let folder = match app_bundle(&executable).filter(|_| cfg!(target_os = "macos")) {
+        Some(bundle) => bundle.join("Contents").join("Resources"),
+        None => executable.parent()?.to_path_buf(),
+    };
+    let mut hidden = vec!["assets".to_string()];
+    if let Some(name) = executable.file_name() {
+        hidden.push(name.to_string_lossy().into_owned());
+    }
+    Some(search::GameFolder {
+        folder,
+        hidden,
+        only: None,
+    })
+}
+
 /// The `.app` bundle `executable` is the main program of, if it sits where
 /// macOS puts one: `Name.app/Contents/MacOS/name`.
 fn app_bundle(executable: &Path) -> Option<&Path> {
@@ -130,56 +171,81 @@ fn app_bundle(executable: &Path) -> Option<&Path> {
     is_bundle.then_some(bundle)
 }
 
-/// The asset folder a `Cargo.toml` names for an executable: `assets` in
-/// `[package.metadata.smitten.<kind>.<name>]`, or failing that in
+/// The raw TOML value of `key` for an executable in a `Cargo.toml`: from
+/// `[package.metadata.smitten.<kind>.<name>]`, or failing that from
 /// `[package.metadata.smitten]`.
 ///
-/// This reads only what packaging documents, a table header and an
-/// `assets = "folder"` line under it, rather than all of TOML: it runs only
-/// under `cargo run`, and `cargo smitten package` reads the manifest
-/// properly.
-fn manifest_asset_folder(manifest: &str, kind: &str, name: &str) -> Option<String> {
-    let mut table = String::new();
-    let mut general = None;
-    let mut specific = None;
-    for line in manifest.lines() {
-        let line = line.trim();
-        if let Some(header) = line.strip_prefix('[') {
-            if header.starts_with('[') {
-                table.clear();
-                continue;
-            }
-            let header = header.split(']').next().unwrap_or_default();
-            table = header
-                .split('.')
-                .map(|part| part.trim().trim_matches(|c| c == '"' || c == '\''))
-                .collect::<Vec<_>>()
-                .join(".");
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key
-            .split('.')
+/// This reads only what packaging documents, table headers and
+/// `key = value` lines under them (a list may run over several lines),
+/// rather than all of TOML: it runs only under `cargo run`, and
+/// `cargo smitten package` reads the manifest properly.
+fn manifest_setting(manifest: &str, kind: &str, name: &str, key: &str) -> Option<String> {
+    let clean = |text: &str| {
+        text.split('.')
             .map(|part| part.trim().trim_matches(|c| c == '"' || c == '\''))
             .collect::<Vec<_>>()
-            .join(".");
-        let full = if table.is_empty() {
-            key
-        } else {
-            format!("{table}.{key}")
-        };
-        let Some(value) = toml_string(value.trim()) else {
+            .join(".")
+    };
+    let general = format!("package.metadata.smitten.{key}");
+    let specific = format!("package.metadata.smitten.{kind}.{name}.{key}");
+    let mut table = String::new();
+    let (mut found_general, mut found_specific) = (None, None);
+    let mut lines = manifest.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if let Some(header) = line.strip_prefix('[') {
+            table = if header.starts_with('[') {
+                String::new()
+            } else {
+                clean(header.split(']').next().unwrap_or_default())
+            };
+            continue;
+        }
+        let Some((left, value)) = line.split_once('=') else {
             continue;
         };
-        if full == "package.metadata.smitten.assets" {
-            general = Some(value);
-        } else if full == format!("package.metadata.smitten.{kind}.{name}.assets") {
-            specific = Some(value);
+        let left = clean(left);
+        let full = if table.is_empty() {
+            left
+        } else {
+            format!("{table}.{left}")
+        };
+        let mut value = value.trim().to_string();
+        // A list continues until its brackets close.
+        while value.starts_with('[') && !brackets_closed(&value) {
+            let Some(next) = lines.next() else { break };
+            value.push('\n');
+            value.push_str(next);
+        }
+        if full == general {
+            found_general = Some(value);
+        } else if full == specific {
+            found_specific = Some(value);
         }
     }
-    specific.or(general)
+    found_specific.or(found_general)
+}
+
+/// Whether the brackets of a TOML list, ignoring any inside strings and
+/// comments, are all closed.
+fn brackets_closed(value: &str) -> bool {
+    let mut depth = 0i32;
+    let mut quote = None;
+    let mut comment = false;
+    for c in value.chars() {
+        match (quote, c) {
+            (_, '\n') if comment => comment = false,
+            _ if comment => {}
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '#') => comment = true,
+            (None, '[') => depth += 1,
+            (None, ']') => depth -= 1,
+            _ => {}
+        }
+    }
+    depth <= 0
 }
 
 /// The text of a TOML string with nothing after it but a comment.
@@ -188,6 +254,34 @@ fn toml_string(value: &str) -> Option<String> {
     let end = value[1..].find(quote)? + 1;
     let rest = value[end + 1..].trim();
     (rest.is_empty() || rest.starts_with('#')).then(|| value[1..end].to_string())
+}
+
+/// The strings in a TOML list of strings, which may run over lines and
+/// hold comments.
+fn toml_strings(value: &str) -> Option<Vec<String>> {
+    let mut rest = value.trim().strip_prefix('[')?;
+    let mut strings = Vec::new();
+    loop {
+        rest = rest.trim_start();
+        if let Some(comment) = rest.strip_prefix('#') {
+            rest = comment.split_once('\n').map_or("", |(_, after)| after);
+        } else if let Some(after) = rest.strip_prefix(',') {
+            rest = after;
+        } else if rest.starts_with(']') {
+            return Some(strings);
+        } else {
+            let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+            let end = rest[1..].find(quote)? + 1;
+            strings.push(rest[1..end].to_string());
+            rest = &rest[end + 1..];
+        }
+    }
+}
+
+/// The names in an extra's path from `Cargo.toml`, or `None` for one
+/// packaging would refuse.
+fn extra_parts(path: &str) -> Option<Vec<String>> {
+    names(Path::new(path)).filter(|parts| !parts.is_empty())
 }
 
 /// The executable's name without its extension.
@@ -720,7 +814,7 @@ editor.assets = "editor-art"
 [[bin]]
 assets = "nor-this"
 "#;
-        let folder = |kind, name| manifest_asset_folder(manifest, kind, name);
+        let folder = |kind, name| toml_string(&manifest_setting(manifest, kind, name, "assets")?);
         assert_eq!(folder("bin", "game").as_deref(), Some("art"));
         assert_eq!(
             folder("example", "shardfall").as_deref(),
@@ -729,17 +823,39 @@ assets = "nor-this"
         assert_eq!(folder("bin", "shardfall").as_deref(), Some("art"));
         assert_eq!(folder("bin", "editor").as_deref(), Some("editor-art"));
         assert_eq!(
-            manifest_asset_folder("[package]\nname = \"x\"", "bin", "x"),
+            manifest_setting("[package]\nname = \"x\"", "bin", "x", "assets"),
             None
+        );
+        assert_eq!(toml_string("\"a\" junk"), None);
+    }
+
+    #[test]
+    fn the_manifest_can_list_extras_over_several_lines() {
+        let manifest = r#"
+[package.metadata.smitten]
+extra = ["data", 'build.txt'] # shipped beside the assets
+
+[package.metadata.smitten.bin.editor]
+extra = [
+    "data",       # game data
+    "tools/[x]",
+    "../outside",
+]
+assets = "art"
+"#;
+        let extras = |name| toml_strings(&manifest_setting(manifest, "bin", name, "extra")?);
+        assert_eq!(extras("game").unwrap(), ["data", "build.txt"]);
+        assert_eq!(
+            extras("editor").unwrap(),
+            ["data", "tools/[x]", "../outside"]
         );
         assert_eq!(
-            manifest_asset_folder(
-                "[package.metadata.smitten]\nassets = \"a\" junk",
-                "bin",
-                "x"
-            ),
-            None
+            toml_string(&manifest_setting(manifest, "bin", "editor", "assets").unwrap()).as_deref(),
+            Some("art")
         );
+        assert_eq!(extra_parts("tools/data").unwrap(), ["tools", "data"]);
+        assert_eq!(extra_parts("../outside"), None);
+        assert_eq!(toml_strings("\"data\""), None);
     }
 
     #[test]
