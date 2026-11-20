@@ -30,6 +30,9 @@ pub struct Options {
     pub exclude: Vec<String>,
     /// Build the assets into the executable instead of beside it.
     pub embed_assets: bool,
+    /// Files and folders to ship beside the assets, on top of the
+    /// metadata's `extra`.
+    pub extra: Vec<PathBuf>,
 }
 
 /// Which executable of the package to ship.
@@ -67,6 +70,7 @@ impl Options {
                 "--include" => options.include.push(value()?),
                 "--exclude" => options.exclude.push(value()?),
                 "--embed-assets" => options.embed_assets = true,
+                "--extra" => options.extra.push(PathBuf::from(value()?)),
                 other => return Err(format!("unknown option `{other}`")),
             }
         }
@@ -307,20 +311,107 @@ fn asset_settings(project: &Project, options: &Options) -> Result<assets::Settin
     })
 }
 
-/// Zips the chosen assets for the build to put inside the executable,
-/// returning the zip's path, or `None` when there is nothing to embed.
+/// The files and folders to ship beside the assets: `extra` in the
+/// metadata, relative to `Cargo.toml` and shipped under the same path,
+/// then `--extra` paths, shipped under their own names.
+fn extra_list(project: &Project, options: &Options) -> Result<Vec<assets::Extra>, String> {
+    let bad = || "`extra` in [package.metadata.smitten] must be a list of paths".to_string();
+    let listed: Vec<&str> = match &project.settings["extra"] {
+        serde_json::Value::Null => Vec::new(),
+        serde_json::Value::Array(list) => list
+            .iter()
+            .map(|path| path.as_str().ok_or_else(bad))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    let mut extras = Vec::new();
+    for path in listed {
+        // Shipped under the same path, so the game finds it at the same
+        // place under `cargo run` and when released.
+        let name: PathBuf = Path::new(path)
+            .components()
+            .map(|part| match part {
+                std::path::Component::Normal(name) => Ok(name),
+                std::path::Component::CurDir => Ok(std::ffi::OsStr::new("")),
+                _ => Err(format!(
+                    "the extra `{path}` must be a path inside the package, relative to Cargo.toml"
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|name| !name.is_empty())
+            .collect();
+        if name.as_os_str().is_empty() {
+            return Err(format!("the extra `{path}` names no file or folder"));
+        }
+        extras.push(assets::Extra {
+            source: project.folder.join(&name),
+            name,
+        });
+    }
+    for path in &options.extra {
+        let name = path
+            .file_name()
+            .ok_or_else(|| format!("--extra {} names no file or folder", path.display()))?;
+        extras.push(assets::Extra {
+            source: path.clone(),
+            name: PathBuf::from(name),
+        });
+    }
+    Ok(extras)
+}
+
+/// The files that go beside the executable, or in a Mac app's Resources,
+/// as each one's path on disk and its path there: the assets in their
+/// folder, and the extras under their own names.
+fn loose_entries(
+    selection: &assets::Selection,
+    extras: &assets::Extras,
+) -> Vec<(PathBuf, PathBuf)> {
+    selection
+        .entries()
+        .into_iter()
+        .map(|(source, name)| (source, Path::new("assets").join(name)))
+        .chain(extras.files.iter().cloned())
+        .collect()
+}
+
+/// The files to build into the executable, as each one's path on disk and
+/// its path in the zip. The assets sit at the top of the zip and the
+/// extras beside them under their own names, so a read of `data/x.json`
+/// or `build.txt` finds them as it would beside the executable.
+fn built_in_entries(
+    selection: &assets::Selection,
+    extras: &assets::Extras,
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let mut entries = selection.entries();
+    for (source, name) in &extras.files {
+        if selection.files.contains(name) {
+            return Err(format!(
+                "the extra {} has the same path as an asset, so they cannot both be built in",
+                name.display()
+            ));
+        }
+        entries.push((source.clone(), name.clone()));
+    }
+    Ok(entries)
+}
+
+/// Zips the files to build into the executable, each given as its path on
+/// disk and its path inside the zip, returning the zip's path, or `None`
+/// when there is nothing to embed.
 fn embedded_zip(
     project: &Project,
-    selection: &assets::Selection,
+    entries: &[(PathBuf, PathBuf)],
 ) -> Result<Option<PathBuf>, String> {
-    if selection.files.is_empty() {
+    if entries.is_empty() {
         return Ok(None);
     }
     let folder = project.target_directory.join("smitten-embed");
     fs::create_dir_all(&folder)
         .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
     let zip_path = folder.join(format!("{}-assets.zip", project.executable));
-    assets::zip(selection, &zip_path)
+    assets::zip(entries, &zip_path)
         .map_err(|error| format!("could not write {}: {error}", zip_path.display()))?;
     // The build reads the zip by this path from inside another crate, so
     // it must not depend on the folder the build runs in.
@@ -385,8 +476,16 @@ pub fn run(options: Options) -> Result<String, String> {
     };
     let asset_settings = asset_settings(&project, &options)?;
     let selection = assets::select(&asset_settings)?;
+    let file_name = format!("{}{}", project.executable, std::env::consts::EXE_SUFFIX);
+    // Names the package already has beside the assets folder.
+    let reserved = if bundle.is_some() {
+        vec!["assets".to_string(), "AppIcon.icns".to_string()]
+    } else {
+        vec!["assets".to_string(), file_name.clone()]
+    };
+    let extras = assets::select_extras(&extra_list(&project, &options)?, &reserved)?;
     let embedded = if asset_settings.embed {
-        embedded_zip(&project, &selection)?
+        embedded_zip(&project, &built_in_entries(&selection, &extras)?)?
     } else {
         None
     };
@@ -421,7 +520,6 @@ pub fn run(options: Options) -> Result<String, String> {
         return Err(format!("the release build failed{}", cmake_hint()));
     }
 
-    let file_name = format!("{}{}", project.executable, std::env::consts::EXE_SUFFIX);
     let mut built = project.target_directory.join("release");
     if project.is_example {
         built.push("examples");
@@ -430,16 +528,18 @@ pub fn run(options: Options) -> Result<String, String> {
     if let Some(zip_path) = &embedded {
         check_embedded(&built, zip_path)?;
     }
-    let shipped = if asset_settings.embed {
-        None
+    let loose = if asset_settings.embed {
+        Vec::new()
     } else {
-        Some(&selection)
+        loose_entries(&selection, &extras)
     };
-    let where_assets = if asset_settings.embed {
-        format!("{} built in", selection.describe())
-    } else {
-        selection.describe()
-    };
+    let mut where_assets = selection.describe();
+    if !extras.files.is_empty() {
+        where_assets.push_str(&format!(" and {}", extras.describe()));
+    }
+    if asset_settings.embed {
+        where_assets.push_str(" built in");
+    }
 
     let out = options
         .out
@@ -451,29 +551,14 @@ pub fn run(options: Options) -> Result<String, String> {
             &options,
             &built,
             &out,
-            shipped,
+            &loose,
             &where_assets,
             bundle,
         )?;
         return Ok(summary + &selection.notes());
     }
     let folder = out.join(&project.executable);
-    let describe = |action: &str, path: &Path, error: io::Error| {
-        format!("could not {action} {}: {error}", path.display())
-    };
-
-    // Start from an empty folder so files from an earlier package that
-    // the game no longer has are not shipped.
-    if folder.exists() {
-        fs::remove_dir_all(&folder).map_err(|error| describe("clear", &folder, error))?;
-    }
-    fs::create_dir_all(&folder).map_err(|error| describe("create", &folder, error))?;
-    fs::copy(&built, folder.join(&file_name)).map_err(|error| describe("copy", &built, error))?;
-
-    if let Some(selection) = shipped {
-        assets::copy(selection, &folder.join("assets"))
-            .map_err(|error| describe("copy", &selection.folder, error))?;
-    }
+    write_folder(&folder, &built, &file_name, &loose)?;
 
     let zip_path = out.join(format!(
         "{}-{}-{}.zip",
@@ -482,7 +567,7 @@ pub fn run(options: Options) -> Result<String, String> {
         std::env::consts::ARCH
     ));
     zip_folder(&folder, &project.executable, &zip_path)
-        .map_err(|error| describe("write", &zip_path, error))?;
+        .map_err(|error| format!("could not write {}: {error}", zip_path.display()))?;
 
     Ok(format!(
         "Packaged {} with {where_assets}.\n  Folder: {}\n  Zip:    {}{}",
@@ -491,6 +576,28 @@ pub fn run(options: Options) -> Result<String, String> {
         zip_path.display(),
         selection.notes()
     ))
+}
+
+/// Writes the Windows or Linux package folder: the executable as
+/// `file_name`, and `loose`, the files that go beside it, each given as its
+/// path on disk and its path inside the folder.
+fn write_folder(
+    folder: &Path,
+    built: &Path,
+    file_name: &str,
+    loose: &[(PathBuf, PathBuf)],
+) -> Result<(), String> {
+    let describe = |action: &str, path: &Path, error: io::Error| {
+        format!("could not {action} {}: {error}", path.display())
+    };
+    // Start from an empty folder so files from an earlier package that
+    // the game no longer has are not shipped.
+    if folder.exists() {
+        fs::remove_dir_all(folder).map_err(|error| describe("clear", folder, error))?;
+    }
+    fs::create_dir_all(folder).map_err(|error| describe("create", folder, error))?;
+    fs::copy(built, folder.join(file_name)).map_err(|error| describe("copy", built, error))?;
+    assets::copy_entries(loose, folder).map_err(|error| describe("copy files into", folder, error))
 }
 
 /// What the macOS bundle is called and says about itself: from the command
@@ -545,7 +652,7 @@ fn package_app(
     options: &Options,
     built: &Path,
     out: &Path,
-    shipped: Option<&assets::Selection>,
+    loose: &[(PathBuf, PathBuf)],
     where_assets: &str,
     info: macos::BundleInfo,
 ) -> Result<String, String> {
@@ -555,7 +662,7 @@ fn package_app(
         fs::remove_dir_all(&app)
             .map_err(|error| format!("could not clear {}: {error}", app.display()))?;
     }
-    macos::write_bundle(&app, built, shipped, &info, &icon_png(project, options)?)?;
+    macos::write_bundle(&app, built, loose, &info, &icon_png(project, options)?)?;
     macos::sign(&app, &options.signing, out)?;
 
     let zip_path = out.join(format!(
@@ -916,6 +1023,135 @@ mod tests {
                 .unwrap_err()
                 .contains("true or false")
         );
+    }
+
+    #[test]
+    fn extras_come_from_metadata_then_the_command_line() {
+        let mut project =
+            find_project(&metadata(), &Options::default(), Path::new("/work/game")).unwrap();
+        project.settings = serde_json::json!({ "extra": ["data", "./config/build.txt"] });
+        let options = Options::parse(&args(&["--extra", "dist/demo.txt"])).unwrap();
+        assert_eq!(options.extra, [PathBuf::from("dist/demo.txt")]);
+        let extras = extra_list(&project, &options).unwrap();
+        assert_eq!(
+            extras,
+            [
+                assets::Extra {
+                    source: PathBuf::from("/work/game/data"),
+                    name: PathBuf::from("data"),
+                },
+                assets::Extra {
+                    source: PathBuf::from("/work/game/config/build.txt"),
+                    name: PathBuf::from("config/build.txt"),
+                },
+                assets::Extra {
+                    source: PathBuf::from("dist/demo.txt"),
+                    name: PathBuf::from("demo.txt"),
+                },
+            ]
+        );
+
+        project.settings = serde_json::json!({ "extra": ["../shared"] });
+        assert!(
+            extra_list(&project, &Options::default())
+                .unwrap_err()
+                .contains("inside the package")
+        );
+        project.settings = serde_json::json!({ "extra": "data" });
+        assert!(
+            extra_list(&project, &Options::default())
+                .unwrap_err()
+                .contains("list of paths")
+        );
+    }
+
+    #[test]
+    fn extras_ship_beside_the_assets_in_the_folder_and_zip_or_are_built_in() {
+        let scratch =
+            std::env::temp_dir().join(format!("cargo-smitten-extras-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        let game = scratch.join("game");
+        for (path, contents) in [
+            ("assets/ship.png", "ship"),
+            ("data/ships.json", "[]"),
+            ("data/.DS_Store", "junk"),
+            ("build.txt", "v1.2 abc123"),
+            ("demo.txt", "demo"),
+        ] {
+            let path = game.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+        fs::write(scratch.join("built"), "binary").unwrap();
+
+        let mut project =
+            find_project(&metadata(), &Options::default(), Path::new("/work/game")).unwrap();
+        project.folder = game.clone();
+        project.settings = serde_json::json!({ "extra": ["data", "build.txt"] });
+        let demo = game.join("demo.txt");
+        let options = Options::parse(&args(&["--extra", demo.to_str().unwrap()])).unwrap();
+        let selection = assets::select(&asset_settings(&project, &options).unwrap()).unwrap();
+        let extras = assets::select_extras(
+            &extra_list(&project, &options).unwrap(),
+            &["assets".to_string(), "game".to_string()],
+        )
+        .unwrap();
+        assert_eq!(extras.describe(), "3 extra files");
+
+        let folder = scratch.join("package/game");
+        write_folder(
+            &folder,
+            &scratch.join("built"),
+            "game",
+            &loose_entries(&selection, &extras),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(folder.join("build.txt")).unwrap(),
+            "v1.2 abc123"
+        );
+        let zip_path = scratch.join("package/game.zip");
+        zip_folder(&folder, "game", &zip_path).unwrap();
+        let archive = zip::ZipArchive::new(File::open(&zip_path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive.file_names().map(str::to_string).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "game/assets/ship.png",
+                "game/build.txt",
+                "game/data/ships.json",
+                "game/demo.txt",
+                "game/game",
+            ]
+        );
+
+        let built_in: Vec<String> = built_in_entries(&selection, &extras)
+            .unwrap()
+            .into_iter()
+            .map(|(_, name)| name.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(
+            built_in,
+            ["ship.png", "build.txt", "data/ships.json", "demo.txt"]
+        );
+
+        // An extra cannot take an asset's place in the built-in zip.
+        let clash = assets::select_extras(
+            &[assets::Extra {
+                source: game.join("assets/ship.png"),
+                name: PathBuf::from("ship.png"),
+            }],
+            &[],
+        )
+        .unwrap();
+        assert!(
+            built_in_entries(&selection, &clash)
+                .unwrap_err()
+                .contains("same path as an asset")
+        );
+
+        fs::remove_dir_all(&scratch).unwrap();
     }
 
     #[test]
