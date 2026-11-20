@@ -39,10 +39,10 @@ fn main() {
 <div class="features">
 <div><h3>Everything a 2D game needs</h3><p>Graphics, shaders, audio, input, physics, files, video and more, in one crate with one consistent API.</p></div>
 <div><h3>Feels like Rust</h3><p>Loaders return <code>Result</code>, points are <code>glam::Vec2</code>, drawing takes a <code>DrawParams</code> builder, and every type and function is documented in the API reference.</p></div>
-<div><h3>Built on SDL3</h3><p>Rendering uses SDL3's GPU API on Vulkan, on Windows and Linux. SDL is built from source on the first build, so <code>cargo run</code> just works.</p></div>
+<div><h3>Built on SDL3</h3><p>Rendering uses SDL3's GPU API: Vulkan on Windows and Linux, Metal on macOS. SDL is built from source on the first build, so <code>cargo run</code> just works.</p></div>
 <div><h3>Kind when things break</h3><p>A panic shows a blue error screen with the message and where it came from, instead of a vanishing window, and saved images, shaders and sounds reload while the game runs.</p></div>
 <div><h3>Fast where it counts</h3><p>Drawing is batched automatically. Ten thousand moving, turning, tinted sprites cost Smitten under a millisecond a frame.</p></div>
-<div><h3>Ready to ship</h3><p><code>cargo smitten package</code> builds a release with SDL linked in and gathers your assets into a zip for players.</p></div>
+<div><h3>Ready to ship</h3><p><code>cargo smitten package</code> builds a release with SDL linked in and gathers your assets into a zip for players, or a <code>.app</code> on macOS.</p></div>
 </div>
 
 ## Where to go next

@@ -45,3 +45,78 @@ jobs:
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The shader tests run every Metal translation through Apple's
+      # compiler. Newer Xcodes download it separately.
+      - name: Metal compiler
+        run: |
+          if ! xcrun -sdk macosx metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun -sdk macosx metal --version
+          fi
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+        env:
+          SMITTEN_REQUIRE_METAL: "1"
+
+      # Opens a window and draws for a few seconds with each example, on
+      # the runner's Metal GPU. A panic, or quitting early, fails the step.
+      - name: Run examples on Metal
+        env:
+          CARGO_MANIFEST_DIR: ${{ github.workspace }}/crates/examples
+        run: |
+          # The debug build links SDL as a dylib, which `cargo run` would
+          # put on the library path.
+          sdl=$(find target/debug/build -name 'libSDL3.0.dylib' | head -1)
+          export DYLD_FALLBACK_LIBRARY_PATH="$(dirname "$sdl")"
+          status=0
+          for example in hello lantern shader mesh canvas lighting stencil; do
+            target/debug/examples/$example > "$example.log" 2>&1 &
+            pid=$!
+            sleep 6
+            if kill -0 "$pid" 2>/dev/null && ! grep -q "panicked" "$example.log"; then
+              echo "$example: ran for 6 seconds"
+              kill "$pid"
+            else
+              echo "::error::$example stopped or panicked on Metal"
+              kill "$pid" 2>/dev/null || true
+              status=1
+            fi
+            cat "$example.log"
+          done
+          exit $status
+
+      - name: Package an example as an app
+        run: cargo run -p cargo-smitten -- package -p smitten-examples --example lantern
+
+      - name: Check the app
+        run: |
+          app=target/package/Lantern.app
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --verify --strict --verbose=2 "$app"
+          test -x "$app/Contents/MacOS/lantern"
+          test -f "$app/Contents/Resources/AppIcon.icns"
+          test -d "$app/Contents/Resources/assets"
+          otool -L "$app/Contents/MacOS/lantern"
+          # SDL is linked in, so the app needs nothing outside macOS.
+          ! otool -L "$app/Contents/MacOS/lantern" | grep -i sdl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lantern-macos
+          path: target/package/lantern-macos-*.zip

@@ -18,7 +18,7 @@ static = ["sdl3-sys/build-from-source-static"]
 [dependencies]
 smitten-core.workspace = true
 sdl3-sys.workspace = true
-naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out"] }
+naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out", "msl-out"] }
 
 [lints]
 workspace = true

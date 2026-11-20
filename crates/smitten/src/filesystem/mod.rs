@@ -59,15 +59,37 @@ impl FilesystemState {
 
 /// The `assets` folder next to the game's `Cargo.toml` under `cargo run`,
 /// which sets `CARGO_MANIFEST_DIR`, and next to the executable otherwise.
+/// In a macOS app bundle it is in the bundle's `Contents/Resources`, where
+/// `cargo smitten package` puts it.
 fn default_asset_directory() -> PathBuf {
-    let base = std::env::var_os("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let executable = std::env::current_exe().ok()?;
-            Some(executable.parent()?.to_path_buf())
-        })
-        .unwrap_or_default();
-    base.join("assets")
+    if let Some(folder) = std::env::var_os("CARGO_MANIFEST_DIR") {
+        return PathBuf::from(folder).join("assets");
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return PathBuf::from("assets");
+    };
+    if cfg!(target_os = "macos")
+        && let Some(bundle) = app_bundle(&executable)
+    {
+        return bundle.join("Contents").join("Resources").join("assets");
+    }
+    executable
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default()
+        .join("assets")
+}
+
+/// The `.app` bundle `executable` is the main program of, if it sits where
+/// macOS puts one: `Name.app/Contents/MacOS/name`.
+fn app_bundle(executable: &Path) -> Option<&Path> {
+    let macos = executable.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    let is_bundle = macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && bundle.extension()? == "app";
+    is_bundle.then_some(bundle)
 }
 
 /// The executable's name without its extension.
@@ -499,9 +521,18 @@ pub fn source() -> PathBuf {
 
 /// The directory that holds [`source`]. For a released game this is the
 /// folder the executable is in, which is the place to look for files the
-/// player puts next to it.
+/// player puts next to it. In a macOS app bundle it is the folder holding
+/// the `.app`, since the bundle looks like a single file to the player.
 pub fn source_base_directory() -> PathBuf {
-    source().parent().map(Path::to_path_buf).unwrap_or_default()
+    let source = source();
+    let holder = if cfg!(target_os = "macos")
+        && let Some(bundle) = app_bundle(&source)
+    {
+        bundle.parent()
+    } else {
+        source.parent()
+    };
+    holder.map(Path::to_path_buf).unwrap_or_default()
 }
 
 /// Whether the game is running as a released executable rather than under
@@ -677,6 +708,22 @@ mod tests {
             PathBuf::from("/data")
         );
         assert!(appdata_directory_from(|_| None, false, false).is_none());
+    }
+
+    #[test]
+    fn an_app_bundle_is_found_from_its_executable() {
+        let bundle = Path::new("/Applications/Pong.app");
+        assert_eq!(
+            app_bundle(&bundle.join("Contents/MacOS/pong")),
+            Some(bundle)
+        );
+        assert_eq!(app_bundle(Path::new("/games/pong/pong")), None);
+        assert_eq!(
+            app_bundle(Path::new("/games/Pong/Contents/MacOS/pong")),
+            None
+        );
+        assert_eq!(app_bundle(Path::new("/Pong.app/Contents/Other/pong")), None);
+        assert_eq!(app_bundle(Path::new("pong")), None);
     }
 
     #[test]

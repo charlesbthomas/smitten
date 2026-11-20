@@ -22,12 +22,8 @@ use smitten_core::{
     StencilMode, VertexWinding, Wrap,
 };
 
-use crate::{sdl_error, shader};
-
-// Compiled from the GLSL beside them by `shaders/build.sh`.
-static VERTEX_SPIRV: &[u8] = include_bytes!("../shaders/sprite.vert.spv");
-static FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite.frag.spv");
-static ARRAY_FRAGMENT_SPIRV: &[u8] = include_bytes!("../shaders/sprite_array.frag.spv");
+use crate::sdl_error;
+use crate::shader::{self, ShaderCode, ShaderLanguage};
 
 const VERTEX_SIZE: u32 = size_of::<Vertex>() as u32;
 const INITIAL_VERTEX_CAPACITY: u32 = 4096;
@@ -287,6 +283,8 @@ pub(crate) struct Renderer {
     /// Whether the screen is sRGB-encoded, so vertex and clear colors,
     /// which games give in sRGB, are converted to linear light.
     gamma_correct: bool,
+    /// What shaders are translated to for the GPU driver.
+    language: ShaderLanguage,
 }
 
 impl Renderer {
@@ -336,6 +334,7 @@ impl Renderer {
             transfer_buffer: ptr::null_mut(),
             vertex_capacity: 0,
             gamma_correct,
+            language: ShaderLanguage::Spirv,
         };
         // On failure `renderer` is dropped, which releases whatever was
         // created so far. SDL ignores null handles on release.
@@ -343,30 +342,14 @@ impl Renderer {
         unsafe {
             let screen_format = SDL_GetGPUSwapchainTextureFormat(device, window);
             renderer.screen_format = screen_format;
-            renderer.vertex_shader = create_shader(
-                device,
-                VERTEX_SPIRV,
-                c"main",
-                SDL_GPU_SHADERSTAGE_VERTEX,
-                0,
-                1,
-            )?;
-            renderer.fragment_shader = create_shader(
-                device,
-                FRAGMENT_SPIRV,
-                c"main",
-                SDL_GPU_SHADERSTAGE_FRAGMENT,
-                1,
-                0,
-            )?;
-            renderer.array_fragment_shader = create_shader(
-                device,
-                ARRAY_FRAGMENT_SPIRV,
-                c"main",
-                SDL_GPU_SHADERSTAGE_FRAGMENT,
-                1,
-                1,
-            )?;
+            renderer.language = shader_language(device)?;
+            let [vertex, fragment, array] = shader::sprite_shaders(renderer.language)?;
+            renderer.vertex_shader =
+                create_shader(device, &vertex, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1)?;
+            renderer.fragment_shader =
+                create_shader(device, &fragment, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0)?;
+            renderer.array_fragment_shader =
+                create_shader(device, &array, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1)?;
             renderer.stencil_format = [
                 SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,
                 SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
@@ -1199,6 +1182,11 @@ impl Renderer {
             .map_or(1, |texture| texture.samples)
     }
 
+    /// What shaders are translated to for the GPU driver.
+    pub fn shader_language(&self) -> ShaderLanguage {
+        self.language
+    }
+
     /// The graphics API, driver and GPU, as SDL reports them.
     pub fn renderer_info(&self) -> RendererInfo {
         let text = |pointer: *const std::ffi::c_char| {
@@ -1315,13 +1303,12 @@ impl Renderer {
             return Ok(MeshVertexLayoutId(id));
         }
         check_vertex_layout(layout)?;
-        let compiled = shader::mesh_vertex(layout, self.gamma_correct)?;
-        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let compiled = shader::mesh_vertex(layout, self.gamma_correct, self.language)?;
+        // SAFETY: the device is alive and the code outlives the call.
         let vertex_shader = unsafe {
             create_shader(
                 self.device,
-                &compiled.spirv,
-                shader::MESH_VERTEX_ENTRY_POINT,
+                &compiled.code,
                 SDL_GPU_SHADERSTAGE_VERTEX,
                 0,
                 1,
@@ -1349,13 +1336,12 @@ impl Renderer {
     }
 
     pub fn create_shader(&mut self, source: &str) -> Result<ShaderInfo, String> {
-        let compiled = shader::compile(source)?;
-        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let compiled = shader::compile(source, self.language)?;
+        // SAFETY: the device is alive and the code outlives the call.
         let fragment = unsafe {
             create_shader(
                 self.device,
-                &compiled.spirv,
-                shader::ENTRY_POINT,
+                &compiled.code,
                 SDL_GPU_SHADERSTAGE_FRAGMENT,
                 1 + compiled.textures.len() as u32,
                 u32::from(compiled.uniform_size > 0),
@@ -1481,14 +1467,17 @@ impl Renderer {
         };
         // A custom shader declares its own textures, so it is never given
         // an array texture as `image`.
-        let compiled =
-            shader::compile_for(source, u32::from(targets), layered && shader.is_none())?;
-        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let compiled = shader::compile_for(
+            source,
+            u32::from(targets),
+            layered && shader.is_none(),
+            self.language,
+        )?;
+        // SAFETY: the device is alive and the code outlives the call.
         let variant = unsafe {
             create_shader(
                 self.device,
-                &compiled.spirv,
-                shader::ENTRY_POINT,
+                &compiled.code,
                 SDL_GPU_SHADERSTAGE_FRAGMENT,
                 1 + compiled.textures.len() as u32,
                 u32::from(compiled.uniform_size > 0),
@@ -1559,13 +1548,12 @@ impl Renderer {
         let desc = self.layout_desc(layout)?;
         // Ordinary draws' colors were made linear on the CPU already.
         let linearize = self.gamma_correct && layout != VertexLayoutId::STANDARD;
-        let compiled = shader::compile_vertex(&shader.source, &desc, linearize)?;
-        // SAFETY: the device is alive and the SPIR-V outlives the call.
+        let compiled = shader::compile_vertex(&shader.source, &desc, linearize, self.language)?;
+        // SAFETY: the device is alive and the code outlives the call.
         let variant = unsafe {
             create_shader(
                 self.device,
-                &compiled.spirv,
-                shader::MESH_VERTEX_ENTRY_POINT,
+                &compiled.code,
                 SDL_GPU_SHADERSTAGE_VERTEX,
                 1 + shader.textures.len() as u32,
                 1 + u32::from(shader.uniform_size > 0),
@@ -3246,21 +3234,41 @@ fn sample_count(samples: u32) -> SDL_GPUSampleCount {
     }
 }
 
+/// The shading language to translate shaders to for `device`'s driver:
+/// SPIR-V where it takes it, as Vulkan does, and otherwise the Metal
+/// Shading Language.
+///
+/// # Safety
+/// `device` must be alive.
+unsafe fn shader_language(device: *mut SDL_GPUDevice) -> Result<ShaderLanguage, String> {
+    // SAFETY: the caller promises the device is alive.
+    let formats = unsafe { SDL_GetGPUShaderFormats(device) };
+    if formats & SDL_GPU_SHADERFORMAT_SPIRV != 0 {
+        Ok(ShaderLanguage::Spirv)
+    } else if formats & SDL_GPU_SHADERFORMAT_MSL != 0 {
+        Ok(ShaderLanguage::Msl)
+    } else {
+        Err("the GPU driver takes neither SPIR-V nor Metal shaders".to_string())
+    }
+}
+
 /// # Safety
 /// `device` must be alive.
 unsafe fn create_shader(
     device: *mut SDL_GPUDevice,
-    spirv: &[u8],
-    entrypoint: &CStr,
+    code: &ShaderCode,
     stage: SDL_GPUShaderStage,
     num_samplers: u32,
     num_uniform_buffers: u32,
 ) -> Result<*mut SDL_GPUShader, String> {
     let info = SDL_GPUShaderCreateInfo {
-        code_size: spirv.len(),
-        code: spirv.as_ptr(),
-        entrypoint: entrypoint.as_ptr(),
-        format: SDL_GPU_SHADERFORMAT_SPIRV,
+        code_size: code.bytes.len(),
+        code: code.bytes.as_ptr(),
+        entrypoint: code.entry_point.as_ptr(),
+        format: match code.language {
+            ShaderLanguage::Spirv => SDL_GPU_SHADERFORMAT_SPIRV,
+            ShaderLanguage::Msl => SDL_GPU_SHADERFORMAT_MSL,
+        },
         stage,
         num_samplers,
         num_uniform_buffers,

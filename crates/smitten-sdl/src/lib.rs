@@ -165,10 +165,12 @@ impl SdlBackend {
             SDL_ShowWindow(window);
             SDL_SyncWindow(window);
 
-            // The built-in shaders are SPIR-V only for now, which selects the
-            // Vulkan driver. Direct3D 12 and Metal need their own shader
-            // formats before they can be offered here.
-            let formats = SDL_GPU_SHADERFORMAT_SPIRV;
+            // Shaders are translated to SPIR-V for Vulkan or to the Metal
+            // Shading Language for Metal, so SDL may pick either driver: it
+            // tries Metal first on Apple platforms and Vulkan elsewhere. The
+            // renderer asks the device which one it got. Direct3D 12 needs
+            // a shader format of its own before it can be offered here.
+            let formats = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL;
             let device = SDL_CreateGPUDevice(formats, cfg!(debug_assertions), ptr::null());
             if device.is_null() {
                 let message = format!("could not create a GPU device: {}", sdl_error());
@@ -810,7 +812,7 @@ impl Backend for SdlBackend {
     }
 
     fn validate_shader(&self, source: &str) -> Result<(), String> {
-        shader::check(source)
+        shader::check(source, self.renderer.shader_language())
     }
 
     fn renderer_info(&self) -> RendererInfo {
