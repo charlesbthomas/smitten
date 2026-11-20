@@ -9,8 +9,12 @@ weight = 9
 The {{ api(path="filesystem/index.html", text="filesystem") }} module reads from two places and writes to one:
 
 - The **asset directory** holds the files shipped with the game. Under
-  `cargo run` it is the `assets` folder next to the game's `Cargo.toml`. In
-  a released game it is the `assets` folder next to the executable.
+  `cargo run` it is the `assets` folder next to the game's `Cargo.toml`, or
+  the folder `assets` names in its `[package.metadata.smitten]`. In a
+  released game it is the `assets` folder next to the executable, or in a
+  Mac app's `Contents/Resources`. A game packaged with
+  `cargo smitten package --embed-assets` carries its assets inside the
+  executable, and reads those first.
 - The **save directory** is a per-user folder the game may write to, named
   after the game's identity. Set the identity with `Config::identity`; it
   defaults to the executable's name.

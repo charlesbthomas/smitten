@@ -50,6 +50,8 @@ fn main() {
   and **hot reload** of images, shaders, fonts and sounds while it runs.
 - **`cargo smitten package`**, which builds a release with SDL linked in and
   zips it with the game's assets, or makes a `.app` with an icon on macOS.
+  The assets can be filtered with include and exclude patterns, or built
+  into the executable.
 
 Smitten runs on Windows, Linux and macOS. Rendering uses SDL's GPU API:
 Vulkan on Windows and Linux, and Metal on macOS, with your WGSL shaders

@@ -4,8 +4,11 @@
 //!
 //! - The **asset directory** holds the files shipped with the game. While
 //!   developing with `cargo run` it is the `assets` folder next to the
-//!   game's `Cargo.toml`; in a released game it is the `assets` folder next
-//!   to the executable.
+//!   game's `Cargo.toml`, or the folder `assets` names in its
+//!   `[package.metadata.smitten]`; in a released game it is the `assets`
+//!   folder next to the executable. A game packaged with
+//!   `cargo smitten package --embed-assets` carries its assets inside the
+//!   executable instead, and reads them from there first.
 //! - The **save directory** is a per-user folder the game may write to,
 //!   named after the game's identity.
 //!
@@ -48,22 +51,57 @@ pub(crate) struct FilesystemState {
 
 impl FilesystemState {
     pub(crate) fn new(config: &Config) -> Self {
+        let mut mounts = SearchPath::new(config.append_identity);
+        if let Some(bytes) = EMBEDDED_ASSETS {
+            match search::Archive::from_bytes(bytes) {
+                Ok(archive) => mounts.embed(std::env::current_exe().unwrap_or_default(), archive),
+                Err(error) => eprintln!("smitten: {error}"),
+            }
+        }
         Self {
             asset_directory: default_asset_directory(),
             identity: config.identity.clone().unwrap_or_else(default_identity),
             save_directory: None,
-            mounts: SearchPath::new(config.append_identity),
+            mounts,
         }
     }
 }
 
+/// The game's assets as a zip, when `cargo smitten package --embed-assets`
+/// built them in. See `build.rs`.
+#[cfg(smitten_embedded_assets)]
+const EMBEDDED_ASSETS: Option<&[u8]> = Some(include_bytes!(env!("SMITTEN_EMBEDDED_ASSETS")));
+#[cfg(not(smitten_embedded_assets))]
+const EMBEDDED_ASSETS: Option<&[u8]> = None;
+
+/// Whether the game's assets are built into it, which
+/// `cargo smitten package --embed-assets` does. They are then read from
+/// inside the executable before the asset directory.
+pub fn has_embedded_assets() -> bool {
+    EMBEDDED_ASSETS.is_some()
+}
+
 /// The `assets` folder next to the game's `Cargo.toml` under `cargo run`,
 /// which sets `CARGO_MANIFEST_DIR`, and next to the executable otherwise.
-/// In a macOS app bundle it is in the bundle's `Contents/Resources`, where
-/// `cargo smitten package` puts it.
+/// Under `cargo run` the game's `[package.metadata.smitten]` can name
+/// another folder with `assets`. In a macOS app bundle it is in the
+/// bundle's `Contents/Resources`, where `cargo smitten package` puts it.
 fn default_asset_directory() -> PathBuf {
     if let Some(folder) = std::env::var_os("CARGO_MANIFEST_DIR") {
-        return PathBuf::from(folder).join("assets");
+        let folder = PathBuf::from(folder);
+        let configured = std::fs::read_to_string(folder.join("Cargo.toml"))
+            .ok()
+            .and_then(|manifest| {
+                let executable = std::env::current_exe().ok()?;
+                let name = executable.file_stem()?.to_str()?.to_string();
+                let is_example = executable
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|parent| parent == "examples");
+                let kind = if is_example { "example" } else { "bin" };
+                manifest_asset_folder(&manifest, kind, &name)
+            });
+        return folder.join(configured.as_deref().unwrap_or("assets"));
     }
     let Ok(executable) = std::env::current_exe() else {
         return PathBuf::from("assets");
@@ -90,6 +128,66 @@ fn app_bundle(executable: &Path) -> Option<&Path> {
         && contents.file_name()? == "Contents"
         && bundle.extension()? == "app";
     is_bundle.then_some(bundle)
+}
+
+/// The asset folder a `Cargo.toml` names for an executable: `assets` in
+/// `[package.metadata.smitten.<kind>.<name>]`, or failing that in
+/// `[package.metadata.smitten]`.
+///
+/// This reads only what packaging documents, a table header and an
+/// `assets = "folder"` line under it, rather than all of TOML: it runs only
+/// under `cargo run`, and `cargo smitten package` reads the manifest
+/// properly.
+fn manifest_asset_folder(manifest: &str, kind: &str, name: &str) -> Option<String> {
+    let mut table = String::new();
+    let mut general = None;
+    let mut specific = None;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(header) = line.strip_prefix('[') {
+            if header.starts_with('[') {
+                table.clear();
+                continue;
+            }
+            let header = header.split(']').next().unwrap_or_default();
+            table = header
+                .split('.')
+                .map(|part| part.trim().trim_matches(|c| c == '"' || c == '\''))
+                .collect::<Vec<_>>()
+                .join(".");
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key
+            .split('.')
+            .map(|part| part.trim().trim_matches(|c| c == '"' || c == '\''))
+            .collect::<Vec<_>>()
+            .join(".");
+        let full = if table.is_empty() {
+            key
+        } else {
+            format!("{table}.{key}")
+        };
+        let Some(value) = toml_string(value.trim()) else {
+            continue;
+        };
+        if full == "package.metadata.smitten.assets" {
+            general = Some(value);
+        } else if full == format!("package.metadata.smitten.{kind}.{name}.assets") {
+            specific = Some(value);
+        }
+    }
+    specific.or(general)
+}
+
+/// The text of a TOML string with nothing after it but a comment.
+fn toml_string(value: &str) -> Option<String> {
+    let quote = value.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let end = value[1..].find(quote)? + 1;
+    let rest = value[end + 1..].trim();
+    (rest.is_empty() || rest.starts_with('#')).then(|| value[1..end].to_string())
 }
 
 /// The executable's name without its extension.
@@ -600,6 +698,48 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn the_manifest_can_name_the_asset_folder() {
+        let manifest = r#"
+[package]
+name = "game"
+assets = "not-this"
+
+[package.metadata.smitten]
+name = "Game"
+assets = "art" # the shared folder
+
+[package.metadata.smitten.example.shardfall]
+assets = 'shardfall-art'
+
+[package.metadata.smitten.bin]
+editor.assets = "editor-art"
+
+[[bin]]
+assets = "nor-this"
+"#;
+        let folder = |kind, name| manifest_asset_folder(manifest, kind, name);
+        assert_eq!(folder("bin", "game").as_deref(), Some("art"));
+        assert_eq!(
+            folder("example", "shardfall").as_deref(),
+            Some("shardfall-art")
+        );
+        assert_eq!(folder("bin", "shardfall").as_deref(), Some("art"));
+        assert_eq!(folder("bin", "editor").as_deref(), Some("editor-art"));
+        assert_eq!(
+            manifest_asset_folder("[package]\nname = \"x\"", "bin", "x"),
+            None
+        );
+        assert_eq!(
+            manifest_asset_folder(
+                "[package.metadata.smitten]\nassets = \"a\" junk",
+                "bin",
+                "x"
+            ),
+            None
+        );
     }
 
     #[test]

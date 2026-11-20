@@ -200,15 +200,15 @@ pub fn icns(png: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Writes the bundle at `app`, a folder ending in `.app`, from the built
-/// executable, the game's assets folder if it has one, and the icon PNG.
-/// Returns how many asset files were copied.
+/// executable, the asset files chosen to ship beside it if any, and the
+/// icon PNG.
 pub fn write_bundle(
     app: &Path,
     executable: &Path,
-    assets: Option<&Path>,
+    assets: Option<&crate::assets::Selection>,
     info: &BundleInfo,
     icon_png: &[u8],
-) -> Result<usize, String> {
+) -> Result<(), String> {
     let describe = |action: &str, path: &Path, error: io::Error| {
         format!("could not {action} {}: {error}", path.display())
     };
@@ -231,9 +231,9 @@ pub fn write_bundle(
     // expects only code in Contents/MacOS, and signing checks that.
     // Smitten looks for them there when it runs from a bundle.
     match assets {
-        Some(assets) => crate::package::copy_folder(assets, &resources.join("assets"))
-            .map_err(|error| describe("copy", assets, error)),
-        None => Ok(0),
+        Some(assets) => crate::assets::copy(assets, &resources.join("assets"))
+            .map_err(|error| describe("copy", &assets.folder, error)),
+        None => Ok(()),
     }
 }
 
@@ -424,15 +424,19 @@ mod tests {
         fs::write(scratch.join("pong"), "binary").unwrap();
 
         let app = scratch.join("Pong.app");
-        let copied = write_bundle(
+        let selection = crate::assets::Selection {
+            folder: scratch.join("assets"),
+            files: vec![PathBuf::from("sounds/blip.wav")],
+            ..Default::default()
+        };
+        write_bundle(
             &app,
             &scratch.join("pong"),
-            Some(&scratch.join("assets")),
+            Some(&selection),
             &info(),
             DEFAULT_ICON,
         )
         .unwrap();
-        assert_eq!(copied, 1);
         let contents = app.join("Contents");
         assert_eq!(
             fs::read_to_string(contents.join("MacOS/pong")).unwrap(),

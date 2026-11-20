@@ -5,6 +5,7 @@ use std::process::{Command, Stdio};
 
 use zip::write::SimpleFileOptions;
 
+use crate::assets;
 use crate::macos;
 
 /// What to package, from the command line.
@@ -21,6 +22,14 @@ pub struct Options {
     pub icon: Option<PathBuf>,
     /// macOS: how to sign the app.
     pub signing: macos::Signing,
+    /// The folder to ship assets from, over the game's metadata.
+    pub assets: Option<PathBuf>,
+    /// Patterns for the asset files to ship, in place of the metadata's.
+    pub include: Vec<String>,
+    /// Patterns for asset files to leave out, on top of the metadata's.
+    pub exclude: Vec<String>,
+    /// Build the assets into the executable instead of beside it.
+    pub embed_assets: bool,
 }
 
 /// Which executable of the package to ship.
@@ -54,6 +63,10 @@ impl Options {
                 "--sign" => options.signing.identity = Some(value()?),
                 "--entitlements" => options.signing.entitlements = Some(PathBuf::from(value()?)),
                 "--notarize" => options.signing.notary_profile = Some(value()?),
+                "--assets" => options.assets = Some(PathBuf::from(value()?)),
+                "--include" => options.include.push(value()?),
+                "--exclude" => options.exclude.push(value()?),
+                "--embed-assets" => options.embed_assets = true,
                 other => return Err(format!("unknown option `{other}`")),
             }
         }
@@ -94,7 +107,9 @@ struct Project {
     executable: String,
     is_example: bool,
     version: String,
-    /// The package's `[package.metadata.smitten]` table, or null.
+    /// The package's `[package.metadata.smitten]` table, with the
+    /// `bin.<name>` or `example.<name>` table for the executable laid over
+    /// it, or null.
     settings: serde_json::Value,
 }
 
@@ -197,6 +212,11 @@ fn find_project(
         },
     };
 
+    let settings = settings_for(
+        &package["metadata"]["smitten"],
+        if is_example { "example" } else { "bin" },
+        &executable,
+    )?;
     Ok(Project {
         folder: folder_of(package),
         package: name,
@@ -204,8 +224,130 @@ fn find_project(
         executable,
         is_example,
         version: package["version"].as_str().unwrap_or("0.0.0").to_string(),
-        settings: package["metadata"]["smitten"].clone(),
+        settings,
     })
+}
+
+/// The settings for one executable: `[package.metadata.smitten]`, with
+/// what `[package.metadata.smitten.<kind>.<executable>]` sets in place of
+/// the same keys there. The `bin` and `example` tables themselves are
+/// left out.
+fn settings_for(
+    table: &serde_json::Value,
+    kind: &str,
+    executable: &str,
+) -> Result<serde_json::Value, String> {
+    let serde_json::Value::Object(table) = table else {
+        return match table {
+            serde_json::Value::Null => Ok(serde_json::Value::Null),
+            _ => Err("[package.metadata.smitten] must be a table".to_string()),
+        };
+    };
+    let mut settings = table.clone();
+    settings.remove("bin");
+    settings.remove("example");
+    match &table.get(kind).unwrap_or(&serde_json::Value::Null)[executable] {
+        serde_json::Value::Null => {}
+        serde_json::Value::Object(overrides) => settings.extend(overrides.clone()),
+        _ => {
+            return Err(format!(
+                "[package.metadata.smitten.{kind}.{executable}] must be a table"
+            ));
+        }
+    }
+    Ok(serde_json::Value::Object(settings))
+}
+
+/// Which asset files to ship and how: from the command line, then the
+/// game's metadata, then the `assets` folder next to its `Cargo.toml`.
+fn asset_settings(project: &Project, options: &Options) -> Result<assets::Settings, String> {
+    let settings = &project.settings;
+    let patterns = |key: &str| -> Result<Option<Vec<String>>, String> {
+        let bad = || format!("`{key}` in [package.metadata.smitten] must be a list of patterns");
+        match &settings[key] {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::Array(list) => list
+                .iter()
+                .map(|pattern| pattern.as_str().map(str::to_string).ok_or_else(bad))
+                .collect::<Result<_, _>>()
+                .map(Some),
+            _ => Err(bad()),
+        }
+    };
+    let folder = match (&options.assets, &settings["assets"]) {
+        (Some(folder), _) => Some(folder.clone()),
+        (None, serde_json::Value::Null) => None,
+        (None, serde_json::Value::String(folder)) => Some(project.folder.join(folder)),
+        _ => {
+            return Err("`assets` in [package.metadata.smitten] must be a folder name".to_string());
+        }
+    };
+    let embed = match &settings["embed-assets"] {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(embed) => *embed,
+        _ => {
+            return Err(
+                "`embed-assets` in [package.metadata.smitten] must be true or false".to_string(),
+            );
+        }
+    };
+    let include = if options.include.is_empty() {
+        patterns("include")?
+    } else {
+        Some(options.include.clone())
+    };
+    let mut exclude = patterns("exclude")?.unwrap_or_default();
+    exclude.extend(options.exclude.iter().cloned());
+    Ok(assets::Settings {
+        named: folder.is_some(),
+        folder: folder.unwrap_or_else(|| project.folder.join("assets")),
+        include,
+        exclude,
+        embed: embed || options.embed_assets,
+    })
+}
+
+/// Zips the chosen assets for the build to put inside the executable,
+/// returning the zip's path, or `None` when there is nothing to embed.
+fn embedded_zip(
+    project: &Project,
+    selection: &assets::Selection,
+) -> Result<Option<PathBuf>, String> {
+    if selection.files.is_empty() {
+        return Ok(None);
+    }
+    let folder = project.target_directory.join("smitten-embed");
+    fs::create_dir_all(&folder)
+        .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
+    let zip_path = folder.join(format!("{}-assets.zip", project.executable));
+    assets::zip(selection, &zip_path)
+        .map_err(|error| format!("could not write {}: {error}", zip_path.display()))?;
+    // The build reads the zip by this path from inside another crate, so
+    // it must not depend on the folder the build runs in.
+    let zip_path = zip_path.canonicalize().unwrap_or(zip_path);
+    Ok(Some(zip_path))
+}
+
+/// Checks that the built executable carries the zip: a game built against
+/// a Smitten from before embedding existed builds fine but ignores it.
+fn check_embedded(built: &Path, zip_path: &Path) -> Result<(), String> {
+    let zip = fs::read(zip_path)
+        .map_err(|error| format!("could not read {}: {error}", zip_path.display()))?;
+    let executable =
+        fs::read(built).map_err(|error| format!("could not read {}: {error}", built.display()))?;
+    // The end of a zip holds its sizes and offsets, which no other bytes
+    // in the executable are likely to repeat.
+    let tail = &zip[zip.len().saturating_sub(64)..];
+    if executable.windows(tail.len()).any(|window| window == tail) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the assets were not built into {}. The game may use a version of \
+             Smitten from before `embed-assets`; update it, or package without \
+             embedding.",
+            built.display()
+        ))
+    }
 }
 
 /// Explains the most likely cause of a failed build when CMake cannot be
@@ -241,6 +383,13 @@ pub fn run(options: Options) -> Result<String, String> {
     } else {
         None
     };
+    let asset_settings = asset_settings(&project, &options)?;
+    let selection = assets::select(&asset_settings)?;
+    let embedded = if asset_settings.embed {
+        embedded_zip(&project, &selection)?
+    } else {
+        None
+    };
 
     // Build with SDL inside the executable, so there is no separate
     // library for players to be missing.
@@ -252,6 +401,12 @@ pub fn run(options: Options) -> Result<String, String> {
         ["--bin", &project.executable]
     });
     build.args(["--features", "smitten/sdl-static"]);
+    // Smitten's build script builds this zip into the game when it is set,
+    // and only then.
+    match &embedded {
+        Some(zip_path) => build.env("SMITTEN_EMBED_ASSETS", zip_path),
+        None => build.env_remove("SMITTEN_EMBED_ASSETS"),
+    };
     if let Some(bundle) = &bundle {
         // Build Rust and SDL for the oldest macOS the bundle claims, so the
         // claim holds. CMake and the cc crate read this too.
@@ -272,13 +427,35 @@ pub fn run(options: Options) -> Result<String, String> {
         built.push("examples");
     }
     built.push(&file_name);
+    if let Some(zip_path) = &embedded {
+        check_embedded(&built, zip_path)?;
+    }
+    let shipped = if asset_settings.embed {
+        None
+    } else {
+        Some(&selection)
+    };
+    let where_assets = if asset_settings.embed {
+        format!("{} built in", selection.describe())
+    } else {
+        selection.describe()
+    };
 
     let out = options
         .out
         .clone()
         .unwrap_or_else(|| project.target_directory.join("package"));
     if let Some(bundle) = bundle {
-        return package_app(&project, &options, &built, &out, bundle);
+        let summary = package_app(
+            &project,
+            &options,
+            &built,
+            &out,
+            shipped,
+            &where_assets,
+            bundle,
+        )?;
+        return Ok(summary + &selection.notes());
     }
     let folder = out.join(&project.executable);
     let describe = |action: &str, path: &Path, error: io::Error| {
@@ -293,11 +470,9 @@ pub fn run(options: Options) -> Result<String, String> {
     fs::create_dir_all(&folder).map_err(|error| describe("create", &folder, error))?;
     fs::copy(&built, folder.join(&file_name)).map_err(|error| describe("copy", &built, error))?;
 
-    let assets = project.folder.join("assets");
-    let mut asset_count = 0;
-    if assets.is_dir() {
-        asset_count = copy_folder(&assets, &folder.join("assets"))
-            .map_err(|error| describe("copy", &assets, error))?;
+    if let Some(selection) = shipped {
+        assets::copy(selection, &folder.join("assets"))
+            .map_err(|error| describe("copy", &selection.folder, error))?;
     }
 
     let zip_path = out.join(format!(
@@ -310,11 +485,11 @@ pub fn run(options: Options) -> Result<String, String> {
         .map_err(|error| describe("write", &zip_path, error))?;
 
     Ok(format!(
-        "Packaged {} with {asset_count} asset file{}.\n  Folder: {}\n  Zip:    {}",
+        "Packaged {} with {where_assets}.\n  Folder: {}\n  Zip:    {}{}",
         project.executable,
-        if asset_count == 1 { "" } else { "s" },
         folder.display(),
-        zip_path.display()
+        zip_path.display(),
+        selection.notes()
     ))
 }
 
@@ -370,6 +545,8 @@ fn package_app(
     options: &Options,
     built: &Path,
     out: &Path,
+    shipped: Option<&assets::Selection>,
+    where_assets: &str,
     info: macos::BundleInfo,
 ) -> Result<String, String> {
     let app_name = format!("{}.app", info.name);
@@ -378,14 +555,7 @@ fn package_app(
         fs::remove_dir_all(&app)
             .map_err(|error| format!("could not clear {}: {error}", app.display()))?;
     }
-    let assets = project.folder.join("assets");
-    let asset_count = macos::write_bundle(
-        &app,
-        built,
-        assets.is_dir().then_some(assets.as_path()),
-        &info,
-        &icon_png(project, options)?,
-    )?;
+    macos::write_bundle(&app, built, shipped, &info, &icon_png(project, options)?)?;
     macos::sign(&app, &options.signing, out)?;
 
     let zip_path = out.join(format!(
@@ -413,9 +583,8 @@ fn package_app(
     };
 
     let mut summary = format!(
-        "Packaged {} with {asset_count} asset file{}, {signed}.\n  App: {}\n  Zip: {}",
+        "Packaged {} with {where_assets}, {signed}.\n  App: {}\n  Zip: {}",
         info.name,
-        if asset_count == 1 { "" } else { "s" },
         app.display(),
         zip_path.display()
     );
@@ -429,43 +598,11 @@ fn package_app(
     Ok(summary)
 }
 
-/// The files under `folder`, as paths relative to it, in a stable order.
-fn files_in(folder: &Path) -> io::Result<Vec<PathBuf>> {
-    fn walk(root: &Path, folder: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-        for entry in fs::read_dir(folder)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                walk(root, &path, files)?;
-            } else if let Ok(relative) = path.strip_prefix(root) {
-                files.push(relative.to_path_buf());
-            }
-        }
-        Ok(())
-    }
-    let mut files = Vec::new();
-    walk(folder, folder, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-/// Copies everything under `from` into `to`. Returns how many files.
-pub(crate) fn copy_folder(from: &Path, to: &Path) -> io::Result<usize> {
-    let files = files_in(from)?;
-    for file in &files {
-        let destination = to.join(file);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(from.join(file), destination)?;
-    }
-    Ok(files.len())
-}
-
 /// Writes `folder` to a zip file in which everything sits inside a single
 /// top-level folder called `name`, so unzipping never scatters files.
 fn zip_folder(folder: &Path, name: &str, zip_path: &Path) -> io::Result<()> {
     let mut zip = zip::ZipWriter::new(File::create(zip_path)?);
-    for file in files_in(folder)? {
+    for file in assets::files_in(folder)? {
         let source = folder.join(&file);
         let options = SimpleFileOptions::default();
         // Keep the executable runnable after unzipping on Linux and macOS.
@@ -666,7 +803,123 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_is_copied_and_zipped_under_one_top_level_name() {
+    fn asset_options_are_read_from_the_command_line() {
+        let options = Options::parse(&args(&[
+            "--assets",
+            "art",
+            "--include",
+            "*.png",
+            "--exclude",
+            "raw",
+            "--exclude",
+            "*.psd",
+            "--embed-assets",
+        ]))
+        .unwrap();
+        assert_eq!(options.assets, Some(PathBuf::from("art")));
+        assert_eq!(options.include, ["*.png"]);
+        assert_eq!(options.exclude, ["raw", "*.psd"]);
+        assert!(options.embed_assets);
+    }
+
+    #[test]
+    fn a_table_for_the_executable_is_laid_over_the_package_settings() {
+        let table = serde_json::json!({
+            "name": "Smitten Examples",
+            "exclude": ["*.psd"],
+            "example": {
+                "shardfall": { "include": ["shardfall-*"], "name": "Shardfall" },
+            },
+            "bin": { "shardfall": { "name": "Not this one" } },
+        });
+        let settings = settings_for(&table, "example", "shardfall").unwrap();
+        assert_eq!(
+            settings,
+            serde_json::json!({
+                "name": "Shardfall",
+                "exclude": ["*.psd"],
+                "include": ["shardfall-*"],
+            })
+        );
+        let settings = settings_for(&table, "example", "pong").unwrap();
+        assert_eq!(settings["name"], "Smitten Examples");
+        assert!(settings.get("example").is_none());
+        assert_eq!(
+            settings_for(&serde_json::Value::Null, "bin", "game").unwrap(),
+            serde_json::Value::Null
+        );
+        let bad = serde_json::json!({ "bin": { "game": 3 } });
+        assert!(
+            settings_for(&bad, "bin", "game")
+                .unwrap_err()
+                .contains("must be a table")
+        );
+    }
+
+    #[test]
+    fn asset_settings_come_from_the_command_line_then_metadata() {
+        let mut project =
+            find_project(&metadata(), &Options::default(), Path::new("/work/game")).unwrap();
+        let plain = asset_settings(&project, &Options::default()).unwrap();
+        assert_eq!(
+            plain,
+            assets::Settings {
+                folder: PathBuf::from("/work/game/assets"),
+                named: false,
+                include: None,
+                exclude: Vec::new(),
+                embed: false,
+            }
+        );
+
+        project.settings = serde_json::json!({
+            "assets": "art",
+            "include": ["*.png", "*.ogg"],
+            "exclude": ["raw"],
+            "embed-assets": true,
+        });
+        let from_metadata = asset_settings(&project, &Options::default()).unwrap();
+        assert_eq!(from_metadata.folder, PathBuf::from("/work/game/art"));
+        assert!(from_metadata.named);
+        assert_eq!(
+            from_metadata.include.as_deref(),
+            Some(&["*.png".to_string(), "*.ogg".to_string()][..])
+        );
+        assert!(from_metadata.embed);
+
+        let options = Options::parse(&args(&[
+            "--assets",
+            "other",
+            "--include",
+            "*.wav",
+            "--exclude",
+            "x",
+        ]))
+        .unwrap();
+        let overridden = asset_settings(&project, &options).unwrap();
+        assert_eq!(overridden.folder, PathBuf::from("other"));
+        assert_eq!(
+            overridden.include.as_deref(),
+            Some(&["*.wav".to_string()][..])
+        );
+        assert_eq!(overridden.exclude, ["raw", "x"]);
+
+        project.settings = serde_json::json!({ "include": "*.png" });
+        assert!(
+            asset_settings(&project, &Options::default())
+                .unwrap_err()
+                .contains("list of patterns")
+        );
+        project.settings = serde_json::json!({ "embed-assets": "yes" });
+        assert!(
+            asset_settings(&project, &Options::default())
+                .unwrap_err()
+                .contains("true or false")
+        );
+    }
+
+    #[test]
+    fn a_folder_is_zipped_under_one_top_level_name() {
         let scratch =
             std::env::temp_dir().join(format!("cargo-smitten-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&scratch);
@@ -675,12 +928,8 @@ mod tests {
         fs::write(source.join("a.txt"), "a").unwrap();
         fs::write(source.join("sounds/b.txt"), "b").unwrap();
 
-        let copy = scratch.join("copy");
-        assert_eq!(copy_folder(&source, &copy).unwrap(), 2);
-        assert_eq!(fs::read_to_string(copy.join("sounds/b.txt")).unwrap(), "b");
-
         let zip_path = scratch.join("out.zip");
-        zip_folder(&copy, "game", &zip_path).unwrap();
+        zip_folder(&source, "game", &zip_path).unwrap();
         let mut archive = zip::ZipArchive::new(File::open(&zip_path).unwrap()).unwrap();
         let mut names: Vec<String> = archive.file_names().map(str::to_string).collect();
         names.sort();

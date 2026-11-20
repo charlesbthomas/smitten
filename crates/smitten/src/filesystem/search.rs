@@ -1,13 +1,13 @@
 //! The places a relative path is looked up in, and in what order: zip
 //! archives and directories the game has mounted, the save directory, and
-//! the asset directory.
+//! the game's own files, built into it or in the asset directory.
 //!
 //! Paths here are lists of names, already checked not to leave the place
 //! they are looked up in. An empty list is the top level.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
@@ -28,8 +28,13 @@ enum Source {
     Archive(Archive),
 }
 
-struct Archive {
-    zip: ZipArchive<BufReader<File>>,
+/// Something a zip archive can be read from: a file, or bytes in memory.
+trait ReadSeek: Read + Seek {}
+
+impl<T: Read + Seek> ReadSeek for T {}
+
+pub(crate) struct Archive {
+    zip: ZipArchive<Box<dyn ReadSeek>>,
     /// Each file by its path inside the archive, with its index there and
     /// its size once uncompressed.
     files: BTreeMap<String, (usize, u64)>,
@@ -40,10 +45,19 @@ struct Archive {
 impl Archive {
     fn open(path: &Path) -> io::Result<Archive> {
         let file = BufReader::new(File::open(path)?);
-        let mut zip = ZipArchive::new(file).map_err(|error| {
+        Archive::read(Box::new(file), &path.display().to_string())
+    }
+
+    /// An archive in memory, such as the game's assets built into it.
+    pub fn from_bytes(bytes: &'static [u8]) -> io::Result<Archive> {
+        Archive::read(Box::new(Cursor::new(bytes)), "the built-in assets")
+    }
+
+    fn read(reader: Box<dyn ReadSeek>, name: &str) -> io::Result<Archive> {
+        let mut zip = ZipArchive::new(reader).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("{} is not a zip archive: {error}", path.display()),
+                format!("{name} is not a zip archive: {error}"),
             )
         })?;
         let mut files = BTreeMap::new();
@@ -231,6 +245,8 @@ pub(crate) enum Location {
 enum Slot {
     First(usize),
     Last(usize),
+    /// The assets built into the game.
+    Embedded,
 }
 
 /// One place to look, in search order.
@@ -257,6 +273,9 @@ pub(crate) struct SearchPath {
     pub follow_symlinks: bool,
     /// Whether the asset directory is looked at before the save directory.
     pub assets_first: bool,
+    /// The assets built into the game, looked at just before the asset
+    /// directory.
+    embedded: Option<Mount>,
 }
 
 impl Default for SearchPath {
@@ -266,6 +285,7 @@ impl Default for SearchPath {
             last: Vec::new(),
             follow_symlinks: true,
             assets_first: false,
+            embedded: None,
         }
     }
 }
@@ -298,22 +318,42 @@ impl SearchPath {
             .iter()
             .enumerate()
             .map(|(index, mount)| Place::Mount(Slot::Last(index), mount));
-        let (before, after) = if self.assets_first {
-            (Some(assets), save)
+        let saves = save.map(Place::Disk);
+        let shipped = self
+            .embedded
+            .iter()
+            .map(|mount| Place::Mount(Slot::Embedded, mount))
+            .chain(std::iter::once(Place::Disk(assets)));
+        let mut places: Vec<Place<'a>> = first.collect();
+        if self.assets_first {
+            places.extend(shipped);
+            places.extend(saves);
         } else {
-            (save, Some(assets))
-        };
-        first
-            .chain(before.map(Place::Disk))
-            .chain(after.map(Place::Disk))
-            .chain(last)
-            .collect()
+            places.extend(saves);
+            places.extend(shipped);
+        }
+        places.extend(last);
+        places
+    }
+
+    /// Makes `archive`, the assets built into the game, part of its files.
+    /// `file` is what [`SearchPath::real_directory`] reports for them.
+    pub fn embed(&mut self, file: PathBuf, archive: Archive) {
+        self.embedded = Some(Mount {
+            file,
+            point: Vec::new(),
+            source: Source::Archive(archive),
+        });
     }
 
     fn mount(&self, slot: Slot) -> &Mount {
         match slot {
             Slot::First(index) => &self.first[index],
             Slot::Last(index) => &self.last[index],
+            Slot::Embedded => self
+                .embedded
+                .as_ref()
+                .expect("the game has built-in assets"),
         }
     }
 
@@ -321,6 +361,10 @@ impl SearchPath {
         match slot {
             Slot::First(index) => &mut self.first[index],
             Slot::Last(index) => &mut self.last[index],
+            Slot::Embedded => self
+                .embedded
+                .as_mut()
+                .expect("the game has built-in assets"),
         }
     }
 
@@ -462,6 +506,68 @@ mod tests {
             zip.write_all(contents.as_bytes()).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn built_in_assets_come_before_the_asset_directory() {
+        let dir = TempDir::new("embedded");
+        let assets = dir.0.join("assets");
+        let save = dir.0.join("save");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::create_dir_all(&save).unwrap();
+        std::fs::write(assets.join("level.txt"), "loose").unwrap();
+        std::fs::write(assets.join("extra.txt"), "only loose").unwrap();
+        let zip_path = dir.0.join("built-in.zip");
+        write_zip(
+            &zip_path,
+            &[("level.txt", "built in"), ("music/theme.txt", "theme")],
+        );
+        let bytes: &'static [u8] = std::fs::read(&zip_path).unwrap().leak();
+
+        let mut search = SearchPath::default();
+        search.embed(
+            PathBuf::from("game.exe"),
+            Archive::from_bytes(bytes).unwrap(),
+        );
+        assert_eq!(
+            read(&mut search, &assets, "level.txt").as_deref(),
+            Some("built in")
+        );
+        assert_eq!(
+            read(&mut search, &assets, "music/theme.txt").as_deref(),
+            Some("theme")
+        );
+        assert_eq!(
+            read(&mut search, &assets, "extra.txt").as_deref(),
+            Some("only loose")
+        );
+        assert_eq!(
+            search.list(None, &assets, &parts("")),
+            ["extra.txt", "level.txt", "music"]
+        );
+        let found = search.find(None, &assets, &parts("level.txt")).unwrap();
+        assert_eq!(search.real_directory(&found), PathBuf::from("game.exe"));
+
+        // A save still overrides a built-in file, unless shipped files
+        // come first.
+        std::fs::write(save.join("level.txt"), "saved").unwrap();
+        let found = search
+            .find(Some(&save), &assets, &parts("level.txt"))
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(search.read(&found).unwrap()).unwrap(),
+            "saved"
+        );
+        search.assets_first = true;
+        let found = search
+            .find(Some(&save), &assets, &parts("level.txt"))
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(search.read(&found).unwrap()).unwrap(),
+            "built in"
+        );
+
+        assert!(Archive::from_bytes(b"not a zip").is_err());
     }
 
     fn read(search: &mut SearchPath, assets: &Path, path: &str) -> Option<String> {
