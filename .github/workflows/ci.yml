@@ -80,6 +80,10 @@ jobs:
         env:
           CARGO_MANIFEST_DIR: ${{ github.workspace }}/crates/examples
         run: |
+          # The debug build links SDL as a dylib, which `cargo run` would
+          # put on the library path.
+          sdl=$(find target/debug/build -name 'libSDL3.0.dylib' | head -1)
+          export DYLD_FALLBACK_LIBRARY_PATH="$(dirname "$sdl")"
           status=0
           for example in hello lantern shader mesh canvas lighting stencil; do
             target/debug/examples/$example > "$example.log" 2>&1 &
