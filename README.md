@@ -121,6 +121,16 @@ it also checks every Metal shader translation with Apple's compiler, runs
 a few examples on Metal and packages one as an app. The Docs
 workflow builds the site on pull requests and publishes it from `main`.
 
+## Releases
+
+All crates share one version, set in `[workspace.package]` in `Cargo.toml`.
+[Release Please](https://github.com/googleapis/release-please) reads the
+[Conventional Commit](https://www.conventionalcommits.org/) messages on
+`main` and keeps a release pull request open that bumps that version,
+updates `Cargo.lock` and writes `CHANGELOG.md`. Merging it tags the release
+(`vX.Y.Z`) and publishes it on GitHub. Before 1.0, `feat:` bumps the minor
+version, `fix:` the patch, and breaking changes (`feat!:`) the minor.
+
 ## License
 
 Smitten is under the [zlib license](LICENSE), the same as SDL.
