@@ -106,7 +106,7 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "cargo-smitten"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "image",
  "serde_json",
@@ -987,7 +987,7 @@ checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 
 [[package]]
 name = "smitten"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "flate2",
  "fontdue",
@@ -1008,18 +1008,18 @@ dependencies = [
 
 [[package]]
 name = "smitten-core"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "smitten-examples"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "smitten",
 ]
 
 [[package]]
 name = "smitten-sdl"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "naga",
  "sdl3-sys",
