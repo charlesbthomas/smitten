@@ -102,6 +102,7 @@ Games depend only on `smitten`.
 | `crates/smitten` | The public API: the `Game` trait, `run`, and the framework modules. |
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
+| `crates/smitten-kit` | Optional game structure on top of `smitten`: scenes, timers and tweens, input actions and a camera. |
 | `crates/examples` | The example games and the assets they load. |
 | `crates/cargo-smitten` | The `cargo smitten package` command. |
 | `site` | The documentation site, built with [Zola](https://www.getzola.org). |
