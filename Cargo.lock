@@ -1015,6 +1015,14 @@ name = "smitten-examples"
 version = "0.2.0"
 dependencies = [
  "smitten",
+ "smitten-kit",
+]
+
+[[package]]
+name = "smitten-kit"
+version = "0.2.0"
+dependencies = [
+ "smitten",
 ]
 
 [[package]]

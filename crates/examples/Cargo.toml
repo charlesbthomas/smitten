@@ -16,6 +16,7 @@ sdl-static = ["smitten/sdl-static"]
 
 [dependencies]
 smitten = { path = "../smitten", default-features = false, features = ["physics", "video"] }
+smitten-kit = { path = "../smitten-kit", default-features = false }
 
 [lints]
 workspace = true
