@@ -347,8 +347,8 @@ impl<C: 'static> SceneStack<C> {
         }
         let top = self.scenes.len() - 1;
         let mut wanted = Transition::None;
-        for index in lowest..=top {
-            let transition = self.scenes[index].update(ctx, dt);
+        for (index, scene) in self.scenes.iter_mut().enumerate().skip(lowest) {
+            let transition = scene.update(ctx, dt);
             // Only the top scene moves the stack.
             if index == top {
                 wanted = transition;
@@ -380,15 +380,17 @@ impl<C: 'static> SceneStack<C> {
         if self.fade.is_some() {
             return;
         }
-        for index in (0..self.scenes.len()).rev() {
-            match self.scenes[index].event(ctx, event) {
+        let mut wanted = Transition::None;
+        for scene in self.scenes.iter_mut().rev() {
+            match scene.event(ctx, event) {
                 Transition::Pass => continue,
                 transition => {
-                    self.apply(transition, ctx);
-                    return;
+                    wanted = transition;
+                    break;
                 }
             }
         }
+        self.apply(wanted, ctx);
     }
 
     /// Draws the top scene, after the scenes it overlays, then the fade.
