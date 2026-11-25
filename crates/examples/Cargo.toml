@@ -27,3 +27,6 @@ include = []
 
 [package.metadata.smitten.example.shardfall]
 include = ["shardfall-*"]
+
+[package.metadata.smitten.example.frostmarch]
+include = []

@@ -84,8 +84,8 @@ goes through it step by step, including installing the tools by hand.
 ## Examples
 
 `cargo run --example <name>` (or `just run <name>`) runs one from the
-workspace root. There are five small games, `lantern`, `pong`, `topple`,
-`undercroft` and `shardfall`, and a demo of each part of the framework:
+workspace root. There are six small games, `lantern`, `pong`, `topple`,
+`undercroft`, `shardfall` and `frostmarch`, and a demo of each part of the framework:
 `hello`, `sprites`, `shapes`, `text`, `input`, `audio`, `spatial_audio`,
 `canvas`, `shader`, `stencil`, `particles`, `mesh`, `physics`, `lighting`,
 `design`, `graphics_extras`, `video`, `rumble`, and `benchmark` (run it
