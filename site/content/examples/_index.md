@@ -4,7 +4,7 @@ description = "Example games and demos that come with Smitten, with screenshots 
 template = "section.html"
 +++
 
-Smitten's repository comes with five small games and a demo of each part
+Smitten's repository comes with six small games and a demo of each part
 of the framework. They live in
 [`crates/examples/examples`](https://github.com/charlesbthomas/smitten/tree/main/crates/examples/examples),
 and their images, sounds and shaders in `crates/examples/assets`. Run any
@@ -100,6 +100,31 @@ aims, the left button fires, and Space or the right button dashes. Tab, or
 Back on a gamepad, switches the screen effects off to compare.
 
 `cargo run --example shardfall` · [Source](https://github.com/charlesbthomas/smitten/blob/main/crates/examples/examples/shardfall.rs)
+
+### Frostmarch
+
+{{ figure(src="frostmarch.png", alt="A hooded fighter in a pink cape swings a greatsword at horned wights on a snowfield, while a brute's orange circle on the ground warns where its slam will land.") }}
+
+A proof of concept for fast melee combat. One fighter holds a snowfield
+against waves of wights, brutes and casters. There are three attacks,
+light, medium and heavy, and four weapons that each turn them into
+different moves. Up to four attacks chain into a string, and each weapon
+has four named strings that finish harder. Enemies paint where they are
+about to hit on the ground, a dash passes through anything, and a swing
+that meets a caster's bolt sends it back.
+
+The fighters are not sprites. Each is a small skeleton solved every frame,
+with legs and arms bent by two-bone inverse kinematics and a cape that
+trails as a chain, and B shows the bones. It also shows hit-stop, screen
+shake, buffered input, a bitmap font built in code, and sounds made in
+code.
+
+W, A, S and D move and the mouse aims. The left button is the light attack,
+the right button the medium, and F the heavy. Space dashes, and Q and E
+change weapon. On a gamepad, X, Y and B attack, A dashes, and the shoulder
+buttons change weapon. Tab lets the game play itself.
+
+`cargo run --example frostmarch` · [Source](https://github.com/charlesbthomas/smitten/blob/main/crates/examples/examples/frostmarch.rs)
 
 ## Demos
 
