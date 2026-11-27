@@ -1023,6 +1023,15 @@ name = "smitten-kit"
 version = "0.2.0"
 dependencies = [
  "smitten",
+ "smitten-kit-core",
+]
+
+[[package]]
+name = "smitten-kit-core"
+version = "0.2.0"
+dependencies = [
+ "glam 0.34.3",
+ "smitten-core",
 ]
 
 [[package]]

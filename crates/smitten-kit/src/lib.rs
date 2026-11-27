@@ -54,11 +54,9 @@
 
 pub mod camera;
 pub mod input;
-pub mod math;
 pub mod scene;
-pub mod sequence;
-pub mod timer;
-pub mod tween;
+
+pub use smitten_kit_core::{Float, math, sequence, timer, tween};
 
 /// The kit's types, plus the parts of Smitten that scenes use most, for
 /// `use smitten_kit::prelude::*`.

@@ -7,7 +7,7 @@
 //! running callbacks, so acting on them can borrow the game freely.
 //!
 //! ```
-//! use smitten_kit::timer::Timers;
+//! use smitten_kit_core::timer::Timers;
 //!
 //! #[derive(Clone, Debug, PartialEq)]
 //! enum Due {
@@ -25,11 +25,13 @@
 //! assert_eq!(due, [Due::Blink, Due::Spawn, Due::Blink]); // at 0.75, 0.9, 1.0
 //! ```
 
+use crate::Float;
+
 /// Something that can be used again after a delay: a gun, a dash, a
 /// spell.
 ///
 /// ```
-/// use smitten_kit::timer::Cooldown;
+/// use smitten_kit_core::timer::Cooldown;
 ///
 /// let mut gun = Cooldown::new(0.1);
 /// assert!(gun.try_use());
@@ -38,17 +40,17 @@
 /// assert!(gun.try_use());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Cooldown {
-    duration: f32,
-    left: f32,
+pub struct Cooldown<F: Float = f32> {
+    duration: F,
+    left: F,
 }
 
-impl Cooldown {
+impl<F: Float> Cooldown<F> {
     /// A cooldown of `seconds` that starts ready.
-    pub fn new(seconds: f32) -> Self {
+    pub fn new(seconds: F) -> Self {
         Cooldown {
-            duration: seconds.max(0.0),
-            left: 0.0,
+            duration: seconds.max(F::ZERO),
+            left: F::ZERO,
         }
     }
 
@@ -57,13 +59,13 @@ impl Cooldown {
     /// Time keeps counting below zero until the next use (to at most one
     /// full cooldown), so a held fire button keeps an exact rate even
     /// when the frame time does not divide it.
-    pub fn tick(&mut self, dt: f32) {
+    pub fn tick(&mut self, dt: F) {
         self.left = (self.left - dt).max(-self.duration);
     }
 
     /// Whether it can be used now.
     pub fn is_ready(&self) -> bool {
-        self.left <= 0.0
+        self.left <= F::ZERO
     }
 
     /// If ready, starts the cooldown and returns true.
@@ -73,7 +75,7 @@ impl Cooldown {
         }
         self.left += self.duration;
         // A use after a long idle starts a full cooldown, not a short one.
-        if self.left <= 0.0 {
+        if self.left <= F::ZERO {
             self.left = self.duration;
         }
         true
@@ -86,31 +88,31 @@ impl Cooldown {
 
     /// Makes it ready at once.
     pub fn reset(&mut self) {
-        self.left = 0.0;
+        self.left = F::ZERO;
     }
 
     /// Seconds until it is ready, or 0.0 when it is.
-    pub fn left(&self) -> f32 {
-        self.left.max(0.0)
+    pub fn left(&self) -> F {
+        self.left.max(F::ZERO)
     }
 
     /// The full cooldown in seconds.
-    pub fn duration(&self) -> f32 {
+    pub fn duration(&self) -> F {
         self.duration
     }
 
     /// Changes the full cooldown, as an upgrade that fires faster would.
-    pub fn set_duration(&mut self, seconds: f32) {
-        self.duration = seconds.max(0.0);
+    pub fn set_duration(&mut self, seconds: F) {
+        self.duration = seconds.max(F::ZERO);
         self.left = self.left.min(self.duration);
     }
 
     /// 0.0 just used, 1.0 ready, for drawing a recharge meter.
-    pub fn progress(&self) -> f32 {
-        if self.duration <= 0.0 {
-            1.0
+    pub fn progress(&self) -> F {
+        if self.duration <= F::ZERO {
+            F::ONE
         } else {
-            1.0 - self.left() / self.duration
+            F::ONE - self.left() / self.duration
         }
     }
 }
@@ -119,7 +121,7 @@ impl Cooldown {
 /// banner that stays up for a moment.
 ///
 /// ```
-/// use smitten_kit::timer::Countdown;
+/// use smitten_kit_core::timer::Countdown;
 ///
 /// let mut flash = Countdown::default();
 /// flash.start(0.2);
@@ -129,27 +131,27 @@ impl Cooldown {
 /// assert!(!flash.is_running());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub struct Countdown {
-    duration: f32,
-    left: f32,
+pub struct Countdown<F: Float = f32> {
+    duration: F,
+    left: F,
 }
 
-impl Countdown {
+impl<F: Float> Countdown<F> {
     /// A countdown already running for `seconds`.
-    pub fn running(seconds: f32) -> Self {
+    pub fn running(seconds: F) -> Self {
         let mut countdown = Countdown::default();
         countdown.start(seconds);
         countdown
     }
 
     /// Starts (or restarts) the countdown at `seconds`.
-    pub fn start(&mut self, seconds: f32) {
-        self.duration = seconds.max(0.0);
+    pub fn start(&mut self, seconds: F) {
+        self.duration = seconds.max(F::ZERO);
         self.left = self.duration;
     }
 
     /// Restarts it at `seconds` unless more than that is already left.
-    pub fn extend_to(&mut self, seconds: f32) {
+    pub fn extend_to(&mut self, seconds: F) {
         if seconds > self.left {
             self.start(seconds);
         }
@@ -157,18 +159,18 @@ impl Countdown {
 
     /// Stops it without finishing.
     pub fn stop(&mut self) {
-        self.left = 0.0;
+        self.left = F::ZERO;
     }
 
     /// Counts down by `dt` seconds. Returns true on the one frame it
     /// reaches zero.
-    pub fn tick(&mut self, dt: f32) -> bool {
-        if self.left <= 0.0 {
+    pub fn tick(&mut self, dt: F) -> bool {
+        if self.left <= F::ZERO {
             return false;
         }
         self.left -= dt;
-        if self.left <= 0.0 {
-            self.left = 0.0;
+        if self.left <= F::ZERO {
+            self.left = F::ZERO;
             return true;
         }
         false
@@ -176,23 +178,23 @@ impl Countdown {
 
     /// Whether there is time left.
     pub fn is_running(&self) -> bool {
-        self.left > 0.0
+        self.left > F::ZERO
     }
 
     /// Seconds left.
-    pub fn left(&self) -> f32 {
+    pub fn left(&self) -> F {
         self.left
     }
 
     /// Seconds since it started, up to its full length.
-    pub fn elapsed(&self) -> f32 {
+    pub fn elapsed(&self) -> F {
         self.duration - self.left
     }
 
     /// 1.0 just started, 0.0 done. Handy as an alpha or a flash strength.
-    pub fn fraction_left(&self) -> f32 {
-        if self.duration <= 0.0 {
-            0.0
+    pub fn fraction_left(&self) -> F {
+        if self.duration <= F::ZERO {
+            F::ZERO
         } else {
             self.left / self.duration
         }
@@ -204,10 +206,10 @@ impl Countdown {
 pub struct TimerId(u64);
 
 #[derive(Debug)]
-struct Entry<E> {
+struct Entry<E, F: Float> {
     id: TimerId,
-    left: f32,
-    every: Option<f32>,
+    left: F,
+    every: Option<F>,
     /// Firings to go, for a repeating timer. `None` repeats forever.
     times: Option<u32>,
     event: E,
@@ -219,13 +221,13 @@ struct Entry<E> {
 /// `E` is usually an enum of the game's own. Repeating timers clone their
 /// event each time they fire.
 #[derive(Debug)]
-pub struct Timers<E> {
-    entries: Vec<Entry<E>>,
+pub struct Timers<E, F: Float = f32> {
+    entries: Vec<Entry<E, F>>,
     next_id: u64,
-    due: Vec<(f32, u64, E)>,
+    due: Vec<(F, u64, E)>,
 }
 
-impl<E> Default for Timers<E> {
+impl<E, F: Float> Default for Timers<E, F> {
     fn default() -> Self {
         Timers {
             entries: Vec::new(),
@@ -235,18 +237,18 @@ impl<E> Default for Timers<E> {
     }
 }
 
-impl<E> Timers<E> {
+impl<E, F: Float> Timers<E, F> {
     /// No timers.
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn add(&mut self, left: f32, every: Option<f32>, times: Option<u32>, event: E) -> TimerId {
+    fn add(&mut self, left: F, every: Option<F>, times: Option<u32>, event: E) -> TimerId {
         let id = TimerId(self.next_id);
         self.next_id += 1;
         self.entries.push(Entry {
             id,
-            left: left.max(0.0),
+            left: left.max(F::ZERO),
             every,
             times,
             event,
@@ -255,7 +257,7 @@ impl<E> Timers<E> {
     }
 
     /// Fires `event` once, `seconds` from now.
-    pub fn after(&mut self, seconds: f32, event: E) -> TimerId {
+    pub fn after(&mut self, seconds: F, event: E) -> TimerId {
         self.add(seconds, None, None, event)
     }
 
@@ -268,7 +270,7 @@ impl<E> Timers<E> {
     }
 
     /// Seconds until the timer next fires, or `None` once it is gone.
-    pub fn left(&self, id: TimerId) -> Option<f32> {
+    pub fn left(&self, id: TimerId) -> Option<F> {
         self.entries
             .iter()
             .find(|entry| entry.id == id)
@@ -296,16 +298,16 @@ impl<E> Timers<E> {
     }
 }
 
-impl<E: Clone> Timers<E> {
+impl<E: Clone, F: Float> Timers<E, F> {
     /// Fires `event` every `seconds`, starting `seconds` from now.
-    pub fn every(&mut self, seconds: f32, event: E) -> TimerId {
-        let seconds = seconds.max(f32::EPSILON);
+    pub fn every(&mut self, seconds: F, event: E) -> TimerId {
+        let seconds = seconds.max(F::EPSILON);
         self.add(seconds, Some(seconds), None, event)
     }
 
     /// Fires `event` every `seconds`, `times` times.
-    pub fn every_times(&mut self, seconds: f32, times: u32, event: E) -> TimerId {
-        let seconds = seconds.max(f32::EPSILON);
+    pub fn every_times(&mut self, seconds: F, times: u32, event: E) -> TimerId {
+        let seconds = seconds.max(F::EPSILON);
         if times == 0 {
             // Nothing to fire; hand back an id that is already gone.
             let id = TimerId(self.next_id);
@@ -318,8 +320,8 @@ impl<E: Clone> Timers<E> {
     /// Moves time on by `dt` seconds and yields the events that came due,
     /// in the order they were due. A long frame that crosses two ticks of
     /// an `every` timer yields both.
-    pub fn update(&mut self, dt: f32) -> impl Iterator<Item = E> + '_ {
-        let dt = dt.max(0.0);
+    pub fn update(&mut self, dt: F) -> impl Iterator<Item = E> + '_ {
+        let dt = dt.max(F::ZERO);
         self.due.clear();
         let mut index = 0;
         while index < self.entries.len() {
@@ -354,8 +356,11 @@ impl<E: Clone> Timers<E> {
             }
         }
         // Ties go to the timer scheduled first.
-        self.due
-            .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        self.due.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.cmp(&b.1))
+        });
         self.due.drain(..).map(|(_, _, event)| event)
     }
 }
@@ -429,5 +434,16 @@ mod tests {
         timers.every(0.2, "tick");
         let fired: Vec<&str> = timers.update(0.45).collect();
         assert_eq!(fired, ["early", "tick", "late", "tick"]);
+    }
+
+    #[test]
+    fn timers_in_f64() {
+        let mut timers: Timers<&str, f64> = Timers::new();
+        timers.every(0.1, "tick");
+        assert_eq!(timers.update(0.35_f64).count(), 3);
+        let mut gun: Cooldown<f64> = Cooldown::new(0.375);
+        assert!(gun.try_use());
+        gun.tick(0.25);
+        assert_eq!(gun.left(), 0.125);
     }
 }

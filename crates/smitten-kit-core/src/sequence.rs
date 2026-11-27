@@ -7,7 +7,7 @@
 //! own state.
 //!
 //! ```
-//! use smitten_kit::sequence::Sequence;
+//! use smitten_kit_core::sequence::Sequence;
 //!
 //! #[derive(Debug, PartialEq)]
 //! enum Beat {
@@ -33,42 +33,44 @@
 //! assert!(wave.is_finished());
 //! ```
 
+use crate::Float;
+
 #[derive(Debug)]
-enum Step<E> {
-    Wait(f32),
+enum Step<E, F: Float> {
+    Wait(F),
     Emit(Option<E>),
-    Together(Vec<Sequence<E>>),
+    Together(Vec<Sequence<E, F>>),
 }
 
 /// Waits and events played in order. See the [module docs](self).
 #[derive(Debug)]
-pub struct Sequence<E> {
-    steps: Vec<Step<E>>,
+pub struct Sequence<E, F: Float = f32> {
+    steps: Vec<Step<E, F>>,
     cursor: usize,
-    speed: f32,
+    speed: F,
     out: Vec<E>,
 }
 
-impl<E> Default for Sequence<E> {
+impl<E, F: Float> Default for Sequence<E, F> {
     fn default() -> Self {
         Sequence {
             steps: Vec::new(),
             cursor: 0,
-            speed: 1.0,
+            speed: F::ONE,
             out: Vec::new(),
         }
     }
 }
 
-impl<E> Sequence<E> {
+impl<E, F: Float> Sequence<E, F> {
     /// An empty sequence, already finished.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Adds a pause of `seconds`.
-    pub fn wait(mut self, seconds: f32) -> Self {
-        self.steps.push(Step::Wait(seconds.max(0.0)));
+    pub fn wait(mut self, seconds: F) -> Self {
+        self.steps.push(Step::Wait(seconds.max(F::ZERO)));
         self
     }
 
@@ -80,14 +82,14 @@ impl<E> Sequence<E> {
 
     /// Adds sequences that play side by side. The sequence carries on
     /// once the longest of them ends.
-    pub fn together(mut self, sequences: impl IntoIterator<Item = Sequence<E>>) -> Self {
+    pub fn together(mut self, sequences: impl IntoIterator<Item = Sequence<E, F>>) -> Self {
         self.steps
             .push(Step::Together(sequences.into_iter().collect()));
         self
     }
 
     /// Adds every step of `other` at the end.
-    pub fn then(mut self, other: Sequence<E>) -> Self {
+    pub fn then(mut self, other: Sequence<E, F>) -> Self {
         self.steps
             .extend(other.steps.into_iter().skip(other.cursor));
         self
@@ -99,42 +101,42 @@ impl<E> Sequence<E> {
     }
 
     /// How fast the sequence plays: 1.0 is normal, 3.0 triple speed.
-    pub fn speed(&self) -> f32 {
+    pub fn speed(&self) -> F {
         self.speed
     }
 
     /// Plays faster or slower, as a "hold to fast-forward" does.
-    pub fn set_speed(&mut self, speed: f32) {
-        self.speed = speed.max(0.0);
+    pub fn set_speed(&mut self, speed: F) {
+        self.speed = speed.max(F::ZERO);
     }
 
     /// Plays on by `dt` seconds (times the speed) and yields the events
     /// that came due, in order.
-    pub fn update(&mut self, dt: f32) -> impl Iterator<Item = E> + '_ {
+    pub fn update(&mut self, dt: F) -> impl Iterator<Item = E> + '_ {
         let mut out = std::mem::take(&mut self.out);
         out.clear();
-        self.advance(dt.max(0.0) * self.speed, &mut out);
+        self.advance(dt.max(F::ZERO) * self.speed, &mut out);
         self.out = out;
         self.out.drain(..)
     }
 
     /// Plays every remaining step at once and yields their events.
     pub fn skip(&mut self) -> impl Iterator<Item = E> + '_ {
-        self.update(f32::INFINITY)
+        self.update(F::INFINITY)
     }
 
     /// Plays on by `dt`, pushing events to `out`. Returns the time left
     /// over once it finishes, or 0.0 while it is still playing.
-    fn advance(&mut self, mut dt: f32, out: &mut Vec<E>) -> f32 {
+    fn advance(&mut self, mut dt: F, out: &mut Vec<E>) -> F {
         while let Some(step) = self.steps.get_mut(self.cursor) {
             match step {
                 Step::Wait(left) => {
                     if *left > dt {
                         *left -= dt;
-                        return 0.0;
+                        return F::ZERO;
                     }
                     dt -= *left;
-                    *left = 0.0;
+                    *left = F::ZERO;
                 }
                 Step::Emit(event) => {
                     if let Some(event) = event.take() {
@@ -142,7 +144,7 @@ impl<E> Sequence<E> {
                     }
                 }
                 Step::Together(sequences) => {
-                    let mut leftover = f32::INFINITY;
+                    let mut leftover = F::INFINITY;
                     let mut all_done = true;
                     for sequence in sequences.iter_mut() {
                         let left = sequence.advance(dt, out);
@@ -153,7 +155,7 @@ impl<E> Sequence<E> {
                         }
                     }
                     if !all_done {
-                        return 0.0;
+                        return F::ZERO;
                     }
                     dt = if leftover.is_finite() { leftover } else { dt };
                 }
@@ -212,5 +214,12 @@ mod tests {
             .emit(1)
             .then(Sequence::new().wait(1.0).emit(2));
         assert_eq!(s.update(1.0).collect::<Vec<_>>(), [1, 2]);
+    }
+
+    #[test]
+    fn sequence_in_f64() {
+        let mut s: Sequence<u8, f64> = Sequence::new().wait(0.5).emit(1);
+        assert_eq!(s.update(0.25).count(), 0);
+        assert_eq!(s.update(0.25).collect::<Vec<_>>(), [1]);
     }
 }

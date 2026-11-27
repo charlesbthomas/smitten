@@ -1,0 +1,21 @@
+[package]
+name = "smitten-kit-core"
+description = "The parts of smitten-kit that need no window: timers, tweens, sequences, shapes, collision, grids, pathfinding and pools"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# `Lerp` for smitten's `Color`. smitten-kit turns it on; a crate that keeps
+# clear of smitten leaves it off.
+color = ["dep:smitten-core"]
+
+[dependencies]
+glam = "0.34"
+smitten-core = { workspace = true, optional = true }
+
+[lints]
+workspace = true

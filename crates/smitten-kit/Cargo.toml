@@ -1,6 +1,6 @@
 [package]
 name = "smitten-kit"
-description = "Game structure on top of Smitten: scenes, timers and tweens, input actions and a camera"
+description = "Game structure on top of Smitten: scenes, timers and tweens, input actions, a camera, sprites, tilemaps, UI and saves"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -16,6 +16,7 @@ sdl-static = ["smitten/sdl-static"]
 
 [dependencies]
 smitten = { path = "../smitten", default-features = false }
+smitten-kit-core = { path = "../smitten-kit-core", features = ["color"] }
 
 [lints]
 workspace = true
