@@ -11,6 +11,15 @@
 //! outlives a single screen: fonts, sounds, settings, the best score, the
 //! input bindings.
 //!
+//! Settings that belong to one screen, such as a wider letterbox for a
+//! map or the music that plays under it, go in [`Scene::enter`] and
+//! [`Scene::resume`]: those run whenever the scene comes (back) on top.
+//!
+//! A scene below the top can move the stack too, as a level that keeps
+//! playing under a popup ends the game when the player dies: its move
+//! first closes the scenes above it. When several scenes ask on the same
+//! frame, the highest one wins.
+//!
 //! [`run`] opens the window and runs a stack with no [`smitten::Game`]
 //! impl needed. A game that keeps its own `Game` can own a `SceneStack`
 //! and call it from its callbacks instead.
@@ -83,6 +92,11 @@ use smitten::{Color, Config, graphics};
 
 /// One screen of the game. Every method has a default that does nothing.
 pub trait Scene<C>: 'static {
+    /// A name for logs, debug overlays and tests. Empty by default.
+    fn name(&self) -> &str {
+        ""
+    }
+
     /// The scene was put on the stack.
     fn enter(&mut self, _ctx: &mut C) {}
 
@@ -96,7 +110,9 @@ pub trait Scene<C>: 'static {
     fn resume(&mut self, _ctx: &mut C) {}
 
     /// Called every frame while the scene is on top (or under a scene
-    /// whose [`updates_below`](Scene::updates_below) is true).
+    /// whose [`updates_below`](Scene::updates_below) is true). A move
+    /// returned from a scene below the top first closes the scenes above
+    /// it.
     fn update(&mut self, _ctx: &mut C, _dt: f32) -> Transition<C> {
         Transition::None
     }
@@ -211,6 +227,9 @@ impl<C> fmt::Debug for Transition<C> {
 
 struct Fade<C> {
     then: Option<Transition<C>>,
+    /// The stack height the move applies at: scenes above are closed
+    /// first.
+    from: usize,
     seconds: f32,
     color: Color,
     /// From 0.0 (clear) to 1.0 (covered) and back.
@@ -276,8 +295,47 @@ impl<C: 'static> SceneStack<C> {
         self.fade.is_some()
     }
 
+    /// The scene on top, the one getting input.
+    pub fn top(&self) -> Option<&dyn Scene<C>> {
+        self.scenes.last().map(|scene| &**scene)
+    }
+
+    /// The scenes, bottom to top.
+    pub fn iter(&self) -> impl Iterator<Item = &dyn Scene<C>> {
+        self.scenes.iter().map(|scene| &**scene)
+    }
+
+    /// The scenes' [names](Scene::name), bottom to top, as
+    /// `"title > play > pause"` in a debug overlay.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.scenes.iter().map(|scene| scene.name())
+    }
+
     /// Makes `transition` now, as if the top scene had returned it.
     pub fn apply(&mut self, transition: Transition<C>, ctx: &mut C) {
+        let top = self.scenes.len().saturating_sub(1);
+        self.apply_at(top, transition, ctx);
+    }
+
+    /// Makes `transition` as if the scene at `index` had returned it:
+    /// the scenes above it are closed first and it resumes, unless the
+    /// move is one that does nothing.
+    fn apply_at(&mut self, index: usize, transition: Transition<C>, ctx: &mut C) {
+        if transition.is_none() {
+            return;
+        }
+        if !matches!(transition, Transition::Fade { .. } | Transition::Quit)
+            && index + 1 < self.scenes.len()
+        {
+            while self.scenes.len() > index + 1 {
+                if let Some(mut top) = self.scenes.pop() {
+                    top.exit(ctx);
+                }
+            }
+            if let Some(top) = self.scenes.last_mut() {
+                top.resume(ctx);
+            }
+        }
         match transition {
             Transition::None | Transition::Pass => {}
             Transition::Push(mut scene) => {
@@ -317,10 +375,11 @@ impl<C: 'static> SceneStack<C> {
                 color,
             } => {
                 if seconds <= 0.0 {
-                    self.apply(*then, ctx);
+                    self.apply_at(index, *then, ctx);
                 } else if self.fade.is_none() {
                     self.fade = Some(Fade {
                         then: Some(*then),
+                        from: index,
                         seconds,
                         color,
                         elapsed: 0.0,
@@ -333,7 +392,7 @@ impl<C: 'static> SceneStack<C> {
     }
 
     /// Updates the top scene, and the ones below it that it lets update,
-    /// then makes the move the top scene asked for.
+    /// then makes the move the highest of them asked for.
     ///
     /// While a fade plays, scenes keep updating so they stay animated,
     /// but the moves they return are ignored.
@@ -345,13 +404,12 @@ impl<C: 'static> SceneStack<C> {
         while lowest > 0 && self.scenes[lowest].updates_below() {
             lowest -= 1;
         }
-        let top = self.scenes.len() - 1;
-        let mut wanted = Transition::None;
+        let mut wanted = (0, Transition::None);
         for (index, scene) in self.scenes.iter_mut().enumerate().skip(lowest) {
             let transition = scene.update(ctx, dt);
-            // Only the top scene moves the stack.
-            if index == top {
-                wanted = transition;
+            // The highest scene that asks to move wins.
+            if !transition.is_none() {
+                wanted = (index, transition);
             }
         }
 
@@ -362,7 +420,8 @@ impl<C: 'static> SceneStack<C> {
                 && fade.elapsed >= fade.seconds
                 && let Some(then) = fade.then.take()
             {
-                self.apply(then, ctx);
+                let from = fade.from.min(self.scenes.len().saturating_sub(1));
+                self.apply_at(from, then, ctx);
             }
             if let Some(fade) = &self.fade
                 && fade.elapsed >= fade.seconds * 2.0
@@ -371,7 +430,7 @@ impl<C: 'static> SceneStack<C> {
             }
             return;
         }
-        self.apply(wanted, ctx);
+        self.apply_at(wanted.0, wanted.1, ctx);
     }
 
     /// Hands `event` to the top scene, and down the stack for as long as
@@ -380,17 +439,17 @@ impl<C: 'static> SceneStack<C> {
         if self.fade.is_some() {
             return;
         }
-        let mut wanted = Transition::None;
-        for scene in self.scenes.iter_mut().rev() {
+        let mut wanted = (0, Transition::None);
+        for (index, scene) in self.scenes.iter_mut().enumerate().rev() {
             match scene.event(ctx, event) {
                 Transition::Pass => continue,
                 transition => {
-                    wanted = transition;
+                    wanted = (index, transition);
                     break;
                 }
             }
         }
-        self.apply(wanted, ctx);
+        self.apply_at(wanted.0, wanted.1, ctx);
     }
 
     /// Draws the top scene, after the scenes it overlays, then the fade.
@@ -529,6 +588,7 @@ mod tests {
         name: &'static str,
         overlay: bool,
         passes: bool,
+        below: bool,
         on_update: Option<fn() -> Transition<Log>>,
     }
 
@@ -537,11 +597,18 @@ mod tests {
             name,
             overlay: false,
             passes: false,
+            below: false,
             on_update: None,
         }
     }
 
     impl Scene<Log> for Named {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn updates_below(&self) -> bool {
+            self.below
+        }
         fn enter(&mut self, ctx: &mut Log) {
             ctx.0.push(format!("{} enter", self.name));
         }
@@ -648,6 +715,63 @@ mod tests {
         take(&mut log);
         stack.update(&mut log, 0.1);
         assert_eq!(take(&mut log), ["first update", "first exit", "next enter"]);
+    }
+
+    #[test]
+    fn a_move_from_below_closes_the_scenes_above() {
+        let mut log = Log::default();
+        let mut stack = SceneStack::new(
+            Named {
+                on_update: Some(|| Transition::switch(named("over"))),
+                ..named("play")
+            },
+            &mut log,
+        );
+        stack.apply(
+            Transition::push(Named {
+                below: true,
+                ..named("popup")
+            }),
+            &mut log,
+        );
+        assert_eq!(stack.names().collect::<Vec<_>>(), ["play", "popup"]);
+        take(&mut log);
+        stack.update(&mut log, 0.1);
+        assert_eq!(
+            take(&mut log),
+            [
+                "play update",
+                "popup update",
+                "popup exit",
+                "play resume",
+                "play exit",
+                "over enter"
+            ]
+        );
+        assert_eq!(stack.top().map(|s| s.name()), Some("over"));
+    }
+
+    #[test]
+    fn the_highest_move_wins() {
+        let mut log = Log::default();
+        let mut stack = SceneStack::new(
+            Named {
+                on_update: Some(|| Transition::Quit),
+                ..named("play")
+            },
+            &mut log,
+        );
+        stack.apply(
+            Transition::push(Named {
+                below: true,
+                on_update: Some(|| Transition::Pop),
+                ..named("popup")
+            }),
+            &mut log,
+        );
+        stack.update(&mut log, 0.1);
+        assert!(!stack.should_quit());
+        assert_eq!(stack.names().collect::<Vec<_>>(), ["play"]);
     }
 
     #[test]

@@ -381,6 +381,73 @@ impl<A: Copy + Eq + Hash> Actions<A> {
             .map(|(action, list)| (*action, list.as_slice()))
     }
 
+    /// Every binding as text, one action per line, sorted by name:
+    ///
+    /// ```text
+    /// jump = key:space, pad:a
+    /// left = key:a, key:left, axis:leftx-
+    /// ```
+    ///
+    /// `name` gives each action's name; [`load_bindings`](Actions::load_bindings)
+    /// reads the text back with the opposite.
+    pub fn save_bindings<N: fmt::Display>(&self, name: impl Fn(A) -> N) -> String {
+        let mut lines: Vec<String> = self
+            .all_bindings()
+            .map(|(action, list)| {
+                let list: Vec<String> = list.iter().map(Binding::to_string).collect();
+                format!("{} = {}", name(action), list.join(", "))
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+        lines.sort();
+        let mut text = lines.join("\n");
+        text.push('\n');
+        text
+    }
+
+    /// Reads bindings written by [`save_bindings`](Actions::save_bindings).
+    /// Each action listed gets exactly the bindings on its line (none for
+    /// `jump =`); actions not listed keep the ones they have, so an
+    /// action added in an update keeps its defaults. Blank lines and lines
+    /// starting with `#` are skipped.
+    ///
+    /// A line naming an unknown action, or a binding that does not parse,
+    /// is skipped (the rest of a line still loads) and described in the
+    /// list returned, which is empty when everything loaded.
+    pub fn load_bindings(&mut self, text: &str, parse: impl Fn(&str) -> Option<A>) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (number, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((name, list)) = line.split_once('=') else {
+                problems.push(format!("line {}: no `=` in `{line}`", number + 1));
+                continue;
+            };
+            let name = name.trim();
+            let Some(action) = parse(name) else {
+                problems.push(format!("line {}: unknown action `{name}`", number + 1));
+                continue;
+            };
+            let mut bindings = Vec::new();
+            for item in list
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                match item.parse::<Binding>() {
+                    Ok(binding) => bindings.push(binding),
+                    Err(error) => problems.push(format!("line {}: {error}", number + 1)),
+                }
+            }
+            self.unbind(action);
+            self.bind(action, bindings);
+        }
+        problems
+    }
+
     /// Reads only `pad`, or no gamepad at all with `None`. Two players on
     /// one machine each get an `Actions` with their own pad.
     pub fn set_gamepad(&mut self, pad: Option<Joystick>) {
@@ -928,5 +995,48 @@ mod tests {
         );
         assert!("pad:z".parse::<Binding>().is_err());
         assert!("space".parse::<Binding>().is_err());
+    }
+
+    #[test]
+    fn every_binding_saves_and_loads_as_text() {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        enum Act {
+            Jump,
+            Left,
+            Fire,
+        }
+        let name = |a: Act| match a {
+            Act::Jump => "jump",
+            Act::Left => "left",
+            Act::Fire => "fire",
+        };
+        let parse = |s: &str| match s {
+            "jump" => Some(Act::Jump),
+            "left" => Some(Act::Left),
+            "fire" => Some(Act::Fire),
+            _ => None,
+        };
+        let mut actions = Actions::new();
+        actions
+            .bind(
+                Act::Jump,
+                [Binding::Key(Key::Space), Binding::Button(GamepadButton::A)],
+            )
+            .bind(Act::Left, [Binding::stick_negative(GamepadAxis::LeftX)]);
+        let text = actions.save_bindings(name);
+        assert_eq!(text, "jump = key:space, pad:a\nleft = axis:leftx-\n");
+
+        let mut loaded = Actions::new();
+        loaded.bind(Act::Fire, [Key::X]); // a default the file does not list
+        loaded.bind(Act::Jump, [Key::W]); // replaced by the file's line
+        assert!(loaded.load_bindings(&text, parse).is_empty());
+        assert_eq!(loaded.bindings(Act::Jump), actions.bindings(Act::Jump));
+        assert_eq!(loaded.bindings(Act::Left), actions.bindings(Act::Left));
+        assert_eq!(loaded.bindings(Act::Fire), [Binding::Key(Key::X)]);
+
+        let problems =
+            loaded.load_bindings("# keys\nfly = key:f\nfire = key:z, key:nope\nhuh\n", parse);
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert_eq!(loaded.bindings(Act::Fire), [Binding::Key(Key::Z)]);
     }
 }
