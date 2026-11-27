@@ -18,8 +18,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod collision;
+pub mod events;
 pub mod float;
+pub mod grid;
 pub mod math;
+pub mod pool;
+pub mod random;
 pub mod sequence;
 pub mod timer;
 pub mod tween;
