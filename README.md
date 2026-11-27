@@ -85,7 +85,7 @@ goes through it step by step, including installing the tools by hand.
 
 `cargo run --example <name>` (or `just run <name>`) runs one from the
 workspace root. There are five small games, `lantern`, `pong`, `topple`,
-`undercroft` and `shardfall`, and a demo of each part of the framework:
+`undercroft` and `shardfall`, a tour of smitten-kit, `kit_tour`, and a demo of each part of the framework:
 `hello`, `sprites`, `shapes`, `text`, `input`, `audio`, `spatial_audio`,
 `canvas`, `shader`, `stencil`, `particles`, `mesh`, `physics`, `lighting`,
 `design`, `graphics_extras`, `video`, `rumble`, and `benchmark` (run it
@@ -102,7 +102,8 @@ Games depend only on `smitten`.
 | `crates/smitten` | The public API: the `Game` trait, `run`, and the framework modules. |
 | `crates/smitten-core` | Shared types (`Color`, `Key`, `Config`) and the `Backend` trait that platforms implement. No dependencies. |
 | `crates/smitten-sdl` | The SDL3 backend. The only crate with `unsafe` code or a native library. |
-| `crates/smitten-kit` | Optional game structure on top of `smitten`: scenes, timers and tweens, input actions and a camera. |
+| `crates/smitten-kit` | Optional game structure on top of `smitten`: scenes, input actions, menus, a camera, sprites and animation, Tiled maps, save slots and a debug overlay. |
+| `crates/smitten-kit-core` | The parts of the kit that need no window (timers, tweens, sequences, shapes, collision, grids and A*, pools, weighted picks), for a game's rules crate. Re-exported by `smitten-kit`. |
 | `crates/examples` | The example games and the assets they load. |
 | `crates/cargo-smitten` | The `cargo smitten package` command. |
 | `site` | The documentation site, built with [Zola](https://www.getzola.org). |

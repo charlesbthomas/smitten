@@ -28,9 +28,6 @@
 //! - The run is saved as a small text file in the save directory, with
 //!   `filesystem::write`, and each floor is rebuilt from its seed.
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-
 use smitten::graphics::{
     Align, Canvas, DrawMode, DrawParams, Font, Image, ImageData, Quad, Shader, SpriteBatch,
     StencilWrite,
@@ -40,6 +37,7 @@ use smitten::{
     BlendMode, Color, CompareMode, Config, Filter, Game, Key, MouseButton, MouseClick, Vec2, event,
     filesystem, graphics, keyboard, math, timer,
 };
+use smitten_kit::grid::astar;
 
 const WIDTH: f32 = 960.0;
 const HEIGHT: f32 = 640.0;
@@ -388,7 +386,7 @@ impl Tile {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct Point {
     x: i32,
     y: i32,
@@ -542,7 +540,7 @@ impl Map {
         }
     }
 
-    /// Finds the shortest walk from `from` to `to` with A* search, moving
+    /// Finds the shortest walk from `from` to `to` with A* search (smitten-kit's `astar`), moving
     /// along the grid. `open` says which tiles may be walked through; the
     /// goal itself is always allowed, so a monster can path to the tile
     /// you stand on. Returns the steps after `from`, ending with `to`, or
@@ -553,54 +551,25 @@ impl Map {
         to: Point,
         open: impl Fn(Point) -> bool,
     ) -> Option<Vec<Point>> {
-        let start = Map::index(from)?;
-        let goal = Map::index(to)?;
-        let count = self.tiles.len();
-        let mut cost = vec![i32::MAX; count];
-        let mut came_from = vec![usize::MAX; count];
-        // Ordered by the estimated full length, then by the most progress
-        // made, so ties go toward the goal.
-        let mut frontier = BinaryHeap::new();
-        cost[start] = 0;
-        frontier.push(Reverse((from.steps_to(to), 0, start)));
-        let mut looked_at = 0;
-
-        while let Some(Reverse((_, so_far, current))) = frontier.pop() {
-            if current == goal {
-                let mut path = Vec::new();
-                let mut at = goal;
-                while at != start {
-                    path.push(Map::point(at));
-                    at = came_from[at];
+        Map::index(from)?;
+        Map::index(to)?;
+        astar(
+            from,
+            to,
+            |here, steps| {
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let next = here.offset(dx, dy);
+                    let Some(index) = Map::index(next) else {
+                        continue;
+                    };
+                    if next == to || (!self.tiles[index].blocks_walking() && open(next)) {
+                        steps.push((next, 1));
+                    }
                 }
-                path.reverse();
-                return Some(path);
-            }
-            if so_far > cost[current] {
-                continue; // a stale entry: a cheaper way here was found
-            }
-            looked_at += 1;
-            if looked_at > SEARCH_LIMIT {
-                return None;
-            }
-            let here = Map::point(current);
-            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                let next = here.offset(dx, dy);
-                let Some(index) = Map::index(next) else {
-                    continue;
-                };
-                if index != goal && (self.tiles[index].blocks_walking() || !open(next)) {
-                    continue;
-                }
-                let new_cost = so_far + 1;
-                if new_cost < cost[index] {
-                    cost[index] = new_cost;
-                    came_from[index] = current;
-                    frontier.push(Reverse((new_cost + next.steps_to(to), new_cost, index)));
-                }
-            }
-        }
-        None
+            },
+            |point| point.steps_to(to).unsigned_abs(),
+            SEARCH_LIMIT,
+        )
     }
 
     /// Wall tiles next to anything open, as boxes for casting shadows,

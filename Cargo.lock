@@ -1014,6 +1014,7 @@ version = "0.2.0"
 name = "smitten-examples"
 version = "0.2.0"
 dependencies = [
+ "serde",
  "smitten",
  "smitten-kit",
 ]
