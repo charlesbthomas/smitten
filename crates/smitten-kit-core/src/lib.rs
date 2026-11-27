@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod animation;
 pub mod collision;
 pub mod events;
 pub mod float;
@@ -26,6 +27,8 @@ pub mod math;
 pub mod pool;
 pub mod random;
 pub mod sequence;
+#[cfg(feature = "tiled")]
+pub mod tilemap;
 pub mod timer;
 pub mod tween;
 

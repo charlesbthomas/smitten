@@ -12,9 +12,15 @@ default = []
 # `Lerp` for smitten's `Color`. smitten-kit turns it on; a crate that keeps
 # clear of smitten leaves it off.
 color = ["dep:smitten-core"]
+# Reading maps saved by the Tiled editor as JSON.
+tiled = ["dep:serde", "dep:serde_json"]
+# Versioned save data as JSON.
+save = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 glam = "0.34"
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 smitten-core = { workspace = true, optional = true }
 
 [lints]
