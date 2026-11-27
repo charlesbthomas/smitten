@@ -26,6 +26,8 @@ pub mod grid;
 pub mod math;
 pub mod pool;
 pub mod random;
+#[cfg(feature = "save")]
+pub mod save;
 pub mod sequence;
 #[cfg(feature = "tiled")]
 pub mod tilemap;

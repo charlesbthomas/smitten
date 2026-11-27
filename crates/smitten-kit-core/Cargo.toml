@@ -25,3 +25,6 @@ smitten-core = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }

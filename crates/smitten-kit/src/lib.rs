@@ -54,6 +54,8 @@
 
 pub mod camera;
 pub mod input;
+#[cfg(feature = "save")]
+pub mod save;
 pub mod scene;
 pub mod sprite;
 #[cfg(feature = "tiled")]
