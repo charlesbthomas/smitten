@@ -551,8 +551,10 @@ fn tile_data(layer: &RawLayer) -> Result<Vec<u32>, TiledError> {
                 TiledError::Json(format!("layer `{}` has broken base64 data", layer.name))
             })?;
             Ok(bytes
-                .chunks_exact(4)
-                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_le_bytes(*b))
                 .collect())
         }
     }
