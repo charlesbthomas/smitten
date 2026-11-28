@@ -16,6 +16,8 @@ sdl-static = ["smitten/sdl-static"]
 
 [dependencies]
 smitten = { path = "../smitten", default-features = false, features = ["physics", "video"] }
+smitten-kit = { path = "../smitten-kit", default-features = false, features = ["tiled", "save"] }
+serde = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true
@@ -23,6 +25,9 @@ workspace = true
 # The examples share one assets folder, so each packaged example ships only
 # the files it uses. See "Hot reload and releasing" in the guide.
 [package.metadata.smitten.example.pong]
+include = []
+
+[package.metadata.smitten.example.kit_tour]
 include = []
 
 [package.metadata.smitten.example.shardfall]

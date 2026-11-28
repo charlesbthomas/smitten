@@ -15,7 +15,8 @@
 //!
 //! - Gamepad sticks with dead zones, triggers and rumble, falling back to
 //!   the keyboard and mouse.
-//! - A fixed-size bullet pool that never allocates while playing.
+//! - A fixed-size bullet pool (smitten-kit's `Pool`) that never allocates
+//!   while playing.
 //! - Thousands of particles from a handful of `ParticleSystem`s.
 //! - Screen shake driven by a "trauma" value and smooth noise.
 //! - The whole arena drawn to a `Canvas`, then to the screen through a
@@ -38,6 +39,7 @@ use smitten::{
     BlendMode, Color, Config, Game, GamepadAxis, GamepadButton, Joystick, Key, MouseButton,
     MouseClick, MouseMotion, Vec2, event, graphics, joystick, keyboard, mouse, timer,
 };
+use smitten_kit::pool::{Handle, Pool};
 
 const WIDTH: f32 = 960.0;
 const HEIGHT: f32 = 540.0;
@@ -128,18 +130,9 @@ struct Bullet {
     life: f32,
     /// Fired by an enemy, so it hurts the player instead of enemies.
     hostile: bool,
-    alive: bool,
 }
 
 impl Bullet {
-    const DEAD: Bullet = Bullet {
-        position: Vec2::ZERO,
-        velocity: Vec2::ZERO,
-        life: 0.0,
-        hostile: false,
-        alive: false,
-    };
-
     fn radius(&self) -> f32 {
         if self.hostile {
             HOSTILE_RADIUS
@@ -149,58 +142,24 @@ impl Bullet {
     }
 }
 
-/// A fixed set of bullets, allocated once. Firing takes a free slot and a
-/// bullet that dies gives its slot back, so a storm of bullets never
-/// touches the allocator.
-struct BulletPool {
-    slots: Vec<Bullet>,
-    /// The indices of the slots not in use.
-    free: Vec<usize>,
-}
-
-impl BulletPool {
-    fn new(capacity: usize) -> BulletPool {
-        BulletPool {
-            slots: vec![Bullet::DEAD; capacity],
-            free: (0..capacity).rev().collect(),
-        }
-    }
-
-    /// Fires a bullet, or does nothing if every slot is in use.
-    fn fire(&mut self, position: Vec2, velocity: Vec2, life: f32, hostile: bool) -> bool {
-        let Some(index) = self.free.pop() else {
-            return false;
-        };
-        self.slots[index] = Bullet {
+/// Fires a bullet, or does nothing if the pool is full. The pool's room is
+/// allocated once, and a bullet that dies gives its slot back, so a storm
+/// of bullets never touches the allocator.
+fn fire(
+    bullets: &mut Pool<Bullet>,
+    position: Vec2,
+    velocity: Vec2,
+    life: f32,
+    hostile: bool,
+) -> bool {
+    bullets
+        .try_insert(Bullet {
             position,
             velocity,
             life,
             hostile,
-            alive: true,
-        };
-        true
-    }
-
-    fn release(&mut self, index: usize) {
-        if self.slots[index].alive {
-            self.slots[index].alive = false;
-            self.free.push(index);
-        }
-    }
-
-    fn release_all(&mut self) {
-        for index in 0..self.slots.len() {
-            self.release(index);
-        }
-    }
-
-    fn live_count(&self) -> usize {
-        self.slots.len() - self.free.len()
-    }
-
-    fn capacity(&self) -> usize {
-        self.slots.len()
-    }
+        })
+        .is_ok()
 }
 
 // Enemies.
@@ -703,7 +662,9 @@ struct Shardfall {
     rng: RandomGenerator,
     player: Player,
     enemies: Vec<Enemy>,
-    bullets: BulletPool,
+    bullets: Pool<Bullet>,
+    /// The bullets being checked for hits, kept to reuse its room.
+    bullet_handles: Vec<Handle<Bullet>>,
     /// Enemies still to warp in this wave, with the seconds until each does.
     arrivals: Vec<(f32, Kind, Vec2)>,
     wave: u32,
@@ -751,7 +712,7 @@ impl Shardfall {
         self.player = Player::new();
         self.player.invulnerable = INVULNERABLE_SECONDS;
         self.enemies.clear();
-        self.bullets.release_all();
+        self.bullets.clear();
         self.arrivals.clear();
         self.wave = 0;
         self.wave_break = 0.8;
@@ -769,7 +730,7 @@ impl Shardfall {
                 self.best = self.best.max(self.score);
                 self.state = State::Title;
                 self.enemies.clear();
-                self.bullets.release_all();
+                self.bullets.clear();
                 self.arrivals.clear();
             }
         }
@@ -912,7 +873,7 @@ impl Shardfall {
             // feels right.
             let velocity = direction * BULLET_SPEED + player.velocity * 0.3;
             let aim = player.aim;
-            if self.bullets.fire(muzzle, velocity, BULLET_SECONDS, false) {
+            if fire(&mut self.bullets, muzzle, velocity, BULLET_SECONDS, false) {
                 self.particles.sparks(muzzle, aim.to_angle(), 0.35, 5);
                 let pitch = self.rng.random_range(0.92, 1.08);
                 play_at(&self.sounds.shot, muzzle, 0.35, pitch);
@@ -921,11 +882,8 @@ impl Shardfall {
     }
 
     fn update_bullets(&mut self, dt: f32) {
-        for index in 0..self.bullets.capacity() {
-            let bullet = &mut self.bullets.slots[index];
-            if !bullet.alive {
-                continue;
-            }
+        let particles = &mut self.particles;
+        self.bullets.retain(|_, bullet| {
             bullet.position += bullet.velocity * dt;
             bullet.life -= dt;
             let position = bullet.position;
@@ -945,12 +903,12 @@ impl Shardfall {
                     -Vec2::Y
                 };
                 let at = position.clamp(Vec2::ZERO, ARENA);
-                self.particles.sparks(at, normal.to_angle(), FRAC_PI_2, 8);
-                self.bullets.release(index);
-            } else if bullet.life <= 0.0 {
-                self.bullets.release(index);
+                particles.sparks(at, normal.to_angle(), FRAC_PI_2, 8);
+                false
+            } else {
+                bullet.life > 0.0
             }
-        }
+        });
     }
 
     fn update_enemies(&mut self, dt: f32) {
@@ -1037,7 +995,8 @@ impl Shardfall {
         for (position, toward) in volleys {
             for spread in [-0.2, 0.0, 0.2] {
                 let direction = Vec2::from_angle(toward.to_angle() + spread);
-                self.bullets.fire(
+                fire(
+                    &mut self.bullets,
                     position + direction * 18.0,
                     direction * HOSTILE_SPEED,
                     4.0,
@@ -1051,9 +1010,12 @@ impl Shardfall {
 
     fn collide(&mut self) {
         // The player's bullets against enemies.
-        for index in 0..self.bullets.capacity() {
-            let bullet = self.bullets.slots[index];
-            if !bullet.alive || bullet.hostile {
+        self.bullet_handles.clear();
+        self.bullet_handles.extend(self.bullets.handles());
+        for index in 0..self.bullet_handles.len() {
+            let handle = self.bullet_handles[index];
+            let bullet = self.bullets[handle];
+            if bullet.hostile {
                 continue;
             }
             let struck = self.enemies.iter().position(|enemy| {
@@ -1064,7 +1026,7 @@ impl Shardfall {
             let Some(struck) = struck else {
                 continue;
             };
-            self.bullets.release(index);
+            self.bullets.remove(handle);
             let enemy = &mut self.enemies[struck];
             enemy.health -= 1.0;
             enemy.flash = 1.0;
@@ -1085,16 +1047,12 @@ impl Shardfall {
 
         // Enemy orbs against the player.
         let mut struck = false;
-        for index in 0..self.bullets.capacity() {
-            let bullet = self.bullets.slots[index];
-            if bullet.alive
-                && bullet.hostile
-                && bullet.position.distance(position) < PLAYER_RADIUS + bullet.radius()
-            {
-                self.bullets.release(index);
-                struck = true;
-            }
-        }
+        self.bullets.retain(|_, bullet| {
+            let hit = bullet.hostile
+                && bullet.position.distance(position) < PLAYER_RADIUS + bullet.radius();
+            struck |= hit;
+            !hit
+        });
         // And enemies ramming the player.
         struck |= self.enemies.iter().any(|enemy| {
             enemy.is_active()
@@ -1181,13 +1139,14 @@ impl Shardfall {
         self.shockwave = Some(Shockwave { position, age: 0.0 });
 
         // Clear the orbs close by, so one mistake does not cost two hull.
-        for index in 0..self.bullets.capacity() {
-            let bullet = self.bullets.slots[index];
-            if bullet.alive && bullet.hostile && bullet.position.distance(position) < 250.0 {
-                self.particles.sparks(bullet.position, 0.0, TAU, 4);
-                self.bullets.release(index);
+        let particles = &mut self.particles;
+        self.bullets.retain(|_, bullet| {
+            let close = bullet.hostile && bullet.position.distance(position) < 250.0;
+            if close {
+                particles.sparks(bullet.position, 0.0, TAU, 4);
             }
-        }
+            !close
+        });
 
         if self.player.hull == 0 {
             self.player.alive = false;
@@ -1452,7 +1411,7 @@ impl Shardfall {
     }
 
     fn draw_bullets(&self) {
-        for bullet in self.bullets.slots.iter().filter(|bullet| bullet.alive) {
+        for bullet in self.bullets.values() {
             if bullet.hostile {
                 let color = Hue::Cyan.color();
                 graphics::set_color(with_alpha(color, 0.25));
@@ -1597,8 +1556,8 @@ impl Shardfall {
             &format!(
                 "{} fps   {} / {} bullets   {} particles   effects {effects} ({toggle})",
                 timer::fps(),
-                self.bullets.live_count(),
-                self.bullets.capacity(),
+                self.bullets.len(),
+                self.bullets.limit(),
                 self.particles.count(),
             ),
             (20.0, HEIGHT - 30.0),
@@ -1701,7 +1660,8 @@ impl Game for Shardfall {
             rng: RandomGenerator::new(seed),
             player,
             enemies: Vec::new(),
-            bullets: BulletPool::new(POOL_SIZE),
+            bullets: Pool::with_limit(POOL_SIZE),
+            bullet_handles: Vec::with_capacity(POOL_SIZE),
             arrivals: Vec::new(),
             wave: 0,
             wave_break: 0.0,
